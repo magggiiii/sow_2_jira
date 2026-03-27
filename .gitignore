@@ -5,12 +5,13 @@ venv/
 # Secrets
 .env
 
-# Runtime data
-data/*.db
-data/*.json
-data/*.pdf
-data/logs/
-data/parser_output/
+# Runtime data & logs
+data/
+logs/
+results/
+*.log
+telemetry_queue.jsonl
+.sow_to_jira/
 
 # Python
 __pycache__/

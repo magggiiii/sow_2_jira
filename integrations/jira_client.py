@@ -95,11 +95,6 @@ class JiraClient:
 
                 parent_key = epic_cache.get(section)
                 result = self._create_task(task, parent_key=parent_key, issue_type=task_type)
-                
-                # Link to epic using the Jira API (more reliable than parent field)
-                if result.success and parent_key and result.jira_issue_key:
-                    self._link_to_epic(result.jira_issue_key, parent_key)
-                
                 results.append(result)
 
         elif self.hierarchy == JiraHierarchy.STORY_SUBTASK:
@@ -214,8 +209,8 @@ class JiraClient:
             span.set_attribute("issue_type", issue_type)
             if parent_key: span.set_attribute("parent_key", parent_key)
 
-            # For Sub-tasks, use the parent field; for Tasks under Epics, use linking
-            if parent_key and issue_type in ("Sub-task", "Subtask"):
+            # Unified 'parent' field for both Sub-tasks and Epics (Next-Gen & Modern Classic)
+            if parent_key:
                 fields["parent"] = {"key": parent_key}
 
             try:

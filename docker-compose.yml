@@ -8,7 +8,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ${SOW_DATA_HOME:-./data}:/app/data
-      - ./.env:/app/.env
+      - ${SOW_ENV_FILE:-./.env}:/app/.env
     environment:
       - SOW_DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1

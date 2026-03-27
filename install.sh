@@ -86,10 +86,13 @@ if [ ! -d "$SOW_HOME" ]; then
     echo -e "${GREEN}[OK]${NC} Global data directory created at $SOW_HOME"
 fi
 
-# 4. Environment Scaffolding
-if [ ! -f ".env" ]; then
-    cp .env.example .env
-    echo -e "${GREEN}[OK]${NC} Initialized .env from template."
+# 4. Global Environment Scaffolding
+GLOBAL_ENV="$SOW_HOME/.env"
+if [ ! -f "$GLOBAL_ENV" ]; then
+    cp .env.example "$GLOBAL_ENV"
+    echo -e "${GREEN}[OK]${NC} Initialized global .env at $GLOBAL_ENV"
+else
+    echo -e "${BLUE}[INFO]${NC} Using existing global .env at $GLOBAL_ENV"
 fi
 
 # 5. Native Command Registration (sjt)
@@ -97,14 +100,15 @@ INSTALL_DIR=$(pwd)
 SHELL_RC_FILE=""
 
 # Detect shell
-if [[ "$SHELL" == *"zsh"* ]; then
+if [[ "$SHELL" == *"zsh"* ]]; then
     SHELL_RC_FILE="$HOME/.zshrc"
 elif [[ "$SHELL" == *"bash"* ]]; then
     [ -f "$HOME/.bash_profile" ] && SHELL_RC_FILE="$HOME/.bash_profile" || SHELL_RC_FILE="$HOME/.bashrc"
 fi
 
 if [ -n "$SHELL_RC_FILE" ]; then
-    LAUNCH_CMD="alias sjt='export SOW_DATA_HOME=\"$SOW_HOME/data\" && cd \"$INSTALL_DIR\" && docker-compose up -d && open http://localhost:8000'"
+    # We explicitly map the global .env to the container
+    LAUNCH_CMD="alias sjt='export SOW_DATA_HOME=\"$SOW_HOME/data\" && export SOW_ENV_FILE=\"$GLOBAL_ENV\" && cd \"$INSTALL_DIR\" && docker-compose -f docker-compose.yml up -d && open http://localhost:8000'"
     
     if grep -q "alias sjt=" "$SHELL_RC_FILE"; then
         sed -i '' "s|alias sjt=.*|$LAUNCH_CMD|" "$SHELL_RC_FILE" 2>/dev/null || sed -i "s|alias sjt=.*|$LAUNCH_CMD|" "$SHELL_RC_FILE"
@@ -118,7 +122,7 @@ fi
 # 6. Final Instructions
 echo -e "\n--------------------------------------------------"
 echo -e "${GREEN}Configuration Complete!${NC}"
-echo -e "1. Edit your ${BLUE}.env${NC} file to add your API keys."
-echo -e "2. Restart your terminal."
-echo -e "3. Type ${BLUE}sjt${NC} to launch."
+echo -e "1. Restart your terminal."
+echo -e "2. Type ${BLUE}sjt${NC} to launch."
+echo -e "3. Open ${BLUE}Settings${NC} (gear icon) in the UI to add your API keys."
 echo -e "--------------------------------------------------\n"

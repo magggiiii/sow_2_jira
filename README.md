@@ -45,14 +45,15 @@ This command will:
 
 ## ⚙️ Configuration
 
-The tool uses a `.env` file for core configuration. On first run, the installer will create a template for you.
+The easiest way to configure SOW-to-Jira is through the **Settings (gear icon)** in the web interface. 
 
-| Variable | Description |
+Your secrets are persisted globally at `~/.sow_to_jira/.env`, ensuring they are preserved across tool updates.
+
+| Feature | How to Configure |
 | :--- | :--- |
-| `LITELLM_MODEL` | The model string (e.g., `gpt-4o`, `anthropic/claude-3-5-sonnet`) |
-| `LITELLM_API_KEY` | Your LLM provider API key |
-| `JIRA_SERVER` | Your Atlassian domain (e.g., `https://my-company.atlassian.net`) |
-| `JIRA_API_TOKEN` | Your Atlassian API Token |
+| **LLM Routing** | Set `Universal API Key`, `Model`, and `Base URL` in the Settings Modal. |
+| **Jira Integration** | Set your Jira Server URL and API Token in the Settings Modal. |
+| **Telemetry** | Telemetry is enabled by default. To opt-out, edit `~/.sow_to_jira/.env` and set `BIFROST_TELEMETRY_URL=""`. |
 
 ---
 

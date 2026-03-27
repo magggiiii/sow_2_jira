@@ -66,10 +66,11 @@ if (!(Test-Path $SowData)) {
 }
 Write-Host "$Green [OK]$Reset Global data directory created at $SowHome"
 
-# 4. Environment Scaffolding
-if (!(Test-Path ".env")) {
-    Copy-Item ".env.example" ".env"
-    Write-Host "$Green [OK]$Reset Initialized .env from template."
+# 4. Global Environment Scaffolding
+$GlobalEnv = Join-Path $SowHome ".env"
+if (!(Test-Path $GlobalEnv)) {
+    Copy-Item ".env.example" $GlobalEnv
+    Write-Host "$Green [OK]$Reset Initialized global .env at $GlobalEnv"
 }
 
 # 5. Native Command Registration (sjt)
@@ -82,8 +83,9 @@ $SjtFunction = @"
 # SOW-to-Jira Terminal Function
 function sjt {
     `$env:SOW_DATA_HOME = "$SowData"
+    `$env:SOW_ENV_FILE = "$GlobalEnv"
     Set-Location "$InstallDir"
-    docker-compose up -d
+    docker-compose -f docker-compose.yml up -d
     Start-Process "http://localhost:8000"
 }
 "@
@@ -96,7 +98,7 @@ if ((Get-Content $ProfilePath | Select-String "function sjt {").Count -eq 0) {
 # 6. Final Instructions
 Write-Host "`n--------------------------------------------------"
 Write-Host "$Green Configuration Complete! $Reset"
-Write-Host "1. Edit your $Blue .env $Reset file to add your API keys."
-Write-Host "2. Restart your terminal."
-Write-Host "3. Type $Blue sjt $Reset to launch."
+Write-Host "1. Restart your terminal."
+Write-Host "2. Type $Blue sjt $Reset to launch."
+Write-Host "3. Open $Blue Settings $Reset (gear icon) in the UI to add your API keys."
 Write-Host "--------------------------------------------------`n"

@@ -30,7 +30,28 @@ SOW_SOURCE="$SOW_HOME/source"
 SOW_DATA="$SOW_HOME/data"
 mkdir -p "$SOW_DATA"
 
-# 2. Bootstrap Repository
+# 2. Bootstrap Git (If missing)
+if ! command -v git &> /dev/null; then
+    echo -e "${YELLOW}[!] Git is not installed.${NC}"
+    if confirm "Would you like me to install Git for you?"; then
+        OS_TYPE="$(uname)"
+        if [ "$OS_TYPE" == "Darwin" ]; then
+            if command -v brew &> /dev/null; then
+                brew install git
+            else
+                echo -e "${RED}[ERROR] Homebrew not found.${NC} Please install Git manually."
+                exit 1
+            fi
+        elif [ "$OS_TYPE" == "Linux" ]; then
+            sudo apt-get update && sudo apt-get install -y git || sudo yum install -y git
+        fi
+    else
+        echo -e "${RED}[ERROR] Git is required.${NC} Exiting."
+        exit 1
+    fi
+fi
+
+# 3. Bootstrap Repository
 echo -e "${BLUE}[INFO] Bootstrapping repository...${NC}"
 if [ -d "$SOW_SOURCE" ]; then
     echo -e "${BLUE}[INFO] Updating existing source...${NC}"

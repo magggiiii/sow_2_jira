@@ -20,7 +20,22 @@ $SowSource = Join-Path $SowHome "source"
 $SowData = Join-Path $SowHome "data"
 if (!(Test-Path $SowData)) { New-Item -ItemType Directory -Path $SowData -Force | Out-Null }
 
-# 2. Bootstrap Repository
+# 2. Bootstrap Git (If missing)
+if (!(Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Host "$Yellow [!] Git is not installed. $Reset"
+    $ans = Read-Host "Would you like me to install Git via winget? [y/N]"
+    if ($ans -eq "y") {
+        Write-Host "$Blue [INFO] Installing Git... $Reset"
+        winget install -e --id Git.Git
+        Write-Host "$Yellow [ACTION] Please restart your terminal and run the installer again. $Reset"
+        exit 0
+    } else {
+        Write-Host "$Red [ERROR] Git is required to download the source code. $Reset"
+        exit 1
+    }
+}
+
+# 3. Bootstrap Repository
 Write-Host "$Blue [INFO] Bootstrapping repository... $Reset"
 if (Test-Path $SowSource) {
     Write-Host "$Blue [INFO] Updating existing source... $Reset"

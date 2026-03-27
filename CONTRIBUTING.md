@@ -20,9 +20,9 @@ We welcome contributions! Whether you're fixing a bug, improving documentation, 
    sjt
    ```
 
-## Code of Conduct
+## Code of Conduct & Confidentiality
 
-Please be respectful and professional in all interactions. We aim to foster a collaborative and inclusive environment for everyone.
+This project is proprietary and confidential. Standard professional conduct is expected in all internal interactions.
 
 ---
 

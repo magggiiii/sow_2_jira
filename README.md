@@ -76,4 +76,4 @@ npx caliber init
 
 ## 📄 License
 
-MIT © 2026 [Mageswaran](https://calib.dev/mageswaran)
+Proprietary and Confidential. © 2026 Mageswaran.

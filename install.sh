@@ -149,10 +149,12 @@ if [ -n "$SHELL_RC_FILE" ]; then
     echo -e "${GREEN}[OK]${NC} Command 'sjt' registered in $SHELL_RC_FILE"
 fi
 
-# 7. Final Instructions
+# 7. Final Instructions & Auto-Reload
 echo -e "\n--------------------------------------------------"
 echo -e "${GREEN}Configuration Complete!${NC}"
-echo -e "1. Restart your terminal."
-echo -e "2. Type ${BLUE}sjt${NC} to launch."
-echo -e "3. Open ${BLUE}Settings${NC} (gear icon) in the UI to add your API keys."
+echo -e "The command ${BLUE}sjt${NC} is now ready to use."
+echo -e "Reloading your shell to apply changes..."
 echo -e "--------------------------------------------------\n"
+
+# Replace the current shell with a new one to apply aliases immediately
+exec "$SHELL"

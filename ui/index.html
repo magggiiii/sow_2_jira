@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOW to Jira Review</title>
+    <link rel="stylesheet" href="/static/styles.css?v=4">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>SOW to Jira</h2>
+                <button id="themeToggle" class="btn btn-outline" style="min-height: auto; padding: var(--space-4);">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="divider"></div>
+
+            <div class="form-group" id="sessionListContainer">
+                <h3>Recent SOWs</h3>
+                <select id="sessionSwitcher" class="input-field" style="margin-bottom: var(--space-8);">
+                    <option value="">-- New SOW --</option>
+                </select>
+                <button class="btn btn-outline" id="btnNewSession" style="width: 100%; display: none;">Start New Extraction</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-group" id="newExtractionContainer">
+                <h3>Extraction Config</h3>
+                <input type="file" id="pdfUpload" accept=".pdf" style="display: none;">
+                <div class="upload-zone" id="uploadZone">
+                    <p id="uploadLabel">Click or drop SOW PDF here</p>
+                </div>
+                
+                <div id="processConfig" style="display: flex; gap: var(--space-12); flex-direction: column;">
+                    <div class="form-group" style="display: none;">
+                        <label class="metric-label">LLM Provider</label>
+                        <select id="llmMode" class="input-field">
+                            <option value="custom" selected>Custom (Provider string via .env)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="metric-label">Jira Hierarchy</label>
+                        <select id="jiraHierarchy" class="input-field">
+                            <option value="epic_task">Epic > Task</option>
+                            <option value="flat">Flat (Tasks only)</option>
+                            <option value="story_subtask">Story > Sub-task</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="metric-label">Project Key</label>
+                        <input type="text" id="projectKey" class="input-field" value="PROJ">
+                    </div>
+                    <div class="form-group">
+                        <label class="metric-label" title="Max nodes to extract from PDF">Max Nodes (DoW Protect)</label>
+                        <input type="number" id="maxNodes" class="input-field" value="200" min="1" max="1000">
+                    </div>
+                    <button class="btn btn-primary" id="btnStartProcess">Start Extraction</button>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-group">
+                <h3>Overview</h3>
+                <div class="metrics-grid">
+                    <div class="metric-card metric-total">
+                        <span class="metric-label">Total Tasks</span>
+                        <span class="metric-value" id="statsTotal">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">Approved</span>
+                        <span class="metric-value" style="color: var(--success);" id="statsApproved">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">Rejected</span>
+                        <span class="metric-value" id="statsRejected" style="color: var(--error);">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">Pending</span>
+                        <span class="metric-value" id="statsPending" style="color: var(--warning);">0</span>
+                    </div>
+                    <div class="metric-card">
+                        <span class="metric-label">Pushed</span>
+                        <span class="metric-value" id="statsPushed">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-group">
+                <h3>Filters</h3>
+                <label class="checkbox-group">
+                    <input type="checkbox" id="filterPending" checked> Pending
+                </label>
+                <label class="checkbox-group">
+                    <input type="checkbox" id="filterApproved" checked> Approved
+                </label>
+                <label class="checkbox-group">
+                    <input type="checkbox" id="filterRejected"> Rejected
+                </label>
+                <label class="checkbox-group">
+                    <input type="checkbox" id="filterFlagged"> Flagged only
+                </label>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="form-group">
+                <h3>Global Actions</h3>
+                <button class="btn btn-primary" id="btnPushJira" style="width: 100%;">🚀 Push to Jira</button>
+                <button class="btn btn-outline" id="btnApproveAll" style="width: 100%;">Approve All Pending</button>
+                <button class="btn btn-outline" id="btnSettings" style="width: 100%; margin-top: var(--space-8);">⚙️ Settings</button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Progress Overlay -->
+            <div id="progressOverlay" class="progress-overlay" style="display: none;">
+                <div class="progress-card">
+                    <h2 id="progressStepTitle">Step 1: Parsing PDF...</h2>
+                    <p id="progressMessage" style="margin-bottom: var(--space-16);">Initializing pipeline...</p>
+                    <div class="progress-bar-bg">
+                        <div id="progressBarFill" class="progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                    <p class="metric-label" style="margin-top: var(--space-8); text-align: right;" id="progressPercentage">0%</p>
+                    
+                    <div class="log-console" id="logConsole" style="margin-top: var(--space-24); height: 150px; overflow-y: auto; background: var(--bg-app); padding: var(--space-12); border-radius: var(--radius-sm); font-family: monospace; font-size: var(--text-xs); border: 1px solid var(--border-strong);">
+                        <!-- Logs will be inserted here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Modal -->
+            <div id="settingsModal" class="progress-overlay" style="display: none;">
+                <div class="progress-card" style="max-width: 600px;">
+                    <h2 style="margin-bottom: var(--space-24);">LLM & Environment Settings</h2>
+                    
+                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                        <label class="metric-label">Universal LLM API Key (optional for Ollama)</label>
+                        <input type="password" id="universalApiKey" class="input-field" placeholder="sk-...">
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                        <label class="metric-label">Model String (LiteLLM format)</label>
+                        <input type="text" id="universalModel" class="input-field" placeholder="gpt-4o, claude-3-opus, ollama/qwen...">
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                        <label class="metric-label">API Base URL (Optional)</label>
+                        <input type="text" id="universalApiBase" class="input-field" placeholder="https://api.openai.com/v1">
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                        <label class="metric-label">Jira Server URL</label>
+                        <input type="text" id="jiraServerUrl" class="input-field" placeholder="https://your-domain.atlassian.net">
+                    </div>
+                    
+                    <div class="form-group" style="margin-bottom: var(--space-24);">
+                        <label class="metric-label">Jira API Token (or PAT / Password)</label>
+                        <input type="password" id="jiraApiToken" class="input-field" placeholder="Your API Token...">
+                    </div>
+                    
+                    <div style="display: flex; gap: var(--space-12); justify-content: flex-end;">
+                        <button class="btn btn-outline" id="btnCancelSettings">Cancel</button>
+                        <button class="btn btn-primary" id="btnSaveSettings">Save Settings</button>
+                    </div>
+                </div>
+            </div>
+
+            <header class="page-header">
+                <h1>SOW Task Review</h1>
+                <p>Review and refine deliverables extracted from your Statement of Work.</p>
+                <p style="margin-top: var(--space-8);" id="showingCount">Showing 0 tasks</p>
+            </header>
+
+            <div class="task-list" id="taskList">
+                <!-- Task Cards will be dynamically inserted here -->
+            </div>
+        </main>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <template id="taskCardTemplate">
+        <div class="task-card">
+            <div class="task-header">
+                <div class="task-title-area">
+                    <div class="status-indicator"></div>
+                    <span class="task-title-text"></span>
+                    <div class="task-badges"></div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="chevron">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+            </div>
+            
+            <div class="task-body">
+                <div class="task-body-content">
+                    <div class="task-details">
+                        <div class="source-ref"></div>
+                        <div class="form-group">
+                            <label class="metric-label">Title</label>
+                            <input type="text" class="input-field task-edit-title">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="metric-label">Short Description</label>
+                            <textarea class="input-field task-edit-desc"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="metric-label">Use Case</label>
+                            <textarea class="input-field task-edit-usecase"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="metric-label">Acceptance Criteria</label>
+                            <textarea class="input-field task-edit-ac"></textarea>
+                        </div>
+
+                        <div class="metrics-grid">
+                            <div class="form-group">
+                                <label class="metric-label">Considerations & Constraints</label>
+                                <textarea class="input-field task-edit-cc"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="metric-label">Deliverables</label>
+                                <textarea class="input-field task-edit-del"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="task-actions">
+                        <button class="btn btn-success btn-approve">Approve</button>
+                        <button class="btn btn-danger btn-reject">Reject</button>
+                        <button class="btn btn-outline btn-save">Save Edits</button>
+                        
+                        <div class="task-status-text" style="font-size: var(--text-sm); font-weight: 500;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

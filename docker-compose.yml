@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: sow-to-jira-app
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ${SOW_DATA_HOME:-./data}:/app/data
+      - ./.env:/app/.env
+    environment:
+      - SOW_DATA_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+networks:
+  default:
+    name: sow-to-jira-network

@@ -1,0 +1,39 @@
+{
+  "known_section_headers": [
+    "Scope of Work",
+    "Deliverables",
+    "Acceptance Criteria",
+    "Timeline",
+    "Milestones",
+    "Technical Requirements",
+    "Functional Requirements",
+    "Non-Functional Requirements",
+    "Assumptions",
+    "Dependencies",
+    "Out of Scope",
+    "Payment Terms",
+    "Change Management"
+  ],
+  "skip_sections": [
+    "Table of Contents",
+    "Revision History",
+    "Signatures",
+    "Legal Terms",
+    "Confidentiality",
+    "Appendix"
+  ],
+  "jira": {
+    "project_key": "PROJ",
+    "task_issue_type": "Task",
+    "story_issue_type": "Story",
+    "epic_issue_type": "Epic",
+    "subtask_issue_type": "Sub-task"
+  },
+  "pipeline": {
+    "max_gap_recovery_iterations": 2,
+    "chunk_overlap_lines": 3,
+    "pageindex_max_pages_per_node": 10,
+    "pageindex_max_tokens_per_node": 20000,
+    "max_section_chars": 16000
+  }
+}

@@ -1,0 +1,39 @@
+# Virtual environments
+venv/
+.venv/
+
+# Secrets
+.env
+
+# Runtime data
+data/*.db
+data/*.json
+data/*.pdf
+data/logs/
+data/parser_output/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# PageIndex runtime output
+logs/
+results/
+
+# IDE & OS
+.streamlit/
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# AI session artifacts (not source code)
+GEMINI_*.md
+impeccable_reference/
+
+# Cloned repos (deps now in requirements.txt)
+repo/

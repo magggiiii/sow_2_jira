@@ -1,0 +1,219 @@
+# pipeline/orchestrator.py
+
+import json
+from pathlib import Path
+from rich import print as rprint
+from rich.progress import Progress, SpinnerColumn, TextColumn
+
+from models.schemas import (
+    RunConfig, ManagedTask, TaskStatus, TaskFlag, SourceRef, JiraHierarchy
+)
+from pipeline.indexer import DocumentIndexer
+from pipeline.coverage import CoverageTracker
+from pipeline.llm_client import LLMClient
+from pipeline.llm_router import configure_litellm_for_mode
+from pipeline.agents.extraction import TaskExtractionAgent
+from pipeline.agents.state import TaskStateAgent
+from pipeline.agents.deduplication import DeduplicationAgent
+from pipeline.agents.gap_recovery import GapRecoveryAgent
+from audit.logger import AuditLogger
+from pipeline.observability import logger, tracer, trace_span
+import os
+
+TREE_CACHE_PATH = Path("data/document_tree.json")
+
+
+class PipelineOrchestrator:
+
+    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None):
+        self.config = config
+        self.app_config = app_config
+        self.audit = audit
+        self.status_callback = status_callback
+
+        # Build LLM client
+        self.llm = LLMClient(
+            mode=config.llm_mode,
+            audit_logger=audit,
+            run_id=config.run_id,
+        )
+
+        # Build agents
+        threshold = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHOLD", "0.6"))
+        dedup_threshold = float(os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.85"))
+        max_gap_iter = app_config["pipeline"]["max_gap_recovery_iterations"]
+        max_section_chars = app_config["pipeline"].get("max_section_chars", 16000)
+
+        self.extraction_agent = TaskExtractionAgent(
+            self.llm, audit, config.run_id, threshold, max_section_chars
+        )
+        self.state_agent = TaskStateAgent(audit, config.run_id)
+        self.dedup_agent = DeduplicationAgent(self.llm, audit, config.run_id, dedup_threshold)
+        self.gap_agent = GapRecoveryAgent(self.llm, audit, config.run_id, max_gap_iter)
+
+        # Configure litellm for PageIndex and build indexer
+        pageindex_model = configure_litellm_for_mode(config.llm_mode)
+        self.indexer = DocumentIndexer(self.app_config, model=pageindex_model)
+
+    def _update_status(self, step: int, message: str, progress: float = 0.0):
+        if self.status_callback:
+            self.status_callback(step, message, progress)
+
+    def _build_or_load_tree(self, pdf_path: str) -> list[dict]:
+        if self.config.skip_indexing and TREE_CACHE_PATH.exists():
+            logger.info("Skipping indexing, loading from cache")
+            rprint("[yellow]--skip-indexing: loading tree from cache[/yellow]")
+            with open(TREE_CACHE_PATH) as f:
+                tree = json.load(f)
+            self.indexer.last_tree = tree
+            return self.indexer.flatten_tree(tree)
+
+        logger.info("Building document tree index via PageIndex")
+        rprint("[cyan]Building document tree via PageIndex...[/cyan]")
+        nodes = self.indexer.build_tree(pdf_path)
+
+        # Cache for future skip-indexing runs
+        TREE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if hasattr(self.indexer, "last_tree") and self.indexer.last_tree:
+            with open(TREE_CACHE_PATH, "w") as f:
+                json.dump(self.indexer.last_tree, f, indent=2)
+
+        return nodes
+
+    @trace_span("PIPELINE_RUN", agent="Orchestrator")
+    def run(self) -> list[ManagedTask]:
+        """
+        Full pipeline. Returns final task list ready for review UI.
+        Saves checkpoint to data/pipeline_output.json after completion.
+        """
+        logger.info(f"Starting pipeline run ID: {self.config.run_id}")
+        rprint(f"\n[bold cyan]═══ SOW-to-Jira Pipeline ═══[/bold cyan]")
+        rprint(f"Run ID: {self.config.run_id}")
+        rprint(f"LLM Mode: {self.config.llm_mode.value}")
+        rprint(f"Jira Hierarchy: {self.config.jira_hierarchy.value}\n")
+
+        # ── Step 1-2: Parse + Index via PageIndex ────────────────────────────
+        with tracer.start_as_current_span("STEP_1_2_PAGEINDEX"):
+            self._update_status(1, "Running PageIndex (parse + tree build)...", 0.05)
+            rprint("[bold]Step 1/5:[/bold] Running PageIndex (parse + tree build)...")
+            nodes = self._build_or_load_tree(self.config.sow_pdf_path)
+
+        # ── Step 2: Initialize Coverage Tracker & Safety Check ───────────────
+        MAX_NODES = self.config.max_nodes
+        if len(nodes) > MAX_NODES:
+            error_msg = f"Denial of Wallet Protection: PDF generated {len(nodes)} sections, max allowed is {MAX_NODES}."
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        self._update_status(2, "Initializing coverage tracker...", 0.30)
+        rprint("[bold]Step 2/5:[/bold] Initializing coverage tracker...")
+        coverage = CoverageTracker(nodes)
+
+        # ── Step 3: Chunk Loop — Extract + State per node ─────────────────────
+        with tracer.start_as_current_span("STEP_3_EXTRACT_LOOP") as span:
+            span.set_attribute("node_count", len(nodes))
+            self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
+            rprint(f"[bold]Step 3/5:[/bold] Extracting tasks from {len(nodes)} nodes...")
+            all_closed_tasks: list[ManagedTask] = []
+            open_tasks: list[ManagedTask] = []
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+            ) as progress:
+                task_bar = progress.add_task("Processing nodes...", total=len(nodes))
+
+                for i, node in enumerate(nodes):
+                    with tracer.start_as_current_span(f"PROCESS_NODE_{node['node_id']}"):
+                        progress.update(task_bar, description=f"Node: {node['title'][:50]}")
+                        self._update_status(3, f"Node: {node['title'][:30]}", 0.40 + (0.40 * (i/len(nodes))))
+
+                        # Get text for this node (PageIndex provides it directly)
+                        section_text = self.indexer.get_node_text(node)
+
+                        # Extract (hierarchy-aware)
+                        raw_tasks = self.extraction_agent.extract(
+                            node, section_text, 
+                            hierarchy=self.config.jira_hierarchy.value
+                        )
+
+                        # State management
+                        open_tasks, newly_closed = self.state_agent.process(
+                            raw_tasks, open_tasks, node
+                        )
+
+                        # Mark coverage
+                        for task in open_tasks + newly_closed:
+                            coverage.mark_covered(node["node_id"], str(task.id))
+
+                        all_closed_tasks.extend(newly_closed)
+                        progress.advance(task_bar)
+
+            # Force-close remaining open tasks
+            forced_closed = self.state_agent.close_all_remaining(open_tasks)
+            all_closed_tasks.extend(forced_closed)
+
+        logger.success(f"Extracted {len(all_closed_tasks)} raw tasks")
+        rprint(f"[green]Extracted {len(all_closed_tasks)} raw tasks[/green]")
+
+        # ── Step 4: Deduplication ─────────────────────────────────────────────
+        with tracer.start_as_current_span("STEP_4_DEDUP"):
+            self._update_status(4, "Deduplicating tasks...", 0.85)
+            rprint("[bold]Step 4/5:[/bold] Deduplicating tasks...")
+            deduplicated = self.dedup_agent.deduplicate(all_closed_tasks)
+            rprint(f"[green]{len(deduplicated)} tasks after deduplication[/green]")
+
+        # ── Step 5b: Gap Recovery ─────────────────────────────────────────────
+        report = coverage.coverage_report()
+        logger.info(f"Coverage Report: {report['coverage_pct']}%")
+        rprint(f"Coverage: {report['coverage_pct']}% ({report['covered_nodes']}/{report['total_nodes']} nodes)")
+
+        if report["gap_nodes"] > 0:
+            with tracer.start_as_current_span("STEP_4B_GAP_RECOVERY"):
+                self._update_status(4, f"Gap recovery on {report['gap_nodes']} nodes...", 0.90)
+                rprint(f"[yellow]Running gap recovery on {report['gap_nodes']} uncovered nodes...[/yellow]")
+                gaps = coverage.get_gaps(min_text_length=100)
+                recovered_pairs = self.gap_agent.recover(gaps, self.indexer)
+
+                if recovered_pairs:
+                    recovered_managed = []
+                    for raw_task, actual_node in recovered_pairs:
+                        open_tasks_tmp, closed_tmp = self.state_agent.process(
+                            [raw_task], [], actual_node
+                        )
+                        recovered_managed.extend(open_tasks_tmp + closed_tmp)
+
+                    # Force close any still open
+                    recovered_managed = self.state_agent.close_all_remaining(recovered_managed)
+
+                    # Merge with main list and re-dedup
+                    combined = deduplicated + recovered_managed
+                    deduplicated = self.dedup_agent.deduplicate(combined)
+                    rprint(f"[green]After gap recovery: {len(deduplicated)} tasks[/green]")
+
+        # ── Step 5: Save Checkpoint ───────────────────────────────────────────
+        with tracer.start_as_current_span("STEP_5_SAVE"):
+            self._update_status(5, "Saving pipeline output...", 0.95)
+            rprint("[bold]Step 5/5:[/bold] Saving pipeline output...")
+            checkpoint_path = Path(f"data/sessions/{self.config.run_id}/pipeline_output.json")
+            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(checkpoint_path, "w") as f:
+                json.dump(
+                    {
+                        "run_id": self.config.run_id,
+                        "config": self.config.model_dump(mode="json"),
+                        "tasks": [t.model_dump(mode="json") for t in deduplicated],
+                        "coverage_report": report,
+                    },
+                    f,
+                    indent=2,
+                    default=str,
+                )
+
+        logger.success(f"Pipeline complete! {len(deduplicated)} tasks ready.")
+        rprint(f"\n[bold green]Pipeline complete![/bold green]")
+        rprint(f"Total tasks ready for review: [bold]{len(deduplicated)}[/bold]")
+        rprint(f"Checkpoint saved: {checkpoint_path}\n")
+
+        return deduplicated

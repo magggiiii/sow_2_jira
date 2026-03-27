@@ -140,11 +140,12 @@ fi
 if [ -n "$SHELL_RC_FILE" ]; then
     LAUNCH_CMD="alias sjt='export SOW_DATA_HOME=\"$SOW_DATA\" && export SOW_ENV_FILE=\"$GLOBAL_ENV\" && cd \"$SOW_SOURCE\" && docker-compose -f docker-compose.yml up -d && (open http://localhost:8000 || xdg-open http://localhost:8000 || echo \"Open http://localhost:8000 in your browser\")'"
     
-    if grep -q "alias sjt=" "$SHELL_RC_FILE"; then
-        sed -i '' "s|alias sjt=.*|$LAUNCH_CMD|" "$SHELL_RC_FILE" 2>/dev/null || sed -i "s|alias sjt=.*|$LAUNCH_CMD|" "$SHELL_RC_FILE"
-    else
-        echo -e "\n# SOW-to-Jira Alias\n$LAUNCH_CMD" >> "$SHELL_RC_FILE"
-    fi
+    # Create a temporary file without the existing sjt alias
+    touch "$SHELL_RC_FILE"
+    grep -v "alias sjt=" "$SHELL_RC_FILE" > "$SHELL_RC_FILE.tmp" || true
+    echo -e "\n# SOW-to-Jira Alias\n$LAUNCH_CMD" >> "$SHELL_RC_FILE.tmp"
+    mv "$SHELL_RC_FILE.tmp" "$SHELL_RC_FILE"
+    
     echo -e "${GREEN}[OK]${NC} Command 'sjt' registered in $SHELL_RC_FILE"
 fi
 

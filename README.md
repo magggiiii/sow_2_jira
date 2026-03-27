@@ -14,18 +14,19 @@ Transform complex Statement of Work (SOW) PDFs into testable, hierarchical Jira 
 
 ---
 
-## 🛠️ Quick Start (Guided Install)
-
-Run the following command in your terminal to automatically set up the environment, install dependencies, and launch the application:
-
-### macOS / Linux
+### macOS (Intel & Apple Silicon)
 ```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh?v=$(date +%s)" | bash
+curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_mac.sh?v=$(date +%s)" | bash
+```
+
+### Ubuntu / Debian
+```bash
+curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_ubuntu.sh?v=$(date +%s)" | bash
 ```
 
 ### Windows (CMD & PowerShell)
 ```cmd
-powershell -ExecutionPolicy Bypass -Command "irm 'https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.ps1?v=$(Get-Date -UFormat %s)' | iex"
+powershell -ExecutionPolicy Bypass -Command "irm 'https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_windows.ps1?v=$(Get-Date -UFormat %s)' | iex"
 ```
 
 ---

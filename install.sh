@@ -110,8 +110,13 @@ if ! docker info &> /dev/null; then
         open --background -a Docker
         until docker info &> /dev/null; do sleep 1; done
     else
-        echo -e "${RED}[ERROR] Please start the Docker service (sudo systemctl start docker).${NC}"
-        exit 1
+        if confirm "Would you like me to start the Docker service for you (requires sudo)?"; then
+            sudo systemctl start docker
+            until docker info &> /dev/null; do sleep 1; done
+        else
+            echo -e "${RED}[ERROR] Please start the Docker service (sudo systemctl start docker).${NC}"
+            exit 1
+        fi
     fi
 fi
 

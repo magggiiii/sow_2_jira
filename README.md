@@ -20,12 +20,12 @@ Run the following command in your terminal to automatically set up the environme
 
 ### macOS / Linux
 ```bash
-curl -fsSL https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh | bash
+curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh?v=$(date +%s)" | bash
 ```
 
 ### Windows (CMD & PowerShell)
 ```cmd
-powershell -ExecutionPolicy Bypass -Command "irm https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm 'https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.ps1?v=$(Get-Date -UFormat %s)' | iex"
 ```
 
 ---

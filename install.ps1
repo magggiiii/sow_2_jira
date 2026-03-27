@@ -14,6 +14,25 @@ $Red = "`e[31m"
 $Yellow = "`e[33m"
 $Reset = "`e[0m"
 
+# 1. Setup Persistence & Source Folders
+$SowHome = Join-Path $HOME ".sow_to_jira"
+$SowSource = Join-Path $SowHome "source"
+$SowData = Join-Path $SowHome "data"
+if (!(Test-Path $SowData)) { New-Item -ItemType Directory -Path $SowData -Force | Out-Null }
+
+# 2. Bootstrap Repository
+Write-Host "$Blue [INFO] Bootstrapping repository... $Reset"
+if (Test-Path $SowSource) {
+    Write-Host "$Blue [INFO] Updating existing source... $Reset"
+    Set-Location $SowSource
+    git pull origin main | Out-Null
+} else {
+    Write-Host "$Blue [INFO] Cloning repository to $SowSource... $Reset"
+    git clone https://calib.dev/mageswaran/sow_2_jira.git $SowSource | Out-Null
+    Set-Location $SowSource
+}
+
+# 3. Display Art
 if (Test-Path "art.md") {
     Write-Host "$Blue"
     Get-Content "art.md"
@@ -24,9 +43,9 @@ if (Test-Path "art.md") {
 
 Write-Host "Starting guided setup for your portable extraction engine...`n"
 
-# 2. Check/Install Docker
+# 4. Check/Install Docker
 if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Host "$Yellow [!] Docker is not installed.$Reset"
+    Write-Host "$Yellow [!] Docker is not installed. $Reset"
     if (Confirm-Action "Would you like me to install Docker Desktop for you?") {
         if (Get-Command winget -ErrorAction SilentlyContinue) {
             Write-Host "$Blue [INFO] Installing Docker Desktop via Winget...$Reset"
@@ -38,10 +57,10 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
             Invoke-WebRequest -Uri $url -OutFile $out
             Start-Process $out -Wait
         }
-        Write-Host "$Yellow [ACTION] Please restart your computer after Docker installation completes, then run this script again.$Reset"
+        Write-Host "$Yellow [ACTION] Please restart your computer and run this script again. $Reset"
         exit 0
     } else {
-        Write-Host "$Red [ERROR] Docker is required to run SOW-to-Jira.$Reset"
+        Write-Host "$Red [ERROR] Docker is required. $Reset"
         exit 1
     }
 }
@@ -50,31 +69,26 @@ if (!(Get-Command docker -ErrorAction SilentlyContinue)) {
 docker info | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "$Yellow [!] Docker is installed but not running.$Reset"
-    Write-Host "$Blue [INFO] Starting Docker Desktop...$Reset"
-    & "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-    Write-Host "Waiting for Docker to start..."
-    until (docker info) { Start-Sleep -s 2 }
+    if (Test-Path "C:\Program Files\Docker\Docker\Docker Desktop.exe") {
+        Write-Host "$Blue [INFO] Starting Docker Desktop...$Reset"
+        & "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+        until (docker info) { Start-Sleep -s 1 }
+    } else {
+        Write-Host "$Red [ERROR] Please start Docker Desktop and try again. $Reset"
+        exit 1
+    }
 }
 
-Write-Host "$Green [OK]$Reset Docker is ready."
+Write-Host "$Green [OK]$Reset Docker is ready. "
 
-# 3. Setup Persistence Folder
-$SowHome = Join-Path $HOME ".sow_to_jira"
-$SowData = Join-Path $SowHome "data"
-if (!(Test-Path $SowData)) {
-    New-Item -ItemType Directory -Force -Path $SowData | Out-Null
-}
-Write-Host "$Green [OK]$Reset Global data directory created at $SowHome"
-
-# 4. Global Environment Scaffolding
+# 5. Global Environment Scaffolding
 $GlobalEnv = Join-Path $SowHome ".env"
 if (!(Test-Path $GlobalEnv)) {
     Copy-Item ".env.example" $GlobalEnv
     Write-Host "$Green [OK]$Reset Initialized global .env at $GlobalEnv"
 }
 
-# 5. Native Command Registration (sjt)
-$InstallDir = $PSScriptRoot
+# 6. Native Command Registration (sjt)
 $ProfilePath = $PROFILE
 if (!(Test-Path $ProfilePath)) { New-Item -ItemType File -Path $ProfilePath -Force | Out-Null }
 
@@ -84,7 +98,7 @@ $SjtFunction = @"
 function sjt {
     `$env:SOW_DATA_HOME = "$SowData"
     `$env:SOW_ENV_FILE = "$GlobalEnv"
-    Set-Location "$InstallDir"
+    Set-Location "$SowSource"
     docker-compose -f docker-compose.yml up -d
     Start-Process "http://localhost:8000"
 }
@@ -92,10 +106,10 @@ function sjt {
 
 if ((Get-Content $ProfilePath | Select-String "function sjt {").Count -eq 0) {
     Add-Content $ProfilePath $SjtFunction
-    Write-Host "$Green [OK]$Reset Added 'sjt' command to your profile."
+    Write-Host "$Green [OK]$Reset Command 'sjt' registered in your profile."
 }
 
-# 6. Final Instructions
+# 7. Final Instructions
 Write-Host "`n--------------------------------------------------"
 Write-Host "$Green Configuration Complete! $Reset"
 Write-Host "1. Restart your terminal."

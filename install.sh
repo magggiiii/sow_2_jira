@@ -24,7 +24,28 @@ confirm() {
     esac
 }
 
-# 1. Display Art
+# 1. Setup Persistence & Source Folders
+SOW_HOME="$HOME/.sow_to_jira"
+SOW_SOURCE="$SOW_HOME/source"
+SOW_DATA="$SOW_HOME/data"
+mkdir -p "$SOW_DATA"
+
+# 2. Bootstrap Repository
+echo -e "${BLUE}[INFO] Bootstrapping repository...${NC}"
+if [ -d "$SOW_SOURCE" ]; then
+    echo -e "${BLUE}[INFO] Updating existing source...${NC}"
+    cd "$SOW_SOURCE" && git pull origin main &> /dev/null || true
+else
+    echo -e "${BLUE}[INFO] Cloning repository to $SOW_SOURCE...${NC}"
+    git clone https://calib.dev/mageswaran/sow_2_jira.git "$SOW_SOURCE" &> /dev/null || {
+        echo -e "${RED}[ERROR] Failed to clone repository. Please check your internet connection.${NC}"
+        exit 1
+    }
+fi
+
+cd "$SOW_SOURCE"
+
+# 3. Display Art
 if [ -f "art.md" ]; then
     echo -e "${BLUE}"
     cat art.md
@@ -35,7 +56,7 @@ fi
 
 echo -e "Starting guided setup for your portable extraction engine...\n"
 
-# 2. Check/Install Docker
+# 4. Check/Install Docker
 if ! command -v docker &> /dev/null; then
     echo -e "${YELLOW}[!] Docker is not installed.${NC}"
     if confirm "Would you like me to install Docker for you?"; then
@@ -45,20 +66,17 @@ if ! command -v docker &> /dev/null; then
                 echo -e "${BLUE}[INFO] Installing Docker via Homebrew...${NC}"
                 brew install --cask docker
             else
-                echo -e "${RED}[ERROR] Homebrew not found.${NC} Please install Docker Desktop manually: https://www.docker.com/products/docker-desktop"
+                echo -e "${RED}[ERROR] Homebrew not found.${NC} Please install Docker Desktop manually."
                 exit 1
             fi
         elif [ "$OS_TYPE" == "Linux" ]; then
-            echo -e "${BLUE}[INFO] Installing Docker via official script...${NC}"
+            echo -e "${BLUE}[INFO] Installing Docker via official script (requires sudo)...${NC}"
             curl -fsSL https://get.docker.com | sh
             sudo usermod -aG docker "$USER"
             echo -e "${YELLOW}[ACTION] Please log out and back in for Docker group changes to take effect.${NC}"
-        else
-            echo -e "${RED}[ERROR] Unsupported OS for auto-install.${NC} Please install Docker manually."
-            exit 1
         fi
     else
-        echo -e "${RED}[ERROR] Docker is required to run SOW-to-Jira.${NC} Exiting."
+        echo -e "${RED}[ERROR] Docker is required.${NC} Exiting."
         exit 1
     fi
 fi
@@ -67,39 +85,26 @@ fi
 if ! docker info &> /dev/null; then
     echo -e "${YELLOW}[!] Docker is installed but not running.${NC}"
     if [[ "$(uname)" == "Darwin" ]]; then
-        echo -e "${BLUE}[INFO] Attempting to start Docker Desktop...${NC}"
+        echo -e "${BLUE}[INFO] Starting Docker Desktop...${NC}"
         open --background -a Docker
-        echo -e "Waiting for Docker to start..."
         until docker info &> /dev/null; do sleep 1; done
     else
-        echo -e "${RED}[ERROR] Please start the Docker service and try again.${NC}"
+        echo -e "${RED}[ERROR] Please start the Docker service (sudo systemctl start docker).${NC}"
         exit 1
     fi
 fi
 
 echo -e "${GREEN}[OK]${NC} Docker is ready."
 
-# 3. Setup Persistence Folder
-SOW_HOME="$HOME/.sow_to_jira"
-if [ ! -d "$SOW_HOME" ]; then
-    mkdir -p "$SOW_HOME/data"
-    echo -e "${GREEN}[OK]${NC} Global data directory created at $SOW_HOME"
-fi
-
-# 4. Global Environment Scaffolding
+# 5. Global Environment Scaffolding
 GLOBAL_ENV="$SOW_HOME/.env"
 if [ ! -f "$GLOBAL_ENV" ]; then
     cp .env.example "$GLOBAL_ENV"
     echo -e "${GREEN}[OK]${NC} Initialized global .env at $GLOBAL_ENV"
-else
-    echo -e "${BLUE}[INFO]${NC} Using existing global .env at $GLOBAL_ENV"
 fi
 
-# 5. Native Command Registration (sjt)
-INSTALL_DIR=$(pwd)
+# 6. Native Command Registration (sjt)
 SHELL_RC_FILE=""
-
-# Detect shell
 if [[ "$SHELL" == *"zsh"* ]]; then
     SHELL_RC_FILE="$HOME/.zshrc"
 elif [[ "$SHELL" == *"bash"* ]]; then
@@ -107,19 +112,17 @@ elif [[ "$SHELL" == *"bash"* ]]; then
 fi
 
 if [ -n "$SHELL_RC_FILE" ]; then
-    # We explicitly map the global .env to the container
-    LAUNCH_CMD="alias sjt='export SOW_DATA_HOME=\"$SOW_HOME/data\" && export SOW_ENV_FILE=\"$GLOBAL_ENV\" && cd \"$INSTALL_DIR\" && docker-compose -f docker-compose.yml up -d && open http://localhost:8000'"
+    LAUNCH_CMD="alias sjt='export SOW_DATA_HOME=\"$SOW_DATA\" && export SOW_ENV_FILE=\"$GLOBAL_ENV\" && cd \"$SOW_SOURCE\" && docker-compose -f docker-compose.yml up -d && (open http://localhost:8000 || xdg-open http://localhost:8000 || echo \"Open http://localhost:8000 in your browser\")'"
     
     if grep -q "alias sjt=" "$SHELL_RC_FILE"; then
         sed -i '' "s|alias sjt=.*|$LAUNCH_CMD|" "$SHELL_RC_FILE" 2>/dev/null || sed -i "s|alias sjt=.*|$LAUNCH_CMD|" "$SHELL_RC_FILE"
-        echo -e "${GREEN}[OK]${NC} Updated 'sjt' command in $SHELL_RC_FILE"
     else
         echo -e "\n# SOW-to-Jira Alias\n$LAUNCH_CMD" >> "$SHELL_RC_FILE"
-        echo -e "${GREEN}[OK]${NC} Added 'sjt' command to $SHELL_RC_FILE"
     fi
+    echo -e "${GREEN}[OK]${NC} Command 'sjt' registered in $SHELL_RC_FILE"
 fi
 
-# 6. Final Instructions
+# 7. Final Instructions
 echo -e "\n--------------------------------------------------"
 echo -e "${GREEN}Configuration Complete!${NC}"
 echo -e "1. Restart your terminal."

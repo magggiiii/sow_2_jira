@@ -23,9 +23,9 @@ Run the following command in your terminal to automatically set up the environme
 curl -fsSL https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh | bash
 ```
 
-### Windows (PowerShell)
-```powershell
-irm https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.ps1 | iex
+### Windows (CMD & PowerShell)
+```cmd
+powershell -ExecutionPolicy Bypass -Command "irm https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.ps1 | iex"
 ```
 
 ---

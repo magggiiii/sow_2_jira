@@ -3,6 +3,8 @@ import os
 import shutil
 import asyncio
 import threading
+import base64
+import secrets
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime
@@ -15,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import logging
+import httpx
+import time
 
 # Add project root to path for imports
 import sys
@@ -27,11 +31,15 @@ load_dotenv()
 from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
+from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pipeline.observability import trace_span, sync_telemetry
+from pipeline.observability import trace_span, sync_telemetry, logger
 
 app = FastAPI(title="SOW to Jira Pipeline")
+
+DATA_DIR = Path("data")
+settings_manager = SettingsManager(str(DATA_DIR))
 
 @app.on_event("startup")
 def startup_event():
@@ -53,9 +61,15 @@ def startup_event():
                 "llm_mode": "api",
                 "created_at": datetime.utcnow().isoformat()
             }, f)
-        print(f"Migrated legacy data to session: {legacy_id}")
+        logger.info(f"Migrated legacy data to session: {legacy_id}")
 
     sync_telemetry()
+    try:
+        settings = settings_manager.load()
+        if settings:
+            _apply_settings_to_env_legacy(settings)
+    except Exception as e:
+        logger.error(f"Failed to load settings on startup: {e}")
     
     # Filter out frequent status polling from logs
     class PollingFilter(logging.Filter):
@@ -63,6 +77,40 @@ def startup_event():
             return "/api/status" not in record.getMessage()
 
     logging.getLogger("uvicorn.access").addFilter(PollingFilter())
+
+def _apply_settings_to_env_legacy(settings: dict) -> None:
+    provider = settings.get("provider")
+    providers = settings.get("providers", {})
+    provider_settings = providers.get(provider, {}) if provider else {}
+    model = provider_settings.get("model")
+    api_key_enc = provider_settings.get("api_key")
+    base_url = provider_settings.get("base_url")
+    azure_deployment = provider_settings.get("azure_deployment_name")
+    azure_api_version = provider_settings.get("azure_api_version")
+
+    if api_key_enc:
+        try:
+            os.environ["LITELLM_API_KEY"] = settings_manager.decrypt_secret(api_key_enc)
+        except Exception:
+            pass
+    if provider:
+        os.environ["LITELLM_PROVIDER"] = provider
+    if base_url:
+        os.environ["LITELLM_API_BASE"] = base_url
+    if model and provider:
+        os.environ["LITELLM_MODEL"] = build_litellm_model(provider, model, azure_deployment)
+    if azure_api_version:
+        os.environ["AZURE_API_VERSION"] = azure_api_version
+    if azure_deployment:
+        os.environ["AZURE_DEPLOYMENT_NAME"] = azure_deployment
+    if settings.get("jira_server_url"):
+        os.environ["JIRA_SERVER"] = settings["jira_server_url"]
+    jira_token_enc = settings.get("jira_api_token")
+    if jira_token_enc:
+        try:
+            os.environ["JIRA_API_TOKEN"] = settings_manager.decrypt_secret(jira_token_enc)
+        except Exception:
+            pass
 
 # Add Secure CORS Middleware (Trusted Origins)
 # Default to localhost for local deploys, can be overridden by env
@@ -94,6 +142,7 @@ class ProcessingStatus(BaseModel):
     progress: float = 0.0
     error: Optional[str] = None
     run_id: Optional[str] = None
+    kind: str = "pipeline"
     logs: List[str] = []
 
 active_runs: dict[str, ProcessingStatus] = {}
@@ -269,58 +318,180 @@ async def upload_file(file: UploadFile = File(...)):
         
     return {"filename": file.filename}
 
-class SettingsConfig(BaseModel):
-    universal_api_key: Optional[str] = None
-    universal_model: Optional[str] = None
-    universal_api_base: Optional[str] = None
-    jira_server_url: Optional[str] = None
-    jira_api_token: Optional[str] = None
+@app.get("/api/providers")
+def get_providers():
+    return {"providers": PROVIDER_REGISTRY}
+
+MODEL_CACHE = {}  # provider_id: (timestamp, models_list)
+
+def _extract_models_from_response(provider_id: str, data: dict) -> list[str]:
+    if provider_id == "ollama":
+        return [m.get("name") for m in data.get("models", []) if m.get("name")]
+    if provider_id == "azure":
+        return [m.get("id") or m.get("model") for m in data.get("data", []) if m.get("id") or m.get("model")]
+    if provider_id in {"google"}:
+        models = []
+        for m in data.get("models", []):
+            name = m.get("name")
+            if name and name.startswith("models/"):
+                name = name.split("/", 1)[1]
+            if name:
+                models.append(name)
+        return models
+    if provider_id == "cohere":
+        return [m.get("name") for m in data.get("models", []) if m.get("name")]
+    items = data.get("data", [])
+    return [m.get("id") for m in items if m.get("id")]
+
+@app.post("/api/providers/{provider_id}/models")
+async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
+    if provider_id not in PROVIDER_REGISTRY:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+
+    settings = settings_manager.load()
+    provider_settings = settings.get("providers", {}).get(provider_id, {})
+    base_url = resolve_provider_base(provider_id, req.base_url or provider_settings.get("base_url"))
+    if not base_url:
+        raise HTTPException(status_code=400, detail="Base URL is required for this provider")
+    
+    stored_key = None
+    if provider_settings.get("api_key"):
+        try:
+            stored_key = settings_manager.decrypt_secret(provider_settings.get("api_key"))
+        except Exception:
+            stored_key = None
+
+    api_key = req.api_key if req.api_key and req.api_key != "***" else stored_key
+
+    # Cache Check
+    cache_key = f"{provider_id}:{base_url}:{api_key}"
+    if cache_key in MODEL_CACHE:
+        ts, models = MODEL_CACHE[cache_key]
+        if time.time() - ts < 300:  # 5 minute cache
+            return {"success": True, "models": models}
+
+    if provider_id == "azure" and not req.azure_api_version:
+        raise HTTPException(status_code=400, detail="Azure API version is required")
+        
+    if provider_id in {"openai", "openrouter", "groq", "mistral", "together", "zai"}:
+        url = f"{base_url.rstrip('/')}/models"
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    elif provider_id == "anthropic":
+        url = f"{base_url.rstrip('/')}/v1/models"
+        headers = {
+            "x-api-key": api_key or "",
+            "anthropic-version": "2023-06-01",
+        }
+    elif provider_id == "google":
+        url = f"{base_url.rstrip('/')}/models"
+        headers = {"x-goog-api-key": api_key or ""}
+    elif provider_id == "ollama":
+        url = f"{base_url.rstrip('/')}/api/tags"
+        headers = {}
+    elif provider_id == "cohere":
+        url = f"{base_url.rstrip('/')}/models"
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    elif provider_id == "azure":
+        url = f"{base_url.rstrip('/')}/openai/deployments?api-version={req.azure_api_version}"
+        headers = {"api-key": api_key or ""}
+    else:
+        raise HTTPException(status_code=400, detail="Model discovery not supported for provider")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=headers, timeout=8)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
+            data = resp.json()
+            models = sorted({m for m in _extract_models_from_response(provider_id, data) if m})
+            MODEL_CACHE[cache_key] = (time.time(), models)
+            return {"success": True, "models": models}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model discovery failed: {e}")
 
 @app.get("/api/settings")
 def get_settings():
+    try:
+        settings = settings_manager.load()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    provider = settings.get("provider", "openai")
+    providers = settings.get("providers", {})
     return {
-        "universal_api_key": "***" if os.environ.get("LITELLM_API_KEY") else "",
-        "jira_server_url": os.environ.get("JIRA_SERVER", ""),
-        "jira_api_token": "***" if os.environ.get("JIRA_API_TOKEN") else ""
+        "provider": provider,
+        "providers": {
+            k: {
+                "model": v.get("model", ""),
+                "api_key": "***" if v.get("api_key") else "",
+                "base_url": v.get("base_url", ""),
+                "azure_deployment_name": v.get("azure_deployment_name", ""),
+                "azure_api_version": v.get("azure_api_version", ""),
+            }
+            for k, v in providers.items()
+        },
+        "jira_server_url": settings.get("jira_server_url", ""),
+        "jira_api_token": "***" if settings.get("jira_api_token") else "",
     }
 
 @app.post("/api/settings")
 def save_settings(req: SettingsConfig):
-    env_path = Path(".env")
-    env_vars = {}
-    if env_path.exists():
-        with open(env_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line: continue
-                k, v = line.split("=", 1)
-                env_vars[k.strip()] = v.strip()
-                
-    if req.universal_api_key and req.universal_api_key != "***":
-        env_vars["LITELLM_API_KEY"] = req.universal_api_key
-        os.environ["LITELLM_API_KEY"] = req.universal_api_key
+    try:
+        settings = settings_manager.load()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
         
-    if req.universal_model:
-        env_vars["LITELLM_MODEL"] = req.universal_model
-        os.environ["LITELLM_MODEL"] = req.universal_model
-        
-    if req.universal_api_base:
-        env_vars["LITELLM_API_BASE"] = req.universal_api_base
-        os.environ["LITELLM_API_BASE"] = req.universal_api_base
-        
+    provider = req.provider or settings.get("provider") or "openai"
+    prev_provider = settings.get("provider")
+    base_url = resolve_provider_base(provider, req.base_url)
+
+    settings["provider"] = provider
+    settings.setdefault("providers", {})
+    provider_settings = settings["providers"].get(provider, {})
+    prev_model = provider_settings.get("model")
+    provider_settings["model"] = req.model or provider_settings.get("model", "")
+    provider_settings["base_url"] = base_url
+    provider_settings["azure_deployment_name"] = req.azure_deployment_name or provider_settings.get("azure_deployment_name", "")
+    provider_settings["azure_api_version"] = req.azure_api_version or provider_settings.get("azure_api_version", "")
+
+    if req.api_key and req.api_key != "***":
+        provider_settings["api_key"] = settings_manager.encrypt_secret(req.api_key)
+    elif "api_key" not in provider_settings:
+        provider_settings["api_key"] = ""
+
     if req.jira_server_url:
-        env_vars["JIRA_SERVER"] = req.jira_server_url
+        settings["jira_server_url"] = req.jira_server_url
         os.environ["JIRA_SERVER"] = req.jira_server_url
-        
+
     if req.jira_api_token and req.jira_api_token != "***":
-        env_vars["JIRA_API_TOKEN"] = req.jira_api_token
+        settings["jira_api_token"] = settings_manager.encrypt_secret(req.jira_api_token)
         os.environ["JIRA_API_TOKEN"] = req.jira_api_token
-        
-    with open(env_path, "w") as f:
-        for k, v in env_vars.items():
-            f.write(f"{k}={v}\n")
-            
-    return {"message": "Settings saved successfully to .env"}
+    elif "jira_api_token" not in settings:
+        settings["jira_api_token"] = ""
+
+    settings["providers"][provider] = provider_settings
+    settings_manager.save(settings)
+    
+    # Update env for current process (LiteLLM usually reads these once, but we'll try)
+    if req.api_key and req.api_key != "***":
+        os.environ["LITELLM_API_KEY"] = req.api_key
+    os.environ["LITELLM_PROVIDER"] = provider
+    if base_url:
+        os.environ["LITELLM_API_BASE"] = base_url
+    if provider_settings.get("model"):
+        os.environ["LITELLM_MODEL"] = build_litellm_model(provider, provider_settings["model"], provider_settings["azure_deployment_name"])
+
+    if prev_provider != provider:
+        logger.info(f"LLM provider switched: {prev_provider or 'unset'} → {provider}")
+    if prev_model != provider_settings.get("model"):
+        logger.info(f"LLM model switched ({provider}): {prev_model or 'unset'} → {provider_settings.get('model') or 'unset'}")
+    
+    # Invalidate Cache on setting change
+    MODEL_CACHE.clear()
+    
+    return {"message": "Settings saved successfully"}
 
 @app.post("/api/process")
 async def start_processing(req: ProcessRequest, background_tasks: BackgroundTasks):
@@ -407,77 +578,108 @@ class PushRequest(BaseModel):
     jira_hierarchy: Optional[str] = None
     jira_project_key: Optional[str] = None
 
-@app.post("/api/push")
-def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = None):
+def _append_status_log(status: ProcessingStatus, msg: str) -> None:
+    status.logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+    if len(status.logs) > 50:
+        status.logs.pop(0)
+
+def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id: str):
+    status = ProcessingStatus(
+        is_running=True,
+        current_step=1,
+        message="Pushing approved tasks to Jira...",
+        progress=0.05,
+        run_id=run_id,
+        kind="jira_push",
+        logs=[]
+    )
+    active_runs[run_id] = status
+    _append_status_log(status, "Initializing Jira push")
+
     from integrations.jira_client import JiraClient
     from audit.logger import AuditLogger
-    
+
+    try:
+        data = load_data(session_id)
+        run_config = data.get("config", {}) if isinstance(data.get("config"), dict) else {}
+
+        project_key = (req.jira_project_key if (req and req.jira_project_key)
+                       else os.environ.get("JIRA_PROJECT_KEY", run_config.get("jira_project_key", "PROJ")))
+
+        if run_config.get("jira_project_key") != project_key:
+            run_config["jira_project_key"] = project_key
+            data["config"] = run_config
+
+        hierarchy_val = (req.jira_hierarchy if req and req.jira_hierarchy
+                         else run_config.get("jira_hierarchy", "flat"))
+
+        os.environ["JIRA_PROJECT_KEY"] = project_key
+        hierarchy = JiraHierarchy(hierarchy_val)
+
+        tasks_data = data.get("tasks", [])
+        managed_tasks = [ManagedTask(**t) for t in tasks_data]
+        approved_tasks = [t for t in managed_tasks if t.status == TaskStatus.APPROVED]
+
+        if not approved_tasks:
+            status.message = "No approved tasks to push"
+            status.progress = 1.0
+            status.is_running = False
+            _append_status_log(status, "No approved tasks found")
+            return
+
+        audit = AuditLogger()
+        jira = JiraClient(hierarchy, audit, run_config.get("run_id", session_id or "ui"), project_key=project_key)
+
+        status.progress = 0.2
+        _append_status_log(status, f"Pushing {len(approved_tasks)} tasks")
+        results = jira.push_tasks(approved_tasks)
+
+        result_map = {str(r.task_id): r for r in results}
+        for i, t in enumerate(tasks_data):
+            if t.get("status") == "APPROVED":
+                res = result_map.get(str(t.get("id")))
+                if res and res.success:
+                    tasks_data[i]["status"] = "PUSHED"
+
+        save_data(data, session_id)
+
+        total_passed = sum(1 for r in results if r.success)
+        total_failed = len(results) - total_passed
+        overall_success = total_failed == 0
+
+        first_error = next((r.error for r in results if not r.success and r.error), None)
+        message = f"Push complete. {total_passed} passed, {total_failed} failed."
+        if first_error:
+            message += f" First error: {first_error[:100]}..."
+
+        status.progress = 1.0
+        status.message = message
+        _append_status_log(status, message)
+        status.is_running = False
+        if not overall_success:
+            status.error = first_error or "Push completed with failures"
+    except Exception as e:
+        status.error = str(e)
+        status.message = f"Error: {str(e)}"
+        _append_status_log(status, f"Error: {str(e)}")
+        status.is_running = False
+
+@app.post("/api/push")
+def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = None):
+    if session_id and session_id in active_runs and active_runs[session_id].is_running:
+        raise HTTPException(status_code=409, detail="A task is already running for this session")
+
     data = load_data(session_id)
-    run_config = data.get("config", {}) if isinstance(data.get("config"), dict) else {}
-    
-    # Use request values if provided, otherwise fallback to environment, then saved config
-    project_key = (req.jira_project_key if (req and req.jira_project_key) 
-                   else os.environ.get("JIRA_PROJECT_KEY", run_config.get("jira_project_key", "PROJ")))
-    
-    # Save the used project key back to the session if it's different (persistence)
-    if run_config.get("jira_project_key") != project_key:
-        run_config["jira_project_key"] = project_key
-        data["config"] = run_config
-        # We will save entire data at the end after results are updated
-    
-    hierarchy_val = (req.jira_hierarchy if req and req.jira_hierarchy 
-                     else run_config.get("jira_hierarchy", "flat"))
-    
-    os.environ["JIRA_PROJECT_KEY"] = project_key
-    hierarchy = JiraHierarchy(hierarchy_val)
-    
     tasks_data = data.get("tasks", [])
     managed_tasks = [ManagedTask(**t) for t in tasks_data]
-    
     approved_tasks = [t for t in managed_tasks if t.status == TaskStatus.APPROVED]
-    
     if not approved_tasks:
         return {"success": False, "message": "No approved tasks to push", "results": []}
-        
-    audit = AuditLogger()
-    jira = JiraClient(hierarchy, audit, run_config.get("run_id", session_id or "ui"), project_key=project_key)
-    
-    results = jira.push_tasks(approved_tasks)
-    
-    result_map = {str(r.task_id): r for r in results}
-    for i, t in enumerate(tasks_data):
-        if t.get("status") == "APPROVED":
-            res = result_map.get(str(t.get("id")))
-            if res and res.success:
-                tasks_data[i]["status"] = "PUSHED"
-                
-    save_data(data, session_id)
-    
-    total_passed = sum(1 for r in results if r.success)
-    total_failed = len(results) - total_passed
-    overall_success = total_failed == 0
-    
-    first_error = next((r.error for r in results if not r.success and r.error), None)
-    
-    message = f"Push complete. {total_passed} passed, {total_failed} failed."
-    if first_error:
-        message += f" First error: {first_error[:100]}..."
-    
-    return {
-        "success": overall_success,
-        "message": message,
-        "results": [
-            {
-                "task_id": str(r.task_id),
-                "success": r.success,
-                "jira_key": r.jira_issue_key,
-                "url": r.jira_issue_url,
-                "error": r.error,
-                "warning": r.warning
-            }
-            for r in results
-        ]
-    }
+
+    run_id = session_id or f"push-{uuid.uuid4()}"
+    thread = threading.Thread(target=run_push_task, args=(req, session_id, run_id), daemon=True)
+    thread.start()
+    return {"success": True, "started": True, "run_id": run_id, "message": "Push started"}
 
 if __name__ == "__main__":
     import uvicorn

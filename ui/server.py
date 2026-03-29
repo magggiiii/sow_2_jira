@@ -145,6 +145,22 @@ class ProcessingStatus(BaseModel):
     kind: str = "pipeline"
     logs: List[str] = []
 
+class ModelDiscoveryRequest(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    azure_deployment_name: Optional[str] = None
+    azure_api_version: Optional[str] = None
+
+class SettingsConfig(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    azure_deployment_name: Optional[str] = None
+    azure_api_version: Optional[str] = None
+    jira_server_url: Optional[str] = None
+    jira_api_token: Optional[str] = None
+
 active_runs: dict[str, ProcessingStatus] = {}
 active_orchestrators: dict[str, PipelineOrchestrator] = {}
 

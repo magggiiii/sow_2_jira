@@ -12,7 +12,7 @@ This roadmap stabilizes the existing brownfield system in four execution phases:
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Provider Consistency** - Fix provider/model routing and credential persistence behavior
+- [ ] **Phase 1: Provider Consistency** - Fix provider/model routing and credential persistence behavior (Gap closure in progress)
 - [ ] **Phase 2: Runtime Logging Reliability** - Standardize run-time logs, cancellation behavior, and PageIndex logger safety
 - [ ] **Phase 3: Observability Bring-Up** - Make Loki/Tempo/Grafana/Bifrost telemetry path operational end-to-end
 - [ ] **Phase 4: Docker Production Readiness** - Harden compose/images and finalize reproducible local deployment
@@ -27,12 +27,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   1. User switches provider and next run uses selected provider/model without stale carryover.
   2. Inference calls do not fail with provider-prefix or wrong-provider key errors when settings are valid.
   3. Restarting the server preserves working provider credentials and model execution without manual re-entry.
-**Plans**: 3 plans
+**Plans**: 5 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Centralize settings logic and model formatting
-- [ ] 01-02-PLAN.md — Enforce per-run immutable LLM config snapshot in orchestration path
-- [ ] 01-03-PLAN.md — Refactor UI endpoints to use centralized SettingsManager and implement async model discovery
+- [x] 01-01-PLAN.md — Centralize settings logic and model formatting
+- [x] 01-02-PLAN.md — Enforce per-run immutable LLM config snapshot in orchestration path
+- [x] 01-03-PLAN.md — Refactor UI endpoints to use centralized SettingsManager and implement async model discovery
+- [ ] 01-04-PLAN.md — Gap Closure: UI Persistence & Isolation
+- [ ] 01-05-PLAN.md — Gap Closure: Backend Pipeline Concurrency
 
 ### Phase 2: Runtime Logging Reliability
 **Goal**: Pipeline output is clean, consistent, and resilient under retries/cancel events.
@@ -87,7 +89,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Provider Consistency | 0/3 | Not started | - |
+| 1. Provider Consistency | 3/5 | In progress | - |
 | 2. Runtime Logging Reliability | 0/3 | Not started | - |
 | 3. Observability Bring-Up | 0/4 | Not started | - |
 | 4. Docker Production Readiness | 0/3 | Not started | - |

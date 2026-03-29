@@ -33,7 +33,7 @@ Plans:
 - [x] 01-01-PLAN.md — Centralize settings logic and model formatting
 - [x] 01-02-PLAN.md — Enforce per-run immutable LLM config snapshot in orchestration path
 - [x] 01-03-PLAN.md — Refactor UI endpoints to use centralized SettingsManager and implement async model discovery
-- [ ] 01-04-PLAN.md — Gap Closure: UI Persistence & Isolation
+- [x] 01-04-PLAN.md — Gap Closure: UI Persistence & Isolation
 - [ ] 01-05-PLAN.md — Gap Closure: Backend Pipeline Concurrency
 
 ### Phase 2: Runtime Logging Reliability
@@ -89,7 +89,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Provider Consistency | 3/5 | In progress | - |
+| 1. Provider Consistency | 4/5 | In progress | - |
 | 2. Runtime Logging Reliability | 0/3 | Not started | - |
 | 3. Observability Bring-Up | 0/4 | Not started | - |
 | 4. Docker Production Readiness | 0/3 | Not started | - |

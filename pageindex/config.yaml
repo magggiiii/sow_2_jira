@@ -1,5 +1,5 @@
 # PageIndex config — model is set dynamically by the pipeline
-# model: set via pipeline/llm_router.py
+model: ""
 toc_check_page_num: 20
 max_page_num_each_node: 10
 max_token_num_each_node: 20000

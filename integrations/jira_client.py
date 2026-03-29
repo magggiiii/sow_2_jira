@@ -94,6 +94,7 @@ class JiraClient:
                         epic_cache[section] = epic_key
 
                 parent_key = epic_cache.get(section)
+                # Next-Gen Fix: Always pass parent_key to _create_task to be used in 'parent' field
                 result = self._create_task(task, parent_key=parent_key, issue_type=task_type)
                 results.append(result)
 
@@ -111,6 +112,7 @@ class JiraClient:
                         story_cache[section] = story_key
 
                 parent_key = story_cache.get(section)
+                # Next-Gen Fix: Works identically for stories and sub-tasks via 'parent' field
                 result = self._create_task(task, parent_key=parent_key, issue_type=subtask_type)
                 results.append(result)
 
@@ -189,14 +191,8 @@ class JiraClient:
             "labels": self._build_labels(task),
         }
 
-    def _link_to_epic(self, issue_key: str, epic_key: str):
-        """Link an issue to an epic using the Jira API (more reliable than parent field)."""
-        try:
-            self.jira.add_issues_to_epic(epic_key, [issue_key])
-            logger.info(f"Linked {issue_key} → Epic {epic_key}")
-        except Exception as e:
-            logger.warning(f"Could not link {issue_key} to Epic {epic_key}: {e}")
-            # Non-fatal: the task was still created, just not linked
+    # REMOVED _link_to_epic: Standard Agile API is incompatible with Next-Gen projects.
+    # All linking is now handled via the 'parent' field in _create_task.
 
     @trace_span("JIRA_CREATE_ISSUE", agent="JiraClient")
     def _create_task(

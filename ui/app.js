@@ -31,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Session Elements
     const sessionSwitcher = getEl('sessionSwitcher');
     const btnNewSession = getEl('btnNewSession');
+    const btnCollapseAll = getEl('btnCollapseAll');
     const newExtractionContainer = getEl('newExtractionContainer');
     
     // Settings Elements
@@ -46,6 +47,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressBarFill = getEl('progressBarFill');
     const progressPercentage = getEl('progressPercentage');
     const logConsole = getEl('logConsole');
+    const btnCancelProcess = getEl('btnCancelProcess');
+    const btnDeleteSession = getEl('btnDeleteSession');
     
     // Filters
     const fPending = getEl('filterPending');
@@ -133,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (uploadLabel) uploadLabel.textContent = `📄 ${selectedFile.name}`;
                 if (uploadLabel) uploadLabel.style.color = 'var(--accent-primary)';
                 if (processConfig) processConfig.style.display = 'flex';
+                if (btnStartProcess) btnStartProcess.disabled = false;
             }
         });
 
@@ -150,14 +154,64 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.dataTransfer.files.length > 0) {
                 selectedFile = e.dataTransfer.files[0];
                 if (uploadLabel) uploadLabel.textContent = `📄 ${selectedFile.name}`;
-                if (uploadLabel) uploadLabel.style.color = 'var(--accent-primary)';
                 if (processConfig) processConfig.style.display = 'flex';
+                if (btnStartProcess) btnStartProcess.disabled = false;
             }
         });
     }
 
     if (btnStartProcess) {
         btnStartProcess.addEventListener('click', startExtraction);
+    }
+
+    if (btnCancelProcess) {
+        btnCancelProcess.addEventListener('click', async () => {
+            if (!activeSessionId) return;
+            try {
+                // 1. Signal backend
+                fetch(`/api/cancel/${activeSessionId}`, { method: 'POST' });
+                
+                // 2. Immediate UI reset (Home Redirect)
+                if (statusInterval) clearInterval(statusInterval);
+                if (progressOverlay) progressOverlay.style.display = 'none';
+                
+                showToast('Extraction Stopped', 'success');
+                
+                // 3. Reset state
+                activeSessionId = null;
+                localStorage.removeItem('activeSessionId');
+                resetToNewSession();
+                await loadSessions();
+                
+            } catch (e) {
+                showToast('Failed to stop clean', 'error');
+            }
+        });
+    }
+
+    if (btnDeleteSession) {
+        btnDeleteSession.addEventListener('click', async () => {
+            const idToDelete = sessionSwitcher ? sessionSwitcher.value : activeSessionId;
+            if (!idToDelete) {
+                showToast('No session selected', 'warning');
+                return;
+            }
+
+            if (!confirm('Are you sure you want to delete this session?')) return;
+
+            try {
+                const res = await fetch(`/api/sessions/${idToDelete}`, { method: 'DELETE' });
+                if (res.ok) {
+                    showToast('Session deleted', 'success');
+                    activeSessionId = null;
+                    localStorage.removeItem('activeSessionId');
+                    await loadSessions();
+                    resetToNewSession();
+                }
+            } catch (e) {
+                showToast('Failed to delete session', 'error');
+            }
+        });
     }
     
     // --- Session Logic ---
@@ -167,20 +221,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch('/api/sessions');
             const sessions = await res.json();
             
+            // Clear but keep first option
             while (sessionSwitcher.options.length > 1) { sessionSwitcher.remove(1); }
             
-            sessions.forEach(s => {
-                const opt = document.createElement('option');
-                opt.value = s.run_id;
-                const d = new Date(s.created_at).toLocaleString(undefined, {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'
+            if (sessions && Array.isArray(sessions)) {
+                sessions.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.run_id;
+                    const dateStr = s.created_at || new Date().toISOString();
+                    const d = new Date(dateStr).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit'
+                    });
+                    
+                    const label = s.filename || s.run_id;
+                    opt.textContent = `${label} (${d})`;
+                    sessionSwitcher.appendChild(opt);
                 });
-                opt.textContent = `${s.filename} (${d})`;
-                sessionSwitcher.appendChild(opt);
-            });
+            }
             
             if (activeSessionId) sessionSwitcher.value = activeSessionId;
-            if (btnNewSession) btnNewSession.style.display = sessions.length > 0 ? 'block' : 'none';
         } catch (e) {
             console.error("Failed to load sessions", e);
         }
@@ -188,9 +247,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function resetToNewSession() {
         activeSessionId = null;
+        localStorage.removeItem('activeSessionId');
         taskData = { tasks: [], config: {} };
         if (newExtractionContainer) newExtractionContainer.style.display = 'block';
-        if (processConfig) processConfig.style.display = 'none';
+        if (processConfig) processConfig.style.display = 'flex';
+        if (btnStartProcess) btnStartProcess.disabled = true;
         if (uploadLabel) {
             uploadLabel.textContent = 'Click or drop SOW PDF here';
             uploadLabel.style.color = '';
@@ -215,8 +276,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnNewSession) {
         btnNewSession.addEventListener('click', () => {
-            sessionSwitcher.value = '';
+            if (sessionSwitcher) sessionSwitcher.value = '';
             resetToNewSession();
+        });
+    }
+
+    if (btnCollapseAll) {
+        btnCollapseAll.addEventListener('click', () => {
+            const allGroups = document.querySelectorAll('.task-group');
+            const allCards = document.querySelectorAll('.task-card');
+            
+            // Toggle groups (Collapse all)
+            allGroups.forEach(group => {
+                group.classList.add('collapsed');
+                const svg = group.querySelector('.group-chevron');
+                if (svg) svg.style.transform = 'rotate(-90deg)';
+            });
+
+            // Toggle cards (Collapse all)
+            allCards.forEach(card => {
+                card.classList.remove('expanded');
+                const svg = card.querySelector('.chevron');
+                if (svg) svg.style.transform = '';
+            });
+
+            showToast('All items collapsed', 'success');
         });
     }
 
@@ -252,6 +336,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (processRes.ok) {
                 const data = await processRes.json();
                 activeSessionId = data.run_id;
+                localStorage.setItem('activeSessionId', activeSessionId);
                 
                 if (progressOverlay) progressOverlay.style.display = 'flex';
                 if (logConsole) logConsole.innerHTML = '';
@@ -306,6 +391,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 if (!status.is_running) {
+                    localStorage.removeItem('activeSessionId');
                     if (status.error) {
                         clearInterval(statusInterval);
                         if (progressMessage) {
@@ -629,8 +715,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 3000);
     }
 
-    startStatusPolling();
+    // Visibility listener to resume polling when tab becomes focused
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && activeSessionId) {
+            console.log("Tab focused, resuming status sync...");
+            startStatusPolling();
+        }
+    });
+
+    // Auto-resume logic for refreshes or tabbing back into a suspended tab
+    async function autoResumeSession() {
+        const storedId = localStorage.getItem('activeSessionId');
+        if (storedId) {
+            console.log("Auto-resuming session:", storedId);
+            activeSessionId = storedId;
+            if (progressOverlay) progressOverlay.style.display = 'flex';
+            if (newExtractionContainer) newExtractionContainer.style.display = 'none';
+            startStatusPolling();
+        }
+    }
+
+    // Initialize
     loadSessions().then(() => {
-        loadData();
+        autoResumeSession();
+        if (!localStorage.getItem('activeSessionId')) {
+            loadData();
+        }
     });
 });

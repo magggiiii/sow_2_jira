@@ -119,7 +119,7 @@ def toc_detector_single_page(content, model=None):
     response = llm_completion(model=model, prompt=prompt)
     # print('response', response)
     json_content = extract_json(response)    
-    return json_content['toc_detected']
+    return json_content.get('toc_detected', 'no')
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
@@ -137,7 +137,7 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
     prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
     response = llm_completion(model=model, prompt=prompt)
     json_content = extract_json(response)
-    return json_content['completed']
+    return json_content.get('completed', 'no')
 
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
@@ -155,7 +155,7 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     prompt = prompt + '\n Raw Table of contents:\n' + content + '\n Cleaned Table of contents:\n' + toc
     response = llm_completion(model=model, prompt=prompt)
     json_content = extract_json(response)
-    return json_content['completed']
+    return json_content.get('completed', 'no')
 
 def extract_toc_content(content, model=None):
     prompt = f"""
@@ -217,7 +217,7 @@ def detect_page_index(toc_content, model=None):
 
     response = llm_completion(model=model, prompt=prompt)
     json_content = extract_json(response)
-    return json_content['page_index_given_in_toc']
+    return json_content.get('page_index_given_in_toc', 'no')
 
 def toc_extractor(page_list, toc_page_list, model):
     def transform_dots_to_colon(text):
@@ -627,7 +627,9 @@ def process_toc_with_page_numbers(toc_content, toc_page_list, page_list, toc_che
     
     start_page_index = toc_page_list[-1] + 1
     main_content = ""
-    for page_index in range(start_page_index, min(start_page_index + toc_check_page_num, len(page_list))):
+    # Limit verification context to 5 pages to avoid massive prompts/hangs
+    max_verify_pages = min(toc_check_page_num, 5) if toc_check_page_num else 5
+    for page_index in range(start_page_index, min(start_page_index + max_verify_pages, len(page_list))):
         main_content += f"<physical_index_{page_index+1}>\n{page_list[page_index][0]}\n<physical_index_{page_index+1}>\n\n"
 
     toc_with_physical_index = toc_index_extractor(toc_no_page_number, main_content, model)
@@ -1063,7 +1065,7 @@ async def tree_parser(page_list, opt, doc=None, logger=None):
     return toc_tree
 
 
-def page_index_main(doc, opt=None):
+def page_index_main(doc, opt=None, status_callback=None, stop_event=None):
     logger = JsonLogger(doc)
     
     is_valid_pdf = (
@@ -1073,6 +1075,8 @@ def page_index_main(doc, opt=None):
     if not is_valid_pdf:
         raise ValueError("Unsupported input type. Expected a PDF file path or BytesIO object.")
 
+    if status_callback:
+        status_callback("PageIndex: Parsing PDF tokens...")
     print('Parsing PDF...')
     page_list = get_page_tokens(doc, model=opt.model)
 
@@ -1080,7 +1084,13 @@ def page_index_main(doc, opt=None):
     logger.info({'total_token': sum([page[1] for page in page_list])})
 
     async def page_index_builder():
+        if stop_event and stop_event.is_set(): return None
+        if status_callback:
+            status_callback("PageIndex: Analyzing document structure...")
         structure = await tree_parser(page_list, opt, doc=doc, logger=logger)
+        
+        if stop_event and stop_event.is_set(): return None
+
         if opt.if_add_node_id == 'yes':
             write_node_id(structure)    
         if opt.if_add_node_text == 'yes':
@@ -1088,7 +1098,12 @@ def page_index_main(doc, opt=None):
         if opt.if_add_node_summary == 'yes':
             if opt.if_add_node_text == 'no':
                 add_node_text(structure, page_list)
+            if status_callback:
+                status_callback(f"PageIndex: Generating summary for {len(structure)} nodes...")
             await generate_summaries_for_structure(structure, model=opt.model)
+            
+            if stop_event and stop_event.is_set(): return None
+
             if opt.if_add_node_text == 'no':
                 remove_structure_text(structure)
             if opt.if_add_doc_description == 'yes':

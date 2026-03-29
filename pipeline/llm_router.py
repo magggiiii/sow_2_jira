@@ -13,25 +13,25 @@ from models.schemas import LLMMode
 def configure_litellm_for_mode(mode: LLMMode) -> str:
     """
     Configure environment variables for litellm and return the model string.
-
-    For API mode:  Routes through Bifrost → z.ai. Sets OPENAI_API_KEY/BASE
-                   so litellm picks them up automatically.
-    For LOCAL mode: Uses Ollama directly via litellm's ollama provider.
+    Prioritizes UI-set LITELLM_* variables if available.
     """
+    # 1. Global Override from UI Settings (LITELLM_MODEL)
+    ui_model = os.environ.get("LITELLM_MODEL")
+    ui_key = os.environ.get("LITELLM_API_KEY")
+    ui_base = os.environ.get("LITELLM_API_BASE")
+
     if mode == LLMMode.API:
-        # litellm reads OPENAI_API_KEY and OPENAI_API_BASE automatically
-        os.environ["OPENAI_API_KEY"] = os.environ.get("BIFROST_API_KEY", "")
-        os.environ["OPENAI_API_BASE"] = os.environ.get("BIFROST_BASE_URL", "")
-        model = os.environ.get("ZAI_MODEL", "glm-4")
+        # Default to Bifrost configuration if UI hasn't explicitly set a model
+        os.environ["OPENAI_API_KEY"] = ui_key or os.environ.get("BIFROST_API_KEY", "")
+        os.environ["OPENAI_API_BASE"] = ui_base or os.environ.get("BIFROST_BASE_URL", "")
+        model = ui_model or os.environ.get("ZAI_MODEL", "glm-4")
         return model
     elif mode == LLMMode.LOCAL:
         # Local mode: litellm's ollama/ prefix routes to Ollama API
         ollama_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
-        ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        # litellm uses OLLAMA_API_BASE to find the Ollama server
+        ollama_base = ui_base or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
         os.environ["OLLAMA_API_BASE"] = ollama_base.rstrip("/v1").rstrip("/")
         return f"ollama/{ollama_model}"
     else:
-        # Custom mode: User provides the full litellm string in LITELLM_MODEL
-        model = os.environ.get("LITELLM_MODEL", "gpt-4o")
-        return model
+        # Custom mode: Always prefer UI-set model, fallback to a sensible default
+        return ui_model or "gpt-4o"

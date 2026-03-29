@@ -33,11 +33,18 @@
             <div class="divider"></div>
 
             <div class="form-group" id="sessionListContainer">
+                <button class="btn btn-primary" id="btnNewSession" style="width: 100%; margin-bottom: var(--space-16);">➕ Start New Extraction</button>
                 <h3>Recent SOWs</h3>
-                <select id="sessionSwitcher" class="input-field" style="margin-bottom: var(--space-8);">
-                    <option value="">-- New SOW --</option>
-                </select>
-                <button class="btn btn-outline" id="btnNewSession" style="width: 100%; display: none;">Start New Extraction</button>
+                <div style="display: flex; gap: var(--space-8); align-items: flex-start;">
+                    <select id="sessionSwitcher" class="input-field" style="margin-bottom: var(--space-8); flex: 1;">
+                        <option value="">-- Active Sessions --</option>
+                    </select>
+                    <button id="btnDeleteSession" class="btn btn-outline" title="Delete this session" style="padding: 10px; border-color: var(--error); color: var(--error);">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
 
             <div class="divider"></div>
@@ -72,7 +79,7 @@
                         <label class="metric-label" title="Max nodes to extract from PDF">Max Nodes (DoW Protect)</label>
                         <input type="number" id="maxNodes" class="input-field" value="200" min="1" max="1000">
                     </div>
-                    <button class="btn btn-primary" id="btnStartProcess">Start Extraction</button>
+                    <button class="btn btn-primary" id="btnStartProcess" disabled>Start Extraction</button>
                 </div>
             </div>
 
@@ -128,6 +135,7 @@
                 <h3>Global Actions</h3>
                 <button class="btn btn-primary" id="btnPushJira" style="width: 100%;">🚀 Push to Jira</button>
                 <button class="btn btn-outline" id="btnApproveAll" style="width: 100%;">Approve All Pending</button>
+                <button class="btn btn-outline" id="btnCollapseAll" style="width: 100%;">↔️ Collapse All</button>
                 <button class="btn btn-outline" id="btnSettings" style="width: 100%; margin-top: var(--space-8);">⚙️ Settings</button>
             </div>
         </aside>
@@ -147,6 +155,11 @@
                     <div class="log-console" id="logConsole" style="margin-top: var(--space-24); height: 150px; overflow-y: auto; background: var(--bg-app); padding: var(--space-12); border-radius: var(--radius-sm); font-family: monospace; font-size: var(--text-xs); border: 1px solid var(--border-strong);">
                         <!-- Logs will be inserted here -->
                     </div>
+
+                    <div style="margin-top: var(--space-24); display: flex; justify-content: flex-end;">
+                        <button id="btnCancelProcess" class="btn btn-outline" style="border-color: var(--error); color: var(--error);">Stop Extraction</button>
+                    </div>
+                </div>
                 </div>
             </div>
 

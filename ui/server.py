@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import logging
 
 # Add project root to path for imports
 import sys
@@ -34,7 +35,34 @@ app = FastAPI(title="SOW to Jira Pipeline")
 
 @app.on_event("startup")
 def startup_event():
+    # Legacy Migration: Move old pipeline_output.json to a session folder
+    legacy_file = Path("data/pipeline_output.json")
+    if legacy_file.exists():
+        legacy_id = "legacy-migration-" + datetime.now().strftime("%Y%m%d")
+        legacy_dir = Path(f"data/sessions/{legacy_id}")
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Move output file
+        shutil.move(str(legacy_file), str(legacy_dir / "pipeline_output.json"))
+        
+        # Create metadata
+        with open(legacy_dir / "metadata.json", "w") as f:
+            json.dump({
+                "run_id": legacy_id,
+                "filename": "Legacy Export",
+                "llm_mode": "api",
+                "created_at": datetime.utcnow().isoformat()
+            }, f)
+        print(f"Migrated legacy data to session: {legacy_id}")
+
     sync_telemetry()
+    
+    # Filter out frequent status polling from logs
+    class PollingFilter(logging.Filter):
+        def filter(self, record):
+            return "/api/status" not in record.getMessage()
+
+    logging.getLogger("uvicorn.access").addFilter(PollingFilter())
 
 # Add Secure CORS Middleware (Trusted Origins)
 # Default to localhost for local deploys, can be overridden by env
@@ -69,6 +97,7 @@ class ProcessingStatus(BaseModel):
     logs: List[str] = []
 
 active_runs: dict[str, ProcessingStatus] = {}
+active_orchestrators: dict[str, PipelineOrchestrator] = {}
 
 def get_session_path(session_id: str) -> Path:
     if not session_id or '..' in session_id or '/' in session_id or '\\' in session_id:
@@ -191,6 +220,7 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
                 status.logs.pop(0)
             
         orchestrator = PipelineOrchestrator(run_cfg, app_config, audit, status_callback=status_cb)
+        active_orchestrators[run_id] = orchestrator
         orchestrator.run()
         
         status.message = "Pipeline Complete"
@@ -202,6 +232,31 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
         status.message = f"Error: {str(e)}"
     finally:
         status.is_running = False
+        if run_id in active_orchestrators:
+            del active_orchestrators[run_id]
+
+@app.post("/api/cancel/{run_id}")
+async def cancel_run(run_id: str):
+    if run_id in active_orchestrators:
+        active_orchestrators[run_id].stop_event.set()
+        if run_id in active_runs:
+            active_runs[run_id].message = "Cancelling..."
+        return {"message": "Cancellation signal sent"}
+    raise HTTPException(status_code=404, detail="Active run not found")
+
+@app.delete("/api/sessions/{run_id}")
+async def delete_session(run_id: str):
+    session_dir = Path(f"data/sessions/{run_id}")
+    if session_dir.exists():
+        # Stop if running
+        if run_id in active_orchestrators:
+            active_orchestrators[run_id].stop_event.set()
+        
+        shutil.rmtree(session_dir)
+        if run_id in active_runs:
+            del active_runs[run_id]
+        return {"message": f"Session {run_id} deleted"}
+    raise HTTPException(status_code=404, detail="Session not found")
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -225,8 +280,6 @@ class SettingsConfig(BaseModel):
 def get_settings():
     return {
         "universal_api_key": "***" if os.environ.get("LITELLM_API_KEY") else "",
-        "universal_model": os.environ.get("LITELLM_MODEL", ""),
-        "universal_api_base": os.environ.get("LITELLM_API_BASE", ""),
         "jira_server_url": os.environ.get("JIRA_SERVER", ""),
         "jira_api_token": "***" if os.environ.get("JIRA_API_TOKEN") else ""
     }
@@ -271,9 +324,13 @@ def save_settings(req: SettingsConfig):
 
 @app.post("/api/process")
 async def start_processing(req: ProcessRequest, background_tasks: BackgroundTasks):
-    run_id_tmp = str(uuid.uuid4())[:8]
-    background_tasks.add_task(run_pipeline_task, req, run_id_tmp)
-    return {"message": "Processing started", "run_id": run_id_tmp}
+    # Readable Run ID: YYYYMMDD-HHMMSS-filename
+    clean_name = "".join(c if c.isalnum() else "-" for c in req.pdf_filename.split(".")[0]).strip("-")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_id = f"{timestamp}-{clean_name}"
+    
+    background_tasks.add_task(run_pipeline_task, req, run_id)
+    return {"message": "Processing started", "run_id": run_id}
 
 class TaskUpdate(BaseModel):
     id: str

@@ -33,10 +33,12 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
+            print(">>> Remote LLM Call Active...")
             response = litellm.completion(
                 model=model,
                 messages=messages,
                 temperature=0,
+                timeout=60,
             )
             content = response.choices[0].message.content
             if return_finish_reason:
@@ -61,10 +63,12 @@ async def llm_acompletion(model, prompt):
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
+            print(">>> Remote LLM Call Active...")
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 temperature=0,
+                timeout=60,
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -92,34 +96,40 @@ def get_json_content(response):
          
 
 def extract_json(content):
+    if not content or not isinstance(content, str):
+        return {}
+    
     try:
         # First, try to extract JSON enclosed within ```json and ```
-        start_idx = content.find("```json")
-        if start_idx != -1:
-            start_idx += 7  # Adjust index to start after the delimiter
-            end_idx = content.rfind("```")
-            json_content = content[start_idx:end_idx].strip()
-        else:
-            # If no delimiters, assume entire content could be JSON
-            json_content = content.strip()
+        json_content = content.strip()
+        start_marker = "```json"
+        if start_marker in json_content:
+            start_idx = json_content.find(start_marker) + len(start_marker)
+            end_idx = json_content.rfind("```")
+            if end_idx > start_idx:
+                json_content = json_content[start_idx:end_idx].strip()
 
         # Clean up common issues that might cause parsing errors
-        json_content = json_content.replace('None', 'null')  # Replace Python None with JSON null
-        json_content = json_content.replace('\n', ' ').replace('\r', ' ')  # Remove newlines
-        json_content = ' '.join(json_content.split())  # Normalize whitespace
-
+        # Note: Be careful with global replaces on non-marker JSON
+        json_content = json_content.replace('None', 'null').replace('True', 'true').replace('False', 'false')
+        
         # Attempt to parse and return the JSON object
         return json.loads(json_content)
     except json.JSONDecodeError as e:
-        logging.error(f"Failed to extract JSON: {e}")
-        # Try to clean up the content further if initial parsing fails
+        snippet = content[:100] + "..." if len(content) > 100 else content
+        logging.error(f"Failed to extract JSON: {e} | Snippet: {snippet}")
+        
+        # Final emergency cleanup: try to find the first { and last }
         try:
-            # Remove any trailing commas before closing brackets/braces
-            json_content = json_content.replace(',]', ']').replace(',}', '}')
-            return json.loads(json_content)
+            start_idx = json_content.find("{")
+            end_idx = json_content.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                return json.loads(json_content[start_idx:end_idx+1])
         except:
-            logging.error("Failed to parse JSON even after cleanup")
-            return {}
+            pass
+            
+        logging.error("Failed to parse JSON even after emergency cleanup")
+        return {}
     except Exception as e:
         logging.error(f"Unexpected error while extracting JSON: {e}")
         return {}

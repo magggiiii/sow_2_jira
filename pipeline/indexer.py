@@ -36,13 +36,18 @@ class DocumentIndexer:
         self.last_tree = None
         self.last_result = None
 
-    def build_tree(self, pdf_path: str) -> list[dict]:
+    def build_tree(self, pdf_path: str, status_callback=None, stop_event=None) -> list[dict]:
         """
         Run PageIndex on the PDF file.
         Returns a flat list of nodes for the extraction pipeline.
         Stores the full tree in self.last_tree for hierarchical access.
         """
-        rprint(f"[cyan]Running PageIndex on {Path(pdf_path).name}...[/cyan]")
+        def _report(msg, progress=0.05):
+            if status_callback:
+                status_callback(1, msg, progress)
+            rprint(f"[cyan]{msg}[/cyan]")
+
+        _report(f"PageIndex: Parsing PDF {Path(pdf_path).name}...", 0.05)
 
         opt = ConfigLoader(
             default_path=str(Path(__file__).parent.parent / "pageindex" / "config.yaml")
@@ -55,12 +60,21 @@ class DocumentIndexer:
             "if_add_node_text": "yes",
         })
 
-        result = page_index_main(pdf_path, opt)
+        def pageindex_cb(msg):
+            _report(msg)
+
+        result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event)
+        
+        if stop_event and stop_event.is_set():
+            _report("PageIndex: Extraction aborted by user", 0.30)
+            return []
+
+        _report("PageIndex: Structuring document tree...", 0.20)
         self.last_result = result
         self.last_tree = result.get("structure", [])
 
         flat_nodes = self.flatten_tree(self.last_tree)
-        rprint(f"[green]PageIndex complete: {len(flat_nodes)} nodes extracted[/green]")
+        _report(f"PageIndex complete: {len(flat_nodes)} nodes extracted", 0.30)
         return flat_nodes
 
     def flatten_tree(self, tree) -> list[dict]:

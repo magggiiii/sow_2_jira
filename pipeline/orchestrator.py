@@ -19,17 +19,19 @@ from pipeline.agents.gap_recovery import GapRecoveryAgent
 from audit.logger import AuditLogger
 from pipeline.observability import logger, tracer, trace_span
 import os
+import threading
 
 TREE_CACHE_PATH = Path("data/document_tree.json")
 
 
 class PipelineOrchestrator:
 
-    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None):
+    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None):
         self.config = config
         self.app_config = app_config
         self.audit = audit
         self.status_callback = status_callback
+        self.stop_event = stop_event or threading.Event()
 
         # Build LLM client
         self.llm = LLMClient(
@@ -70,7 +72,7 @@ class PipelineOrchestrator:
 
         logger.info("Building document tree index via PageIndex")
         rprint("[cyan]Building document tree via PageIndex...[/cyan]")
-        nodes = self.indexer.build_tree(pdf_path)
+        nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event)
 
         # Cache for future skip-indexing runs
         TREE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -124,9 +126,18 @@ class PipelineOrchestrator:
                 task_bar = progress.add_task("Processing nodes...", total=len(nodes))
 
                 for i, node in enumerate(nodes):
+                    if self.stop_event.is_set():
+                        logger.warning(f"Pipeline cancelled by user at node {i}")
+                        self._update_status(3, "Cancelled by user", (0.40 + (0.40 * (i/len(nodes)))))
+                        return all_closed_tasks
+
+                    node_title = node.get('title', f"Node {i}")
+                    msg = f"[3/5] Processing: {node_title[:50]} ({i+1}/{len(nodes)})"
+                    logger.info(msg)
+                    
                     with tracer.start_as_current_span(f"PROCESS_NODE_{node['node_id']}"):
-                        progress.update(task_bar, description=f"Node: {node['title'][:50]}")
-                        self._update_status(3, f"Node: {node['title'][:30]}", 0.40 + (0.40 * (i/len(nodes))))
+                        progress.update(task_bar, description=f"Node: {node_title[:50]}")
+                        self._update_status(3, msg, 0.40 + (0.40 * (i/len(nodes))))
 
                         # Get text for this node (PageIndex provides it directly)
                         section_text = self.indexer.get_node_text(node)

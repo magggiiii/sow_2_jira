@@ -22,8 +22,6 @@ from pipeline.telemetry import TelemetryEmitter
 import os
 import threading
 
-TREE_CACHE_PATH = Path("data/document_tree.json")
-
 
 class PipelineOrchestrator:
 
@@ -64,9 +62,10 @@ class PipelineOrchestrator:
             self.status_callback(step, message, progress)
 
     def _build_or_load_tree(self, pdf_path: str) -> list[dict]:
-        if self.config.skip_indexing and TREE_CACHE_PATH.exists():
-            logger.info("› --skip-indexing: loading tree from cache")
-            with open(TREE_CACHE_PATH) as f:
+        cache_path = Path(f"data/sessions/{self.config.run_id}/document_tree.json")
+        if self.config.skip_indexing and cache_path.exists():
+            logger.info(f"› --skip-indexing: loading tree from cache: {cache_path}")
+            with open(cache_path) as f:
                 tree = json.load(f)
             self.indexer.last_tree = tree
             return self.indexer.flatten_tree(tree)
@@ -75,9 +74,9 @@ class PipelineOrchestrator:
         nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event)
 
         # Cache for future skip-indexing runs
-        TREE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
         if hasattr(self.indexer, "last_tree") and self.indexer.last_tree:
-            with open(TREE_CACHE_PATH, "w") as f:
+            with open(cache_path, "w") as f:
                 json.dump(self.indexer.last_tree, f, indent=2)
 
         return nodes

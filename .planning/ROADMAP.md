@@ -12,7 +12,7 @@ This roadmap stabilizes the existing brownfield system in four execution phases:
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Provider Consistency** - Fix provider/model routing and credential persistence behavior (Gap closure in progress)
+- [x] **Phase 1: Provider Consistency** - Fix provider/model routing and credential persistence behavior (Completed)
 - [ ] **Phase 2: Runtime Logging Reliability** - Standardize run-time logs, cancellation behavior, and PageIndex logger safety
 - [ ] **Phase 3: Observability Bring-Up** - Make Loki/Tempo/Grafana/Bifrost telemetry path operational end-to-end
 - [ ] **Phase 4: Docker Production Readiness** - Harden compose/images and finalize reproducible local deployment
@@ -34,7 +34,7 @@ Plans:
 - [x] 01-02-PLAN.md — Enforce per-run immutable LLM config snapshot in orchestration path
 - [x] 01-03-PLAN.md — Refactor UI endpoints to use centralized SettingsManager and implement async model discovery
 - [x] 01-04-PLAN.md — Gap Closure: UI Persistence & Isolation
-- [ ] 01-05-PLAN.md — Gap Closure: Backend Pipeline Concurrency
+- [x] 01-05-PLAN.md — Gap Closure: Backend Pipeline Concurrency
 
 ### Phase 2: Runtime Logging Reliability
 **Goal**: Pipeline output is clean, consistent, and resilient under retries/cancel events.
@@ -89,7 +89,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Provider Consistency | 4/5 | In progress | - |
+| 1. Provider Consistency | 5/5 | Completed | 2026-03-31 |
 | 2. Runtime Logging Reliability | 0/3 | Not started | - |
 | 3. Observability Bring-Up | 0/4 | Not started | - |
 | 4. Docker Production Readiness | 0/3 | Not started | - |

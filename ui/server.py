@@ -299,6 +299,8 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
         status.is_running = False
         if run_id in active_orchestrators:
             del active_orchestrators[run_id]
+        if logger_id:
+            logger.remove(logger_id)
 
 @app.post("/api/cancel/{run_id}")
 async def cancel_run(run_id: str):
@@ -614,6 +616,9 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
 
     from integrations.jira_client import JiraClient
     from audit.logger import AuditLogger
+    from pipeline.observability import add_run_file_logger
+
+    logger_id = add_run_file_logger(run_id)
 
     try:
         data = load_data(session_id)
@@ -679,6 +684,9 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
         status.message = f"Error: {str(e)}"
         _append_status_log(status, f"Error: {str(e)}")
         status.is_running = False
+    finally:
+        if logger_id:
+            logger.remove(logger_id)
 
 @app.post("/api/push")
 def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = None):

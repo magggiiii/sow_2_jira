@@ -334,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // 3. Reset state
                 activeSessionId = null;
-                localStorage.removeItem('activeSessionId');
+                sessionStorage.removeItem('activeSessionId');
                 resetToNewSession();
                 await loadSessions();
                 
@@ -359,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (res.ok) {
                     showToast('Session deleted', 'success');
                     activeSessionId = null;
-                    localStorage.removeItem('activeSessionId');
+                    sessionStorage.removeItem('activeSessionId');
                     await loadSessions();
                     resetToNewSession();
                 }
@@ -402,7 +402,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function resetToNewSession() {
         activeSessionId = null;
-        localStorage.removeItem('activeSessionId');
+        sessionStorage.removeItem('activeSessionId');
         taskData = { tasks: [], config: {} };
         if (newExtractionContainer) newExtractionContainer.style.display = 'block';
         if (processConfig) processConfig.style.display = 'flex';
@@ -491,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (processRes.ok) {
                 const data = await processRes.json();
                 activeSessionId = data.run_id;
-                localStorage.setItem('activeSessionId', activeSessionId);
+                sessionStorage.setItem('activeSessionId', activeSessionId);
                 
                 if (progressOverlay) progressOverlay.style.display = 'flex';
                 if (logConsole) logConsole.innerHTML = '';
@@ -552,7 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 if (!status.is_running) {
-                    localStorage.removeItem('activeSessionId');
+                    sessionStorage.removeItem('activeSessionId');
                     if (status.error) {
                         clearInterval(statusInterval);
                         if (progressMessage) {
@@ -896,7 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Auto-resume logic for refreshes or tabbing back into a suspended tab
     async function autoResumeSession() {
-        const storedId = localStorage.getItem('activeSessionId');
+        const storedId = sessionStorage.getItem('activeSessionId');
         if (storedId) {
             console.log("Auto-resuming session:", storedId);
             activeSessionId = storedId;
@@ -909,7 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize
     loadSessions().then(() => {
         autoResumeSession();
-        if (!localStorage.getItem('activeSessionId')) {
+        if (!sessionStorage.getItem('activeSessionId')) {
             loadData();
         }
     });

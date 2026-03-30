@@ -13,9 +13,9 @@ This roadmap stabilizes the existing brownfield system in four execution phases:
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Provider Consistency** - Fix provider/model routing and credential persistence behavior (Completed)
-- [ ] **Phase 2: Runtime Logging Reliability** - Standardize run-time logs, cancellation behavior, and PageIndex logger safety
-- [ ] **Phase 3: Observability Bring-Up** - Make Loki/Tempo/Grafana/Bifrost telemetry path operational end-to-end
-- [ ] **Phase 4: Docker Production Readiness** - Harden compose/images and finalize reproducible local deployment
+- [x] **Phase 2: Runtime Logging Reliability** - Standardize run-time logs, cancellation behavior, and PageIndex logger safety (Completed)
+- [x] **Phase 3: Observability Bring-Up** - Make Loki/Tempo/Grafana/Bifrost telemetry path operational end-to-end (Completed)
+- [x] **Phase 4: Docker Production Readiness** - Harden compose/images and finalize reproducible local deployment (Completed)
 
 ## Phase Details
 
@@ -44,12 +44,10 @@ Plans:
   1. Every run prints exactly one active provider/model/base summary before step execution.
   2. Cancel action stops ongoing retry loops and no orphaned error spam continues after cancellation.
   3. PageIndex logger calls never crash the run when optional logger references are absent.
-**Plans**: 3 plans
+**Plans**: 1 consolidated plan
 
 Plans:
-- [ ] 02-01: Refactor log emission points to one canonical terminal formatter
-- [ ] 02-02: Wire cancellation and retry control through all LLM call sites
-- [ ] 02-03: Patch PageIndex logger plumbing and add regression checks
+- [x] 02-01-PLAN.md — Magi-Optics Telemetry & Logging Overhaul (Consolidated Step 2.1, 2.2, 2.3)
 
 ### Phase 3: Observability Bring-Up
 **Goal**: Logs, telemetry, and traces are visible in local observability stack.
@@ -59,13 +57,10 @@ Plans:
   1. Application logs appear in Loki and are queryable from Grafana.
   2. Tempo starts with valid config and traces for API/pipeline requests are visible.
   3. Structured telemetry events (`run.started`, `step.completed`, `llm.call`, `run.completed`) are emitted with required fields.
-**Plans**: 4 plans
+**Plans**: 1 consolidated plan
 
 Plans:
-- [ ] 03-01: Validate and fix compose networking/endpoints for Bifrost, Loki, Tempo, Grafana
-- [ ] 03-02: Patch telemetry emitter configuration/auth defaults and endpoint resolution
-- [ ] 03-03: Instrument trace spans and verify end-to-end visibility in Grafana
-- [ ] 03-04: Add observability smoke checks and operator troubleshooting doc
+- [x] 03-01-PLAN.md — Flexible Observability Bring-Up (Externalized endpoints and auth)
 
 ### Phase 4: Docker Production Readiness
 **Goal**: Core and overlay compose flows are reproducible, healthy, and aligned with runtime requirements.
@@ -75,12 +70,10 @@ Plans:
   1. `docker compose up` brings up app + observability stack with passing health states.
   2. Ollama overlay can be enabled for local testing without breaking core services.
   3. Runtime container runs as non-root and data persists correctly across restarts.
-**Plans**: 3 plans
+**Plans**: 1 consolidated plan
 
 Plans:
-- [ ] 04-01: Finalize Dockerfile runtime user, dependencies, and healthcheck behavior
-- [ ] 04-02: Harden compose files (core + ollama) with pinned/compatible service configs
-- [ ] 04-03: Create deployment validation checklist and runbook
+- [x] 04-01-PLAN.md — Docker Production Hardening (Consolidated services and security)
 
 ## Progress
 
@@ -90,6 +83,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Provider Consistency | 5/5 | Completed | 2026-03-31 |
-| 2. Runtime Logging Reliability | 0/3 | Not started | - |
-| 3. Observability Bring-Up | 0/4 | Not started | - |
-| 4. Docker Production Readiness | 0/3 | Not started | - |
+| 2. Runtime Logging Reliability | 1/1 | Completed | 2026-03-31 |
+| 3. Observability Bring-Up | 1/1 | Completed | 2026-03-31 |
+| 4. Docker Production Readiness | 1/1 | Completed | 2026-03-31 |

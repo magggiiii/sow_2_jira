@@ -5,6 +5,7 @@ import sys
 import json
 import time
 import functools
+import contextlib
 from datetime import datetime
 from typing import Optional, List, Sequence
 
@@ -23,11 +24,26 @@ logging.getLogger("grpc").setLevel(logging.CRITICAL)
 logging.getLogger("opentelemetry.sdk.trace.export").setLevel(logging.CRITICAL)
 
 # ─── MAGI OPTICS BACKBONE ───────────────────────────────────────────────────
-# Hardcoded defaults for developer's central observability (Magi's Mac)
-# Port 8080 is the unified Bifrost Gateway for both Logs (Loki) and Traces (OTLP)
-SYSTEM_BIFROST_URL = "http://localhost:8080/v1"
-SYSTEM_BIFROST_TOKEN = "sk-bf-85187814-2d9c-4b37-b148-b56b81d9a130"
-SYSTEM_LOKI_URL = "http://localhost:8080"
+# Dynamic resolution for developer's central observability
+# Supports both local development and remote deployment via env vars.
+
+def resolve_observability_endpoint(default_url: str = "http://localhost:8080") -> str:
+    """
+    Resolves the central observability endpoint.
+    Prioritizes BIFROST_GATEWAY_URL env var.
+    If in Docker, translates 'localhost' to 'host.docker.internal' for host-run decks.
+    """
+    url = os.environ.get("BIFROST_GATEWAY_URL", default_url).rstrip("/")
+    
+    # In Docker, 'localhost' points to the container. 
+    # To reach a deck on the host, we need host.docker.internal.
+    if os.path.exists('/.dockerenv') and "localhost" in url:
+        return url.replace("localhost", "host.docker.internal")
+    return url
+
+SYSTEM_BIFROST_URL = f"{resolve_observability_endpoint()}/v1"
+SYSTEM_BIFROST_TOKEN = os.environ.get("BIFROST_BACKBONE_TOKEN") or os.environ.get("BIFROST_TELEMETRY_TOKEN")
+SYSTEM_LOKI_URL = resolve_observability_endpoint()
 # ────────────────────────────────────────────────────────────────────────────
 
 # Resolve Global Data Path (Default to local ./data if not set by installer)
@@ -35,7 +51,10 @@ DATA_DIR = os.environ.get("SOW_DATA_DIR", "data")
 TELEMETRY_QUEUE_FILE = os.path.join(DATA_DIR, "telemetry_queue.jsonl")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Resolve Global Data Path (Default to local ./data if not set by installer)
+# ─── OBSERVARBILITY CONSTANTS ────────────────────────────────────────────────
+# Centrally managed for consistent labeling across traces/logs/events
+DEFAULT_JOB_NAME = "sow-to-jira"
+# ────────────────────────────────────────────────────────────────────────────
 
 class OfflineBufferSpanExporter(SpanExporter):
     """Writes spans to a local file if the remote exporter is unavailable or as a fallback."""
@@ -57,7 +76,7 @@ class OfflineBufferSpanExporter(SpanExporter):
                     }) + "\n")
             return SpanExportResult.SUCCESS
         except Exception as e:
-            print(f"[Telemetry Buffer Error] {e}", file=sys.stderr)
+            logger.warning(f"[Telemetry Buffer Error] {e}")
             return SpanExportResult.FAILURE
 
     def shutdown(self) -> None:
@@ -109,10 +128,11 @@ class LokiHandler:
             "streams": [
                 {
                     "stream": {
-                        "job": "sow-to-jira",
+                        "job": DEFAULT_JOB_NAME,
                         "level": record["level"].name,
                         "agent": record["extra"].get("agent", "system"),
-                        "run_id": record["extra"].get("run_id", "none")
+                        "run_id": record["extra"].get("run_id", "none"),
+                        "event": "log" # Distinguishes standard logs from telemetry events
                     },
                     "values": [[str(time.time_ns()), record["message"]]]
                 }
@@ -130,10 +150,10 @@ class LokiHandler:
                 if response.status_code < 400:
                     success = True
                 elif response.status_code == 401:
-                    print(f"[Backbone Error] 401 Unauthorized for {self.url}", file=sys.stderr)
+                    sys.stderr.write(f"[Backbone Error] 401 Unauthorized for {self.url}\n")
             except Exception as e:
-                # Diagnostic log for Backbone failure - only shows in terminal, not user logs
-                print(f"[Backbone Error] Failed to push log: {e}", file=sys.stderr)
+                # Diagnostic log for Backbone failure - use stderr to avoid Loguru deadlock (non-reentrant)
+                sys.stderr.write(f"[Backbone Error] Failed to push log: {e}\n")
         
         if not success:
             # Buffer local log for telemetry sync later
@@ -173,44 +193,69 @@ def add_run_file_logger(run_id: str):
         filter=lambda record: record["extra"].get("run_id") == run_id
     )
 
+@contextlib.contextmanager
+def run_logger(run_id: str):
+    """Context manager that adds a run-specific file logger and ensures it's removed on exit."""
+    handler_id = add_run_file_logger(run_id)
+    try:
+        yield
+    finally:
+        logger.remove(handler_id)
+
 def sync_telemetry():
     """Attempts to push local telemetry buffer to the central server."""
     if not os.path.exists(TELEMETRY_QUEUE_FILE):
         return
         
-    telemetry_url = os.environ.get("BIFROST_TELEMETRY_URL")
-    loki_url = os.environ.get("BIFROST_LOKI_URL") or os.environ.get("LOKI_URL")
+    # Priority: Magi Optics Backbone, then standard Env
+    target_url = SYSTEM_LOKI_URL or os.environ.get("BIFROST_LOKI_URL") or os.environ.get("LOKI_URL")
+    target_token = SYSTEM_BIFROST_TOKEN
     
-    if not telemetry_url and not loki_url:
+    if not target_url:
         return
 
-    logger.info("Syncing local telemetry buffer...")
+    logger.info(f"Syncing local telemetry buffer to {target_url}...")
     try:
         with open(TELEMETRY_QUEUE_FILE, "r") as f:
             lines = f.readlines()
         
         if not lines: return
 
-        # Re-initialize Loki handler for manual push if needed
-        loki_sender = LokiHandler(loki_url) if loki_url else None
+        # Endpoint for Loki push
+        push_url = f"{target_url.rstrip('/')}/loki/api/v1/push"
         
         remaining = []
+        sync_count = 0
         for line in lines:
             try:
                 entry = json.loads(line)
                 # If it's a log, try to push to Loki
-                if entry.get("type") == "log" and loki_sender:
-                    # Manually trigger handler call
-                    loki_sender({"message": entry["data"], "record": {"extra": entry["data"]["streams"][0]["stream"], "level": type('Level', (object,), {"name": entry["data"]["streams"][0]["stream"]["level"]})(), "message": entry["data"]["streams"][0]["values"][0][1]}})
-                # If it's a span, we'd need a more complex OTLP push (omitted for brevity, just clearing for now)
+                if entry.get("type") == "log":
+                    payload = entry["data"]
+                    headers = {"Authorization": f"Bearer {target_token}"} if target_token else {}
+                    resp = requests.post(push_url, json=payload, headers=headers, timeout=2)
+                    if resp.status_code >= 400:
+                        remaining.append(line)
+                    else:
+                        sync_count += 1
+                else:
+                    # Spans are currently cleared to prevent file bloat
+                    pass
             except Exception:
                 remaining.append(line)
         
-        # Clear or update queue file
-        with open(TELEMETRY_QUEUE_FILE, "w") as f:
-            f.writelines(remaining)
+        # Update queue file with remaining items
+        if remaining:
+            with open(TELEMETRY_QUEUE_FILE, "w") as f:
+                f.writelines(remaining)
+        else:
+            # Clear file if empty
+            open(TELEMETRY_QUEUE_FILE, 'w').close()
             
-        logger.success("Telemetry sync complete.")
+        if sync_count > 0:
+            logger.success(f"Telemetry sync complete: {sync_count} logs pushed.")
+        if remaining:
+            logger.warning(f"Telemetry sync partial. {len(remaining)} items remaining.")
     except Exception as e:
         logger.error(f"Telemetry sync failed: {e}")
 

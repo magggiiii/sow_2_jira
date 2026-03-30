@@ -2,7 +2,7 @@
 phase: 1
 slug: provider-consistency
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-03-30
 ---
@@ -17,20 +17,20 @@ created: 2026-03-30
 
 | Property | Value |
 |----------|-------|
-| **Framework** | {pytest 7.x / jest 29.x / vitest / go test / other} |
-| **Config file** | {path or "none — Wave 0 installs"} |
-| **Quick run command** | `{quick command}` |
-| **Full suite command** | `{full command}` |
-| **Estimated runtime** | ~{N} seconds |
+| **Framework** | pytest 8.x |
+| **Config file** | none — test files in repo root |
+| **Quick run command** | `python -m pytest test_settings.py test_discovery.py` |
+| **Full suite command** | `python -m pytest` |
+| **Estimated runtime** | ~10 seconds |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `{quick run command}`
-- **After every plan wave:** Run `{full suite command}`
+- **After every task commit:** Run `python -m pytest {test_file_if_applicable}` or py_compile check
+- **After every plan wave:** Run `python -m pytest test_settings.py test_discovery.py`
 - **Before `/gsd:verify-work`:** Full suite must be green
-- **Max feedback latency:** {N} seconds
+- **Max feedback latency:** 10 seconds
 
 ---
 
@@ -38,7 +38,16 @@ created: 2026-03-30
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 1-01-01 | 01 | 1 | REQ-{XX} | unit | `{command}` | ✅ / ❌ W0 | ⬜ pending |
+| 1-01-00 | 01 | 1 | PROV-02 | check | `grep -E "pytest" requirements.txt` | ✅ | ⬜ pending |
+| 1-01-01 | 01 | 1 | PROV-02 | compile | `python -m py_compile config/settings.py` | ❌ W0 | ⬜ pending |
+| 1-01-02 | 01 | 1 | PROV-02 | compile | `python -m py_compile config/settings.py` | ❌ W0 | ⬜ pending |
+| 1-01-03 | 01 | 1 | PROV-03 | unit | `python -m pytest test_settings.py` | ❌ W0 | ⬜ pending |
+| 1-02-01 | 02 | 2 | PROV-01 | compile | `python -m py_compile models/schemas.py` | ✅ | ⬜ pending |
+| 1-02-02 | 02 | 2 | PROV-01 | compile | `python -m py_compile pipeline/llm_router.py` | ✅ | ⬜ pending |
+| 1-02-03 | 02 | 2 | PROV-01 | compile | `python -m py_compile pipeline/llm_client.py pipeline/orchestrator.py pageindex/utils.py` | ✅ | ⬜ pending |
+| 1-03-01 | 03 | 3 | PROV-04 | check | `grep -E "httpx|pytest-asyncio" requirements.txt` | ✅ | ⬜ pending |
+| 1-03-02 | 03 | 3 | PROV-04 | compile | `python -m py_compile ui/server.py` | ✅ | ⬜ pending |
+| 1-03-03 | 03 | 3 | PROV-04 | unit | `python -m pytest test_discovery.py` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -46,11 +55,8 @@ created: 2026-03-30
 
 ## Wave 0 Requirements
 
-- [ ] `{tests/test_file.py}` — stubs for REQ-{XX}
-- [ ] `{tests/conftest.py}` — shared fixtures
-- [ ] `{framework install}` — if no framework detected
-
-*If none: "Existing infrastructure covers all phase requirements."*
+- [ ] `test_settings.py` — stubs for PROV-02, PROV-03
+- [ ] `test_discovery.py` — stubs for PROV-04
 
 ---
 
@@ -58,19 +64,17 @@ created: 2026-03-30
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| {behavior} | REQ-{XX} | {reason} | {steps} |
-
-*If none: "All phase behaviors have automated verification."*
+| Load UI without re-prompting | PROV-02 | End-to-end integration | Open UI, verify settings from settings.json are loaded. |
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < {N}s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 10s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** {pending / approved YYYY-MM-DD}
+**Approval:** pending

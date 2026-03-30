@@ -46,21 +46,22 @@ This command will:
 
 ## ⚙️ Configuration
 
-The easiest way to configure SOW-to-Jira is through the **Settings (gear icon)** in the web interface. 
+The easiest way to configure SOW-to-Jira is through the **Settings (gear icon)** in the web interface.
 
-Your secrets are persisted globally at `~/.sow_to_jira/.env`, ensuring they are preserved across tool updates.
+Your secrets are persisted at `~/.sow_to_jira/data/settings.json` and encrypted using the key in `~/.sow_to_jira/data/.keyfile`.
 
 | Feature | How to Configure |
 | :--- | :--- |
 | **LLM Routing** | Set `Universal API Key`, `Model`, and `Base URL` in the Settings Modal. |
 | **Jira Integration** | Set your Jira Server URL and API Token in the Settings Modal. |
-| **Telemetry** | Telemetry is enabled by default. To opt-out, edit `~/.sow_to_jira/.env` and set `BIFROST_TELEMETRY_URL=""`. |
+| **Telemetry** | Telemetry is enabled by default. To opt-out, set `BIFROST_TELEMETRY_URL=""` in your environment or `.env`. |
 
 ---
 
 ## 🛡️ Security & Privacy
 
 - **Local Storage**: All session data and PDFs are stored in `~/.sow_to_jira/data`.
+- **Encryption Key**: Backup `/app/data/.keyfile` (or `~/.sow_to_jira/data/.keyfile` on host). If lost, your encrypted settings cannot be recovered.
 - **PII Scrubbing**: Our observability layer uses a "Scrub-First" policy. Raw prompts and responses are NEVER sent to our central telemetry server.
 - **Offline Mode**: If you are offline, telemetry is buffered locally and synced only when you are back online.
 

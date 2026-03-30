@@ -48,10 +48,13 @@ def count_tokens(text, model=None):
     return litellm.token_counter(model=model, text=text)
 
 
-def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
+def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None):
     max_retries = 10
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     for i in range(max_retries):
+        if stop_event and stop_event.is_set():
+            logger.warning("› LLM completion cancelled by user")
+            return ("", "error") if return_finish_reason else ""
         try:
             with console.status("Waiting for LLM..."):
                 with _suppress_litellm_output():
@@ -87,10 +90,13 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
 
 
 
-async def llm_acompletion(model, prompt):
+async def llm_acompletion(model, prompt, stop_event=None):
     max_retries = 10
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
+        if stop_event and stop_event.is_set():
+            logger.warning("› LLM completion cancelled by user")
+            return ""
         try:
             with console.status("Waiting for LLM..."):
                 with _suppress_litellm_output():
@@ -617,20 +623,20 @@ def add_node_text_with_labels(node, pdf_pages):
     return
 
 
-async def generate_node_summary(node, model=None):
+async def generate_node_summary(node, model=None, stop_event=None):
     prompt = f"""You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document.
 
     Partial Document Text: {node['text']}
     
     Directly return the description, do not include any other text.
     """
-    response = await llm_acompletion(model, prompt)
+    response = await llm_acompletion(model, prompt, stop_event=stop_event)
     return response
 
 
-async def generate_summaries_for_structure(structure, model=None):
+async def generate_summaries_for_structure(structure, model=None, stop_event=None):
     nodes = structure_to_list(structure)
-    tasks = [generate_node_summary(node, model=model) for node in nodes]
+    tasks = [generate_node_summary(node, model=model, stop_event=stop_event) for node in nodes]
     summaries = await asyncio.gather(*tasks)
     
     for node, summary in zip(nodes, summaries):

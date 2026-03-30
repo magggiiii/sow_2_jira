@@ -1,19 +1,95 @@
-version: '3.8'
-
 services:
   app:
     build: .
     container_name: sow-to-jira-app
+    init: true
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ${SOW_DATA_HOME:-./data}:/app/data
-      - ${SOW_ENV_FILE:-./.env}:/app/.env
+      - sow_data:/app/data
     environment:
       - SOW_DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
+      - BIFROST_GATEWAY_URL=http://bifrost:8080
+    depends_on:
+      - bifrost
+    networks:
+      - sow-internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status').read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  bifrost:
+    image: maximhq/bifrost:latest
+    container_name: llm-gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - sow_data:/app/data
+    environment:
+      - LOKI_URL=http://loki:3100
+      - TEMPO_URL=http://tempo:4317
+    depends_on:
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    networks:
+      - sow-internal
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: sow-loki
+    ports:
+      - "127.0.0.1:3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - sow-internal
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: sow-tempo
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./config/tempo.yaml:/etc/tempo.yaml
+    networks:
+      - sow-internal
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: sow-grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    networks:
+      - sow-internal
 
 networks:
-  default:
+  sow-internal:
     name: sow-to-jira-network
+
+volumes:
+  sow_data:

@@ -17,11 +17,17 @@ from pipeline.agents.state import TaskStateAgent
 from pipeline.agents.deduplication import DeduplicationAgent
 from pipeline.agents.gap_recovery import GapRecoveryAgent
 from audit.logger import AuditLogger
-from pipeline.observability import logger, tracer, trace_span
+from pipeline.observability import logger, tracer, trace_span, sync_telemetry
 from pipeline.telemetry import TelemetryEmitter
 import os
 import threading
 
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, MofNCompleteColumn
+
+console = Console()
 
 class PipelineOrchestrator:
 
@@ -37,6 +43,7 @@ class PipelineOrchestrator:
             mode=config.llm_mode,
             audit_logger=audit,
             run_id=config.run_id,
+            stop_event=self.stop_event
         )
 
         # Build agents
@@ -57,6 +64,17 @@ class PipelineOrchestrator:
         self.indexer = DocumentIndexer(self.app_config, model=pageindex_model)
         self.telemetry = TelemetryEmitter()
 
+    def _print_run_summary(self):
+        """Prints a high-fidelity summary of the run configuration."""
+        summary_text = (
+            f"[bold cyan]Run ID:[/] {self.config.run_id}\n"
+            f"[bold cyan]LLM Mode:[/] {self.config.llm_mode.value}\n"
+            f"[bold cyan]Provider:[/] {self.config.provider_config.provider if self.config.provider_config else 'default'}\n"
+            f"[bold cyan]Model:[/] {self.config.provider_config.model if self.config.provider_config else 'default'}\n"
+            f"[bold cyan]Jira Hierarchy:[/] {self.config.jira_hierarchy.value}"
+        )
+        console.print(Panel(summary_text, title="[bold green]═══ SOW-to-Jira Pipeline ═══", border_style="green"))
+
     def _update_status(self, step: int, message: str, progress: float = 0.0):
         if self.status_callback:
             self.status_callback(step, message, progress)
@@ -64,14 +82,14 @@ class PipelineOrchestrator:
     def _build_or_load_tree(self, pdf_path: str) -> list[dict]:
         cache_path = Path(f"data/sessions/{self.config.run_id}/document_tree.json")
         if self.config.skip_indexing and cache_path.exists():
-            logger.info(f"› --skip-indexing: loading tree from cache: {cache_path}")
+            logger.info(f"› loading tree from cache: {cache_path}")
             with open(cache_path) as f:
                 tree = json.load(f)
             self.indexer.last_tree = tree
             return self.indexer.flatten_tree(tree)
 
-        logger.info("› Building document tree via PageIndex")
-        nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event)
+        with console.status("[bold blue]› Building document tree via PageIndex..."):
+            nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event, run_id=self.config.run_id)
 
         # Cache for future skip-indexing runs
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +105,7 @@ class PipelineOrchestrator:
         Full pipeline. Returns final task list ready for review UI.
         Saves checkpoint to data/pipeline_output.json after completion.
         """
+        sync_telemetry()
         # Ensure provider_config is loaded and set ContextVar for this run/thread
         if not self.config.provider_config:
             self.config.provider_config = configure_litellm_for_mode(self.config.llm_mode)
@@ -98,10 +117,8 @@ class PipelineOrchestrator:
         self.llm.model = self.config.provider_config.model
         self.indexer.model = self.config.provider_config.model
 
-        logger.info("═══ SOW-to-Jira Pipeline ═══")
-        logger.info(f"Run ID: {self.config.run_id}")
-        logger.info(f"LLM Mode: {self.config.llm_mode.value}")
-        logger.info(f"Jira Hierarchy: {self.config.jira_hierarchy.value}")
+        self._print_run_summary()
+        
         self.telemetry.emit("run.started", {
             "run_id": self.config.run_id,
             "llm_mode": self.config.llm_mode.value,
@@ -115,7 +132,7 @@ class PipelineOrchestrator:
         with tracer.start_as_current_span("STEP_1_2_PAGEINDEX"):
             step_start = time.time()
             self._update_status(1, "Running PageIndex (parse + tree build)...", 0.05)
-            logger.info("› Step 1/5: Running PageIndex (parse + tree build)...")
+            logger.info("› Step 1/5: Running PageIndex...")
             nodes = self._build_or_load_tree(self.config.sow_pdf_path)
             self.telemetry.emit("step.completed", {
                 "run_id": self.config.run_id,
@@ -146,30 +163,31 @@ class PipelineOrchestrator:
             step_start = time.time()
             span.set_attribute("node_count", len(nodes))
             self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
-            logger.info(f"› Step 3/5: Extracting tasks from {len(nodes)} nodes...")
+            
             all_closed_tasks: list[ManagedTask] = []
             open_tasks: list[ManagedTask] = []
 
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console
             ) as progress:
-                task_bar = progress.add_task("Processing nodes...", total=len(nodes))
+                task_bar = progress.add_task("[cyan]Extracting nodes...", total=len(nodes))
 
                 for i, node in enumerate(nodes):
                     if self.stop_event.is_set():
-                        logger.warning(f"Pipeline cancelled by user at node {i}")
+                        logger.warning(f"› Pipeline cancelled by user at node {i}")
                         self._update_status(3, "Cancelled by user", (0.40 + (0.40 * (i/len(nodes)))))
                         return all_closed_tasks
 
                     node_title = node.get('title', f"Node {i}")
-                    msg = f"[3/5] Processing: {node_title[:50]} ({i+1}/{len(nodes)})"
-                    logger.info(msg)
-                    
-                    with tracer.start_as_current_span(f"PROCESS_NODE_{node['node_id']}"):
-                        progress.update(task_bar, description=f"Node: {node_title[:50]}")
-                        self._update_status(3, msg, 0.40 + (0.40 * (i/len(nodes))))
+                    progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
+                    self._update_status(3, f"Processing: {node_title[:50]}", 0.40 + (0.40 * (i/len(nodes))))
 
+                    with tracer.start_as_current_span(f"PROCESS_NODE_{node.get('node_id', 'none')}"):
                         # Get text for this node (PageIndex provides it directly)
                         section_text = self.indexer.get_node_text(node)
 
@@ -286,5 +304,7 @@ class PipelineOrchestrator:
             "task_count": len(deduplicated),
             "coverage_pct": report["coverage_pct"],
         })
+
+        sync_telemetry()
 
         return deduplicated

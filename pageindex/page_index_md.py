@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from pipeline.observability import logger
 import os
 try:
     from .utils import *
@@ -66,7 +67,7 @@ def extract_node_text_content(node_list, markdown_lines):
         header_match = re.match(r'^(#{1,6})', line_content)
         
         if header_match is None:
-            print(f"Warning: Line {node['line_num']} does not contain a valid header: '{line_content}'")
+            logger.warning(f"Line {node['line_num']} does not contain a valid header: '{line_content}'")
             continue
             
         processed_node = {
@@ -244,30 +245,30 @@ async def md_to_tree(md_path, if_thinning=False, min_token_threshold=None, if_ad
     with open(md_path, 'r', encoding='utf-8') as f:
         markdown_content = f.read()
     
-    print(f"Extracting nodes from markdown...")
+    logger.info("› Extracting nodes from markdown...")
     node_list, markdown_lines = extract_nodes_from_markdown(markdown_content)
 
-    print(f"Extracting text content from nodes...")
+    logger.info("› Extracting text content from nodes...")
     nodes_with_content = extract_node_text_content(node_list, markdown_lines)
     
     if if_thinning:
         nodes_with_content = update_node_list_with_text_token_count(nodes_with_content, model=model)
-        print(f"Thinning nodes...")
+        logger.info("› Thinning nodes...")
         nodes_with_content = tree_thinning_for_index(nodes_with_content, min_token_threshold, model=model)
     
-    print(f"Building tree from nodes...")
+    logger.info("› Building tree from nodes...")
     tree_structure = build_tree_from_nodes(nodes_with_content)
 
     if if_add_node_id == 'yes':
         write_node_id(tree_structure)
 
-    print(f"Formatting tree structure...")
+    logger.info("› Formatting tree structure...")
     
     if if_add_node_summary == 'yes':
         # Always include text for summary generation
         tree_structure = format_structure(tree_structure, order = ['title', 'node_id', 'summary', 'prefix_summary', 'text', 'line_num', 'nodes'])
         
-        print(f"Generating summaries for each node...")
+        logger.info("› Generating summaries for each node...")
         tree_structure = await generate_summaries_for_structure_md(tree_structure, summary_token_threshold=summary_token_threshold, model=model)
         
         if if_add_node_text == 'no':
@@ -275,7 +276,7 @@ async def md_to_tree(md_path, if_thinning=False, min_token_threshold=None, if_ad
             tree_structure = format_structure(tree_structure, order = ['title', 'node_id', 'summary', 'prefix_summary', 'line_num', 'nodes'])
         
         if if_add_doc_description == 'yes':
-            print(f"Generating document description...")
+            logger.info("› Generating document description...")
             # Create a clean structure without unnecessary fields for description generation
             clean_structure = create_clean_structure_for_description(tree_structure)
             doc_description = generate_doc_description(clean_structure, model=model)
@@ -320,14 +321,14 @@ if __name__ == "__main__":
         summary_token_threshold=SUMMARY_TOKEN_THRESHOLD, 
         model=MODEL))
     
-    print('\n' + '='*60)
-    print('TREE STRUCTURE')
-    print('='*60)
+    logger.debug('\n' + '='*60)
+    logger.debug('TREE STRUCTURE')
+    logger.debug('='*60)
     print_json(tree_structure)
 
-    print('\n' + '='*60)
-    print('TABLE OF CONTENTS')
-    print('='*60)
+    logger.debug('\n' + '='*60)
+    logger.debug('TABLE OF CONTENTS')
+    logger.debug('='*60)
     print_toc(tree_structure['structure'])
 
     output_path = os.path.join(os.path.dirname(__file__), '..', 'results', f'{MD_NAME}_structure.json')
@@ -336,4 +337,4 @@ if __name__ == "__main__":
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(tree_structure, f, indent=2, ensure_ascii=False)
     
-    print(f"\nTree structure saved to: {output_path}")
+    logger.info(f"Tree structure saved to: {output_path}")

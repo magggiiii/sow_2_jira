@@ -61,11 +61,12 @@ class LLMClient:
     Ensures per-run configuration is used instead of global environment.
     """
 
-    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None):
+    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None):
         _configure_litellm_logging()
         self.mode = mode
         self.audit_logger = audit_logger
         self.run_id = run_id
+        self.stop_event = stop_event
 
         # Use provided config or resolve from mode
         self.provider_config = provider_config or configure_litellm_for_mode(mode)
@@ -109,6 +110,10 @@ class LLMClient:
                 logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
                 
                 for attempt in range(3):
+                    if self.stop_event and self.stop_event.is_set():
+                        logger.warning(f"› LLM call cancelled by user before attempt {attempt+1}")
+                        raise RuntimeError("LLM call cancelled by user")
+
                     start_time = time.time()
                     try:
                         kwargs = {

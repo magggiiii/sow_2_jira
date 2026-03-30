@@ -2,11 +2,11 @@
 
 import json
 from pathlib import Path
-from rich import print as rprint
 from rich.progress import Progress, SpinnerColumn, TextColumn
+import time
 
 from models.schemas import (
-    RunConfig, ManagedTask, TaskStatus, TaskFlag, SourceRef, JiraHierarchy
+    RunConfig, ManagedTask, TaskStatus, TaskFlag, SourceRef, JiraHierarchy, current_provider_config
 )
 from pipeline.indexer import DocumentIndexer
 from pipeline.coverage import CoverageTracker
@@ -17,12 +17,17 @@ from pipeline.agents.state import TaskStateAgent
 from pipeline.agents.deduplication import DeduplicationAgent
 from pipeline.agents.gap_recovery import GapRecoveryAgent
 from audit.logger import AuditLogger
-from pipeline.observability import logger, tracer, trace_span
+from pipeline.observability import logger, tracer, trace_span, sync_telemetry
+from pipeline.telemetry import TelemetryEmitter
 import os
 import threading
 
-TREE_CACHE_PATH = Path("data/document_tree.json")
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, MofNCompleteColumn
+
+console = Console()
 
 class PipelineOrchestrator:
 
@@ -38,6 +43,7 @@ class PipelineOrchestrator:
             mode=config.llm_mode,
             audit_logger=audit,
             run_id=config.run_id,
+            stop_event=self.stop_event
         )
 
         # Build agents
@@ -56,28 +62,39 @@ class PipelineOrchestrator:
         # Configure litellm for PageIndex and build indexer
         pageindex_model = configure_litellm_for_mode(config.llm_mode)
         self.indexer = DocumentIndexer(self.app_config, model=pageindex_model)
+        self.telemetry = TelemetryEmitter()
+
+    def _print_run_summary(self):
+        """Prints a high-fidelity summary of the run configuration."""
+        summary_text = (
+            f"[bold cyan]Run ID:[/] {self.config.run_id}\n"
+            f"[bold cyan]LLM Mode:[/] {self.config.llm_mode.value}\n"
+            f"[bold cyan]Provider:[/] {self.config.provider_config.provider if self.config.provider_config else 'default'}\n"
+            f"[bold cyan]Model:[/] {self.config.provider_config.model if self.config.provider_config else 'default'}\n"
+            f"[bold cyan]Jira Hierarchy:[/] {self.config.jira_hierarchy.value}"
+        )
+        console.print(Panel(summary_text, title="[bold green]═══ SOW-to-Jira Pipeline ═══", border_style="green"))
 
     def _update_status(self, step: int, message: str, progress: float = 0.0):
         if self.status_callback:
             self.status_callback(step, message, progress)
 
     def _build_or_load_tree(self, pdf_path: str) -> list[dict]:
-        if self.config.skip_indexing and TREE_CACHE_PATH.exists():
-            logger.info("Skipping indexing, loading from cache")
-            rprint("[yellow]--skip-indexing: loading tree from cache[/yellow]")
-            with open(TREE_CACHE_PATH) as f:
+        cache_path = Path(f"data/sessions/{self.config.run_id}/document_tree.json")
+        if self.config.skip_indexing and cache_path.exists():
+            logger.info(f"› loading tree from cache: {cache_path}")
+            with open(cache_path) as f:
                 tree = json.load(f)
             self.indexer.last_tree = tree
             return self.indexer.flatten_tree(tree)
 
-        logger.info("Building document tree index via PageIndex")
-        rprint("[cyan]Building document tree via PageIndex...[/cyan]")
-        nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event)
+        with console.status("[bold blue]› Building document tree via PageIndex..."):
+            nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event, run_id=self.config.run_id)
 
         # Cache for future skip-indexing runs
-        TREE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
         if hasattr(self.indexer, "last_tree") and self.indexer.last_tree:
-            with open(TREE_CACHE_PATH, "w") as f:
+            with open(cache_path, "w") as f:
                 json.dump(self.indexer.last_tree, f, indent=2)
 
         return nodes
@@ -88,17 +105,41 @@ class PipelineOrchestrator:
         Full pipeline. Returns final task list ready for review UI.
         Saves checkpoint to data/pipeline_output.json after completion.
         """
-        logger.info(f"Starting pipeline run ID: {self.config.run_id}")
-        rprint(f"\n[bold cyan]═══ SOW-to-Jira Pipeline ═══[/bold cyan]")
-        rprint(f"Run ID: {self.config.run_id}")
-        rprint(f"LLM Mode: {self.config.llm_mode.value}")
-        rprint(f"Jira Hierarchy: {self.config.jira_hierarchy.value}\n")
+        sync_telemetry()
+        # Ensure provider_config is loaded and set ContextVar for this run/thread
+        if not self.config.provider_config:
+            self.config.provider_config = configure_litellm_for_mode(self.config.llm_mode)
+        
+        token = current_provider_config.set(self.config.provider_config)
+        
+        # Re-init components that need the resolved config
+        self.llm.provider_config = self.config.provider_config
+        self.llm.model = self.config.provider_config.model
+        self.indexer.model = self.config.provider_config.model
+
+        self._print_run_summary()
+        
+        self.telemetry.emit("run.started", {
+            "run_id": self.config.run_id,
+            "llm_mode": self.config.llm_mode.value,
+            "jira_hierarchy": self.config.jira_hierarchy.value,
+            "max_nodes": self.config.max_nodes,
+            "filename": Path(self.config.sow_pdf_path).name,
+        })
+        run_start = time.time()
 
         # ── Step 1-2: Parse + Index via PageIndex ────────────────────────────
         with tracer.start_as_current_span("STEP_1_2_PAGEINDEX"):
+            step_start = time.time()
             self._update_status(1, "Running PageIndex (parse + tree build)...", 0.05)
-            rprint("[bold]Step 1/5:[/bold] Running PageIndex (parse + tree build)...")
+            logger.info("› Step 1/5: Running PageIndex...")
             nodes = self._build_or_load_tree(self.config.sow_pdf_path)
+            self.telemetry.emit("step.completed", {
+                "run_id": self.config.run_id,
+                "step": "pageindex",
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "node_count": len(nodes),
+            })
 
         # ── Step 2: Initialize Coverage Tracker & Safety Check ───────────────
         MAX_NODES = self.config.max_nodes
@@ -108,37 +149,45 @@ class PipelineOrchestrator:
             raise RuntimeError(error_msg)
 
         self._update_status(2, "Initializing coverage tracker...", 0.30)
-        rprint("[bold]Step 2/5:[/bold] Initializing coverage tracker...")
+        logger.info("› Step 2/5: Initializing coverage tracker...")
         coverage = CoverageTracker(nodes)
+        self.telemetry.emit("step.completed", {
+            "run_id": self.config.run_id,
+            "step": "coverage_init",
+            "duration_ms": 0,
+            "node_count": len(nodes),
+        })
 
         # ── Step 3: Chunk Loop — Extract + State per node ─────────────────────
         with tracer.start_as_current_span("STEP_3_EXTRACT_LOOP") as span:
+            step_start = time.time()
             span.set_attribute("node_count", len(nodes))
             self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
-            rprint(f"[bold]Step 3/5:[/bold] Extracting tasks from {len(nodes)} nodes...")
+            
             all_closed_tasks: list[ManagedTask] = []
             open_tasks: list[ManagedTask] = []
 
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                console=console
             ) as progress:
-                task_bar = progress.add_task("Processing nodes...", total=len(nodes))
+                task_bar = progress.add_task("[cyan]Extracting nodes...", total=len(nodes))
 
                 for i, node in enumerate(nodes):
                     if self.stop_event.is_set():
-                        logger.warning(f"Pipeline cancelled by user at node {i}")
+                        logger.warning(f"› Pipeline cancelled by user at node {i}")
                         self._update_status(3, "Cancelled by user", (0.40 + (0.40 * (i/len(nodes)))))
                         return all_closed_tasks
 
                     node_title = node.get('title', f"Node {i}")
-                    msg = f"[3/5] Processing: {node_title[:50]} ({i+1}/{len(nodes)})"
-                    logger.info(msg)
-                    
-                    with tracer.start_as_current_span(f"PROCESS_NODE_{node['node_id']}"):
-                        progress.update(task_bar, description=f"Node: {node_title[:50]}")
-                        self._update_status(3, msg, 0.40 + (0.40 * (i/len(nodes))))
+                    progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
+                    self._update_status(3, f"Processing: {node_title[:50]}", 0.40 + (0.40 * (i/len(nodes))))
 
+                    with tracer.start_as_current_span(f"PROCESS_NODE_{node.get('node_id', 'none')}"):
                         # Get text for this node (PageIndex provides it directly)
                         section_text = self.indexer.get_node_text(node)
 
@@ -163,26 +212,38 @@ class PipelineOrchestrator:
             # Force-close remaining open tasks
             forced_closed = self.state_agent.close_all_remaining(open_tasks)
             all_closed_tasks.extend(forced_closed)
+            self.telemetry.emit("step.completed", {
+                "run_id": self.config.run_id,
+                "step": "extraction",
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "task_count": len(all_closed_tasks),
+            })
 
-        logger.success(f"Extracted {len(all_closed_tasks)} raw tasks")
-        rprint(f"[green]Extracted {len(all_closed_tasks)} raw tasks[/green]")
+        logger.success(f"✓ Extracted {len(all_closed_tasks)} raw tasks")
 
         # ── Step 4: Deduplication ─────────────────────────────────────────────
         with tracer.start_as_current_span("STEP_4_DEDUP"):
+            step_start = time.time()
             self._update_status(4, "Deduplicating tasks...", 0.85)
-            rprint("[bold]Step 4/5:[/bold] Deduplicating tasks...")
+            logger.info("› Step 4/5: Deduplicating tasks...")
             deduplicated = self.dedup_agent.deduplicate(all_closed_tasks)
-            rprint(f"[green]{len(deduplicated)} tasks after deduplication[/green]")
+            logger.info(f"✓ {len(deduplicated)} tasks after deduplication")
+            self.telemetry.emit("step.completed", {
+                "run_id": self.config.run_id,
+                "step": "deduplication",
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "task_count": len(deduplicated),
+            })
 
         # ── Step 5b: Gap Recovery ─────────────────────────────────────────────
         report = coverage.coverage_report()
-        logger.info(f"Coverage Report: {report['coverage_pct']}%")
-        rprint(f"Coverage: {report['coverage_pct']}% ({report['covered_nodes']}/{report['total_nodes']} nodes)")
+        logger.info(f"Coverage: {report['coverage_pct']}% ({report['covered_nodes']}/{report['total_nodes']} nodes)")
 
         if report["gap_nodes"] > 0:
             with tracer.start_as_current_span("STEP_4B_GAP_RECOVERY"):
+                step_start = time.time()
                 self._update_status(4, f"Gap recovery on {report['gap_nodes']} nodes...", 0.90)
-                rprint(f"[yellow]Running gap recovery on {report['gap_nodes']} uncovered nodes...[/yellow]")
+                logger.info(f"› Running gap recovery on {report['gap_nodes']} uncovered nodes...")
                 gaps = coverage.get_gaps(min_text_length=100)
                 recovered_pairs = self.gap_agent.recover(gaps, self.indexer)
 
@@ -200,12 +261,19 @@ class PipelineOrchestrator:
                     # Merge with main list and re-dedup
                     combined = deduplicated + recovered_managed
                     deduplicated = self.dedup_agent.deduplicate(combined)
-                    rprint(f"[green]After gap recovery: {len(deduplicated)} tasks[/green]")
+                    logger.info(f"✓ After gap recovery: {len(deduplicated)} tasks")
+                self.telemetry.emit("step.completed", {
+                    "run_id": self.config.run_id,
+                    "step": "gap_recovery",
+                    "duration_ms": int((time.time() - step_start) * 1000),
+                    "task_count": len(deduplicated),
+                })
 
         # ── Step 5: Save Checkpoint ───────────────────────────────────────────
         with tracer.start_as_current_span("STEP_5_SAVE"):
+            step_start = time.time()
             self._update_status(5, "Saving pipeline output...", 0.95)
-            rprint("[bold]Step 5/5:[/bold] Saving pipeline output...")
+            logger.info("› Step 5/5: Saving pipeline output...")
             checkpoint_path = Path(f"data/sessions/{self.config.run_id}/pipeline_output.json")
             checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -221,10 +289,22 @@ class PipelineOrchestrator:
                     indent=2,
                     default=str,
                 )
+            self.telemetry.emit("step.completed", {
+                "run_id": self.config.run_id,
+                "step": "save",
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "task_count": len(deduplicated),
+            })
 
-        logger.success(f"Pipeline complete! {len(deduplicated)} tasks ready.")
-        rprint(f"\n[bold green]Pipeline complete![/bold green]")
-        rprint(f"Total tasks ready for review: [bold]{len(deduplicated)}[/bold]")
-        rprint(f"Checkpoint saved: {checkpoint_path}\n")
+        logger.success(f"✓ Pipeline complete! {len(deduplicated)} tasks ready.")
+        logger.info(f"Checkpoint saved: {checkpoint_path}")
+        self.telemetry.emit("run.completed", {
+            "run_id": self.config.run_id,
+            "duration_ms": int((time.time() - run_start) * 1000),
+            "task_count": len(deduplicated),
+            "coverage_pct": report["coverage_pct"],
+        })
+
+        sync_telemetry()
 
         return deduplicated

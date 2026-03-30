@@ -7,9 +7,11 @@ Transform complex Statement of Work (SOW) PDFs into testable, hierarchical Jira 
 ## ✨ Features
 
 - **Hierarchical Extraction**: Level-aware decomposition (Epics → Stories → Sub-tasks).
-- **Universal LLM Routing**: One-click switching between OpenAI, Anthropic, Gemini, and local Ollama (via LiteLLM).
+- **Universal LLM Routing**: One-click switching between OpenAI, Anthropic, Gemini, and local Ollama.
+- **Magi-Optics Observability**: Full-stack tracing and logging via Bifrost, Loki, and Tempo.
+- **High-Fidelity Terminal UI**: Real-time extraction progress bars and formatted run summaries using `rich`.
 - **Zero-Dependency Portable Installer**: A single command checks your system, installs Docker, and launches the app.
-- **Privacy First**: All SOW data stays on your machine. Anonymous execution telemetry is scrubbed of PII before sync.
+- **Privacy First**: All SOW data stays on your machine.
 - **Session Management**: Work on multiple SOWs simultaneously without state overlap.
 
 ---
@@ -37,32 +39,53 @@ Once installed, simply type:
 ```bash
 sjt
 ```
-This command will:
-1. Boot the required Docker containers.
-2. Link your global data folder (`~/.sow_to_jira`).
-3. Open your browser to `http://localhost:8000`.
+This command launches the **Milestone v1.0 Stack**:
+1. **App**: http://localhost:8000
+2. **Observability (Grafana)**: http://localhost:3000
+3. **LLM Gateway (Bifrost)**: http://localhost:8080
+
+---
+
+## 📡 Observability & Tracing
+
+SOW-to-Jira includes a built-in observability stack to monitor extraction performance and LLM latency.
+
+- **Logs**: Standardized application logs are shipped to **Loki**.
+- **Traces**: End-to-end trace spans for every node extraction are visible in **Tempo**.
+- **Dashboards**: Access **Grafana** at `http://localhost:3000` to explore logs and traces.
+
+To point a remote extraction run back to your central deck, set the following in your `.env`:
+```env
+BIFROST_GATEWAY_URL=http://your-central-deck:8080
+BIFROST_BACKBONE_TOKEN=your-token
+```
 
 ---
 
 ## ⚙️ Configuration
 
-The easiest way to configure SOW-to-Jira is through the **Settings (gear icon)** in the web interface. 
+Configure SOW-to-Jira through the **Settings (gear icon)** in the web interface.
 
-Your secrets are persisted globally at `~/.sow_to_jira/.env`, ensuring they are preserved across tool updates.
+Secrets are persisted at `~/.sow_to_jira/data/settings.json` and encrypted using the key in `~/.sow_to_jira/data/.keyfile`.
 
 | Feature | How to Configure |
 | :--- | :--- |
-| **LLM Routing** | Set `Universal API Key`, `Model`, and `Base URL` in the Settings Modal. |
-| **Jira Integration** | Set your Jira Server URL and API Token in the Settings Modal. |
-| **Telemetry** | Telemetry is enabled by default. To opt-out, edit `~/.sow_to_jira/.env` and set `BIFROST_TELEMETRY_URL=""`. |
+| **LLM Routing** | Set `Universal API Key`, `Model`, and `Base URL` in Settings. |
+| **Jira Integration** | Set your Jira Server URL and API Token in Settings. |
+| **Telemetry** | Set `BIFROST_GATEWAY_URL` to your central instance. |
 
 ---
 
-## 🛡️ Security & Privacy
+## 🛡️ Production Readiness
 
-- **Local Storage**: All session data and PDFs are stored in `~/.sow_to_jira/data`.
-- **PII Scrubbing**: Our observability layer uses a "Scrub-First" policy. Raw prompts and responses are NEVER sent to our central telemetry server.
-- **Offline Mode**: If you are offline, telemetry is buffered locally and synced only when you are back online.
+Audit the deployment integrity using our built-in check script:
+```bash
+bash scripts/prod-check.sh
+```
+This script verifies:
+- **Non-Root Execution**: Container runs as user `sow`.
+- **Healthchecks**: All 5 core services are responding.
+- **Isolation**: Internal networking is secure.
 
 ---
 

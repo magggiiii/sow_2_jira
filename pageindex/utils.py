@@ -9,18 +9,38 @@ import copy
 import asyncio
 import pymupdf
 from io import BytesIO
+import contextlib
+import io
 from dotenv import load_dotenv
 load_dotenv()
 import logging
 import yaml
 from pathlib import Path
 from types import SimpleNamespace as config
+from pipeline.observability import logger
+from rich.console import Console
+from models.schemas import current_provider_config
 
 # Backward compatibility: support CHATGPT_API_KEY as alias for OPENAI_API_KEY
 if not os.getenv("OPENAI_API_KEY") and os.getenv("CHATGPT_API_KEY"):
     os.environ["OPENAI_API_KEY"] = os.getenv("CHATGPT_API_KEY")
 
 litellm.drop_params = True
+try:
+    if hasattr(litellm, "suppress_debug_info"):
+        litellm.suppress_debug_info = True
+    if hasattr(litellm, "verbose"):
+        litellm.verbose = False
+except Exception:
+    pass
+
+@contextlib.contextmanager
+def _suppress_litellm_output():
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        yield
+
+console = Console()
 
 def count_tokens(text, model=None):
     if not text:
@@ -28,56 +48,80 @@ def count_tokens(text, model=None):
     return litellm.token_counter(model=model, text=text)
 
 
-def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
+def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None):
     max_retries = 10
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     for i in range(max_retries):
+        if stop_event and stop_event.is_set():
+            logger.warning("› LLM completion cancelled by user")
+            return ("", "error") if return_finish_reason else ""
         try:
-            print(">>> Remote LLM Call Active...")
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                temperature=0,
-                timeout=60,
-            )
+            with console.status("Waiting for LLM..."):
+                with _suppress_litellm_output():
+                    kwargs = {
+                        "model": model,
+                        "messages": messages,
+                        "temperature": 0,
+                        "timeout": 60,
+                    }
+                    
+                    pc = current_provider_config.get()
+                    if pc:
+                        if pc.api_key:
+                            kwargs["api_key"] = pc.api_key
+                        if pc.api_base:
+                            kwargs["api_base"] = pc.api_base
+
+                    response = litellm.completion(**kwargs)
             content = response.choices[0].message.content
             if return_finish_reason:
                 finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
                 return content, finish_reason
             return content
         except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+            logger.error(f"✗ LLM error: {e}")
             if i < max_retries - 1:
                 time.sleep(1)
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
+                logger.error('✗ Max retries reached for prompt')
                 if return_finish_reason:
                     return "", "error"
                 return ""
 
 
 
-async def llm_acompletion(model, prompt):
+async def llm_acompletion(model, prompt, stop_event=None):
     max_retries = 10
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
+        if stop_event and stop_event.is_set():
+            logger.warning("› LLM completion cancelled by user")
+            return ""
         try:
-            print(">>> Remote LLM Call Active...")
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                temperature=0,
-                timeout=60,
-            )
+            with console.status("Waiting for LLM..."):
+                with _suppress_litellm_output():
+                    kwargs = {
+                        "model": model,
+                        "messages": messages,
+                        "temperature": 0,
+                        "timeout": 60,
+                    }
+                    
+                    pc = current_provider_config.get()
+                    if pc:
+                        if pc.api_key:
+                            kwargs["api_key"] = pc.api_key
+                        if pc.api_base:
+                            kwargs["api_base"] = pc.api_base
+
+                    response = await litellm.acompletion(**kwargs)
             return response.choices[0].message.content
         except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+            logger.error(f"✗ LLM error: {e}")
             if i < max_retries - 1:
                 await asyncio.sleep(1)
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
+                logger.error('✗ Max retries reached for prompt')
                 return ""
             
             
@@ -117,7 +161,7 @@ def extract_json(content):
         return json.loads(json_content)
     except json.JSONDecodeError as e:
         snippet = content[:100] + "..." if len(content) > 100 else content
-        logging.error(f"Failed to extract JSON: {e} | Snippet: {snippet}")
+        logger.error(f"✗ Failed to extract JSON: {e} | Snippet: {snippet}")
         
         # Final emergency cleanup: try to find the first { and last }
         try:
@@ -128,10 +172,10 @@ def extract_json(content):
         except:
             pass
             
-        logging.error("Failed to parse JSON even after emergency cleanup")
+        logger.error("✗ Failed to parse JSON even after emergency cleanup")
         return {}
     except Exception as e:
-        logging.error(f"Unexpected error while extracting JSON: {e}")
+        logger.error(f"✗ Unexpected error while extracting JSON: {e}")
         return {}
 
 def write_node_id(data, node_id=0):
@@ -478,7 +522,7 @@ def remove_fields(data, fields=['text']):
 
 def print_toc(tree, indent=0):
     for node in tree:
-        print('  ' * indent + node['title'])
+        logger.debug('  ' * indent + node['title'])
         if node.get('nodes'):
             print_toc(node['nodes'], indent + 1)
 
@@ -494,7 +538,7 @@ def print_json(data, max_len=40, indent=2):
             return obj
     
     simplified = simplify_data(data)
-    print(json.dumps(simplified, indent=indent, ensure_ascii=False))
+    logger.debug(json.dumps(simplified, indent=indent, ensure_ascii=False))
 
 
 def remove_structure_text(data):
@@ -513,11 +557,10 @@ def check_token_limit(structure, limit=110000):
     for node in list:
         num_tokens = count_tokens(node['text'], model=None)
         if num_tokens > limit:
-            print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
-            print("Start Index:", node['start_index'])
-            print("End Index:", node['end_index'])
-            print("Title:", node['title'])
-            print("\n")
+            logger.debug(f"Node ID: {node['node_id']} has {num_tokens} tokens")
+            logger.debug(f"Start Index: {node['start_index']}")
+            logger.debug(f"End Index: {node['end_index']}")
+            logger.debug(f"Title: {node['title']}")
 
 
 def convert_physical_index_to_int(data):
@@ -580,20 +623,20 @@ def add_node_text_with_labels(node, pdf_pages):
     return
 
 
-async def generate_node_summary(node, model=None):
+async def generate_node_summary(node, model=None, stop_event=None):
     prompt = f"""You are given a part of a document, your task is to generate a description of the partial document about what are main points covered in the partial document.
 
     Partial Document Text: {node['text']}
     
     Directly return the description, do not include any other text.
     """
-    response = await llm_acompletion(model, prompt)
+    response = await llm_acompletion(model, prompt, stop_event=stop_event)
     return response
 
 
-async def generate_summaries_for_structure(structure, model=None):
+async def generate_summaries_for_structure(structure, model=None, stop_event=None):
     nodes = structure_to_list(structure)
-    tasks = [generate_node_summary(node, model=model) for node in nodes]
+    tasks = [generate_node_summary(node, model=model, stop_event=stop_event) for node in nodes]
     summaries = await asyncio.gather(*tasks)
     
     for node, summary in zip(nodes, summaries):

@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 import opendataloader_pdf
-from rich import print as rprint
 from pipeline.observability import logger, tracer, trace_span
 
 class PDFParser:
@@ -18,8 +17,7 @@ class PDFParser:
         """
         Returns raw OpenDataLoader JSON output.
         """
-        logger.info(f"Starting PDF parsing: {pdf_path}")
-        rprint(f"[cyan]Parsing PDF:[/cyan] {pdf_path}")
+        logger.info(f"› Parsing PDF: {pdf_path}")
         output_dir = Path("data/parser_output")
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,8 +59,7 @@ class PDFParser:
         parsed["elements"] = elements
 
         count = len(elements)
-        logger.success(f"Parsed and normalized {count} elements from PDF")
-        rprint(f"[green]Parsed {count} elements[/green]")
+        logger.success(f"✓ Parsed and normalized {count} elements from PDF")
         return parsed
 
     @trace_span("CONVERT_TO_MARKDOWN", agent="PDFParser")
@@ -127,8 +124,7 @@ class PDFParser:
             if not _should_skip(current_section["heading"], skip_sections):
                 sections.append(current_section)
 
-        logger.success(f"Produced {len(sections)} sections after filtering")
-        rprint(f"[green]Produced {len(sections)} sections after filtering[/green]")
+        logger.success(f"✓ Produced {len(sections)} sections after filtering")
         return sections
 
 

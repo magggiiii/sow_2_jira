@@ -1,11 +1,26 @@
 # models/schemas.py
 
 from __future__ import annotations
+import contextvars
 from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 import datetime
+
+
+# ─── LLM Config ────────────────────────────────────────────────────────────────
+
+class ProviderConfig(BaseModel):
+    provider: str
+    model: str
+    api_key: str = ""
+    api_base: str = ""
+    azure_api_version: str = ""
+    azure_deployment_name: str = ""
+
+
+current_provider_config: contextvars.ContextVar[Optional[ProviderConfig]] = contextvars.ContextVar("current_provider_config", default=None)
 
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
@@ -99,6 +114,7 @@ class RunConfig(BaseModel):
     skip_indexing: bool = False
     max_nodes: int = 200
     run_id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    provider_config: Optional[ProviderConfig] = None
 
 
 # ─── Audit Log Entry ──────────────────────────────────────────────────────────

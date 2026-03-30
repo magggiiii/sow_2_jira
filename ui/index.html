@@ -160,7 +160,6 @@
                         <button id="btnCancelProcess" class="btn btn-outline" style="border-color: var(--error); color: var(--error);">Stop Extraction</button>
                     </div>
                 </div>
-                </div>
             </div>
 
             <!-- Settings Modal -->
@@ -169,18 +168,38 @@
                     <h2 style="margin-bottom: var(--space-24);">LLM & Environment Settings</h2>
                     
                     <div class="form-group" style="margin-bottom: var(--space-16);">
-                        <label class="metric-label">Universal LLM API Key (optional for Ollama)</label>
-                        <input type="password" id="universalApiKey" class="input-field" placeholder="sk-...">
+                        <label class="metric-label">Select Provider</label>
+                        <select id="providerSelect" class="input-field"></select>
                     </div>
-                    
-                    <div class="form-group" style="margin-bottom: var(--space-16);">
-                        <label class="metric-label">Model String (LiteLLM format)</label>
-                        <input type="text" id="universalModel" class="input-field" placeholder="gpt-4o, claude-3-opus, ollama/qwen...">
+
+                    <div class="form-group" id="apiKeyGroup" style="margin-bottom: var(--space-16);">
+                        <label class="metric-label">API Key</label>
+                        <input type="password" id="providerApiKey" class="input-field" placeholder="sk-...">
                     </div>
-                    
+
+                    <div class="form-group" id="baseUrlGroup" style="margin-bottom: var(--space-16);">
+                        <label class="metric-label">API Base URL</label>
+                        <input type="text" id="providerBaseUrl" class="input-field" placeholder="https://api.openai.com/v1">
+                    </div>
+
+                    <div id="azureFields" style="display: none;">
+                        <div class="form-group" style="margin-bottom: var(--space-16);">
+                            <label class="metric-label">Azure Deployment Name</label>
+                            <input type="text" id="azureDeploymentName" class="input-field" placeholder="my-deployment">
+                        </div>
+                        <div class="form-group" style="margin-bottom: var(--space-16);">
+                            <label class="metric-label">Azure API Version</label>
+                            <input type="text" id="azureApiVersion" class="input-field" placeholder="2024-02-15-preview">
+                        </div>
+                    </div>
+
                     <div class="form-group" style="margin-bottom: var(--space-16);">
-                        <label class="metric-label">API Base URL (Optional)</label>
-                        <input type="text" id="universalApiBase" class="input-field" placeholder="https://api.openai.com/v1">
+                        <label class="metric-label">Model</label>
+                        <select id="providerModelSelect" class="input-field"></select>
+                        <div style="display: flex; gap: var(--space-12); align-items: center; margin-top: var(--space-8);">
+                            <button class="btn btn-outline" id="btnFetchModels">Fetch Models</button>
+                            <span id="modelFetchStatus" class="metric-label"></span>
+                        </div>
                     </div>
 
                     <div class="form-group" style="margin-bottom: var(--space-16);">

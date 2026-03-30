@@ -39,6 +39,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingsModal = getEl('settingsModal');
     const btnCancelSettings = getEl('btnCancelSettings');
     const btnSaveSettings = getEl('btnSaveSettings');
+    const providerSelect = getEl('providerSelect');
+    const providerApiKey = getEl('providerApiKey');
+    const providerBaseUrl = getEl('providerBaseUrl');
+    const providerModel = getEl('providerModelSelect');
+    const providerModelSelect = getEl('providerModelSelect');
+    const btnFetchModels = getEl('btnFetchModels');
+    const modelFetchStatus = getEl('modelFetchStatus');
+    const apiKeyGroup = getEl('apiKeyGroup');
+    const baseUrlGroup = getEl('baseUrlGroup');
+    const azureFields = getEl('azureFields');
+    const azureDeploymentName = getEl('azureDeploymentName');
+    const azureApiVersion = getEl('azureApiVersion');
     
     // Progress UI
     const progressOverlay = getEl('progressOverlay');
@@ -75,33 +87,153 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // --- Settings Modal Logic ---
+    let providerRegistry = {};
+    let providerSettingsCache = {};
+    let modelFetchTimer = null;
+
+    async function loadProviders() {
+        const res = await fetch('/api/providers');
+        const data = await res.json();
+        providerRegistry = data.providers || {};
+        if (providerSelect) {
+            providerSelect.innerHTML = '';
+            Object.keys(providerRegistry).forEach((key) => {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = key;
+                providerSelect.appendChild(opt);
+            });
+        }
+    }
+
+    function updateProviderUI() {
+        const provider = providerSelect?.value;
+        const reg = providerRegistry[provider] || {};
+        const cached = providerSettingsCache[provider] || {};
+        if (baseUrlGroup) {
+            baseUrlGroup.style.display = reg.show_base_url ? 'block' : 'none';
+        }
+        if (providerBaseUrl) {
+            providerBaseUrl.value = cached.base_url || reg.base_url || '';
+        }
+        if (azureFields) {
+            azureFields.style.display = provider === 'azure' ? 'block' : 'none';
+        }
+        if (apiKeyGroup) {
+            apiKeyGroup.style.display = provider === 'ollama' ? 'none' : 'block';
+        }
+        if (providerApiKey) {
+            if (cached.api_key && cached.api_key !== '***') {
+                providerApiKey.value = cached.api_key;
+            } else {
+                providerApiKey.value = '';
+                providerApiKey.placeholder = cached.api_key ? 'Stored (re-enter to change)' : 'sk-...';
+            }
+        }
+        if (providerModel) {
+            providerModel.value = cached.model || '';
+        }
+        if (azureDeploymentName) azureDeploymentName.value = cached.azure_deployment_name || '';
+        if (azureApiVersion) azureApiVersion.value = cached.azure_api_version || '';
+        if (providerModelSelect) {
+            providerModelSelect.innerHTML = '';
+        }
+        if (modelFetchStatus) {
+            modelFetchStatus.textContent = '';
+            modelFetchStatus.style.color = 'var(--text-tertiary)';
+        }
+    }
+
+    async function fetchModels() {
+        if (!providerSelect) return;
+        const provider = providerSelect.value;
+        if (!provider) return;
+        if (modelFetchStatus) {
+            modelFetchStatus.textContent = 'Fetching...';
+            modelFetchStatus.style.color = 'var(--text-secondary)';
+        }
+        try {
+            const payload = {
+                api_key: providerApiKey?.value,
+                base_url: providerBaseUrl?.value,
+                azure_deployment_name: azureDeploymentName?.value,
+                azure_api_version: azureApiVersion?.value,
+            };
+            const res = await fetch(`/api/providers/${provider}/models`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.detail || 'Model discovery failed');
+            }
+            if (providerModelSelect) {
+                providerModelSelect.innerHTML = '';
+                (data.models || []).forEach((m) => {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    opt.textContent = m;
+                    providerModelSelect.appendChild(opt);
+                });
+                
+                // Restore from cache if available, otherwise fallback to first model
+                const cachedModel = providerSettingsCache[provider]?.model;
+                if (cachedModel && data.models.includes(cachedModel)) {
+                    providerModelSelect.value = cachedModel;
+                } else if (data.models.length > 0) {
+                    providerModelSelect.value = data.models[0];
+                }
+            }
+            if (modelFetchStatus) {
+                modelFetchStatus.textContent = `✓ ${data.models.length} models`;
+                modelFetchStatus.style.color = 'var(--success)';
+            }
+        } catch (e) {
+            if (modelFetchStatus) {
+                modelFetchStatus.textContent = `✗ ${e.message || 'Fetch failed'}`;
+                modelFetchStatus.style.color = 'var(--error)';
+            }
+        }
+    }
+
+    function scheduleModelFetch() {
+        if (modelFetchTimer) clearTimeout(modelFetchTimer);
+        modelFetchTimer = setTimeout(fetchModels, 400);
+    }
+
     if (btnSettings && settingsModal) {
         btnSettings.addEventListener('click', async () => {
             try {
+                await loadProviders();
                 const res = await fetch('/api/settings');
                 const data = await res.json();
-                if (getEl('universalApiKey')) getEl('universalApiKey').value = data.universal_api_key || '';
-                if (getEl('universalModel')) getEl('universalModel').value = data.universal_model || '';
-                if (getEl('universalApiBase')) getEl('universalApiBase').value = data.universal_api_base || '';
+                providerSettingsCache = data.providers || {};
+                if (providerSelect) providerSelect.value = data.provider || 'openai';
                 if (getEl('jiraServerUrl')) getEl('jiraServerUrl').value = data.jira_server_url || '';
                 if (getEl('jiraApiToken')) getEl('jiraApiToken').value = data.jira_api_token || '';
+                updateProviderUI();
                 settingsModal.style.display = 'flex';
+                scheduleModelFetch();
             } catch (e) {
                 showToast('Failed to load settings', 'error');
             }
         });
-        
+
         btnCancelSettings.addEventListener('click', () => {
             settingsModal.style.display = 'none';
         });
-        
+
         btnSaveSettings.addEventListener('click', async () => {
             const payload = {
-                universal_api_key: getEl('universalApiKey')?.value,
-                universal_model: getEl('universalModel')?.value,
-                universal_api_base: getEl('universalApiBase')?.value,
+                provider: providerSelect?.value,
+                model: providerModel?.value,
+                api_key: providerApiKey?.value,
+                base_url: providerBaseUrl?.value,
+                azure_deployment_name: azureDeploymentName?.value,
+                azure_api_version: azureApiVersion?.value,
                 jira_server_url: getEl('jiraServerUrl')?.value,
-                jira_api_token: getEl('jiraApiToken')?.value
+                jira_api_token: getEl('jiraApiToken')?.value,
             };
             btnSaveSettings.textContent = "Saving...";
             try {
@@ -111,7 +243,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify(payload)
                 });
                 if (res.ok) {
-                    showToast('Settings saved successfully (API & Jira)!', 'success');
+                    const provider = providerSelect?.value;
+                    if (provider) {
+                        providerSettingsCache[provider] = {
+                            model: providerModel?.value || '',
+                            api_key: providerApiKey?.value ? '***' : (providerSettingsCache[provider]?.api_key || ''),
+                            base_url: providerBaseUrl?.value || '',
+                            azure_deployment_name: azureDeploymentName?.value || '',
+                            azure_api_version: azureApiVersion?.value || '',
+                        };
+                    }
+                    showToast('Settings saved successfully!', 'success');
                     settingsModal.style.display = 'none';
                 } else {
                     showToast('Failed to save settings', 'error');
@@ -123,6 +265,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    if (providerSelect) providerSelect.addEventListener('change', () => {
+        updateProviderUI();
+        scheduleModelFetch();
+    });
+    if (providerModelSelect) providerModelSelect.addEventListener('change', () => {
+        if (providerModel) providerModel.value = providerModelSelect.value;
+    });
+    if (providerApiKey) providerApiKey.addEventListener('input', scheduleModelFetch);
+    if (providerBaseUrl) providerBaseUrl.addEventListener('input', scheduleModelFetch);
+    if (azureDeploymentName) azureDeploymentName.addEventListener('input', scheduleModelFetch);
+    if (azureApiVersion) azureApiVersion.addEventListener('input', scheduleModelFetch);
+    if (btnFetchModels) btnFetchModels.addEventListener('click', fetchModels);
 
     // --- Upload Logic ---
     if (uploadZone && pdfUpload) {
@@ -179,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // 3. Reset state
                 activeSessionId = null;
-                localStorage.removeItem('activeSessionId');
+                sessionStorage.removeItem('activeSessionId');
                 resetToNewSession();
                 await loadSessions();
                 
@@ -204,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (res.ok) {
                     showToast('Session deleted', 'success');
                     activeSessionId = null;
-                    localStorage.removeItem('activeSessionId');
+                    sessionStorage.removeItem('activeSessionId');
                     await loadSessions();
                     resetToNewSession();
                 }
@@ -247,7 +402,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     function resetToNewSession() {
         activeSessionId = null;
-        localStorage.removeItem('activeSessionId');
+        sessionStorage.removeItem('activeSessionId');
         taskData = { tasks: [], config: {} };
         if (newExtractionContainer) newExtractionContainer.style.display = 'block';
         if (processConfig) processConfig.style.display = 'flex';
@@ -336,7 +491,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (processRes.ok) {
                 const data = await processRes.json();
                 activeSessionId = data.run_id;
-                localStorage.setItem('activeSessionId', activeSessionId);
+                sessionStorage.setItem('activeSessionId', activeSessionId);
                 
                 if (progressOverlay) progressOverlay.style.display = 'flex';
                 if (logConsole) logConsole.innerHTML = '';
@@ -368,7 +523,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (status.is_running || status.progress >= 1.0) {
                     const runIdLabel = status.run_id ? ` (Run: ${status.run_id})` : '';
-                    if (progressStepTitle) progressStepTitle.textContent = `Step ${status.current_step}/6${runIdLabel}`;
+                    if (progressStepTitle) {
+                        if (status.kind === 'jira_push') {
+                            progressStepTitle.textContent = `Jira Push${runIdLabel}`;
+                        } else {
+                            progressStepTitle.textContent = `Step ${status.current_step}/6${runIdLabel}`;
+                        }
+                    }
                     if (progressMessage) progressMessage.textContent = status.message;
                     const pct = (status.progress * 100).toFixed(0);
                     if (progressBarFill) progressBarFill.style.width = `${pct}%`;
@@ -391,7 +552,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 if (!status.is_running) {
-                    localStorage.removeItem('activeSessionId');
+                    sessionStorage.removeItem('activeSessionId');
                     if (status.error) {
                         clearInterval(statusInterval);
                         if (progressMessage) {
@@ -402,7 +563,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else if (status.progress >= 1.0) {
                         clearInterval(statusInterval);
                         if (progressStepTitle) progressStepTitle.textContent = "Complete!";
-                        showToast('Extraction Complete!', 'success');
+                        if (status.kind === 'jira_push') {
+                            showToast(status.message || 'Jira push complete', 'success');
+                        } else {
+                            showToast('Extraction Complete!', 'success');
+                        }
                         await loadData();
                         setTimeout(() => { if (progressOverlay) progressOverlay.style.display = 'none'; }, 2000);
                     } else {
@@ -506,12 +671,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify(req)
                 });
                 const data = await res.json();
-                if (data.success) {
+                if (data.started && data.run_id) {
+                    activeSessionId = data.run_id;
+                    if (progressOverlay) progressOverlay.style.display = 'flex';
+                    if (logConsole) logConsole.innerHTML = '';
+                    showToast(data.message || 'Jira push started', 'success');
+                    startStatusPolling();
+                } else if (data.success) {
                     showToast('Pushed to Jira Successfully!', 'success');
+                    await loadData();
                 } else {
                     showToast(data.message || 'Push failed', 'error');
                 }
-                await loadData();
             } catch (e) {
                 showToast('Failed to contact server', 'error');
             } finally {
@@ -725,7 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Auto-resume logic for refreshes or tabbing back into a suspended tab
     async function autoResumeSession() {
-        const storedId = localStorage.getItem('activeSessionId');
+        const storedId = sessionStorage.getItem('activeSessionId');
         if (storedId) {
             console.log("Auto-resuming session:", storedId);
             activeSessionId = storedId;
@@ -738,7 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize
     loadSessions().then(() => {
         autoResumeSession();
-        if (!localStorage.getItem('activeSessionId')) {
+        if (!sessionStorage.getItem('activeSessionId')) {
             loadData();
         }
     });

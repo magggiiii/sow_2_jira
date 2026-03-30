@@ -89,13 +89,6 @@ This script verifies:
 
 ---
 
-## 🤝 Contributing
-
-We use **Caliber** for AI-agent alignment. If you are developing with an AI assistant, initialize the workspace first:
-```bash
-npx caliber init
-```
-
 ## 📄 License
 
 Proprietary and Confidential. © 2026 Mageswaran.

@@ -146,13 +146,13 @@ EOF
 fi
 
 # 6. Alias Creation
-LAUNCH_CMD="alias sjt='cd \"$SOW_HOME\" && docker compose up -d && $OPEN_CMD http://localhost:8000'"
+LAUNCH_CMD="alias s2j='cd \"$SOW_HOME\" && docker compose up -d && $OPEN_CMD http://localhost:8000'"
 
 touch "$SHELL_RC"
-if ! grep -q "alias sjt=" "$SHELL_RC"; then
+if ! grep -q "alias s2j=" "$SHELL_RC"; then
     echo -e "\n# SOW-to-Jira\n$LAUNCH_CMD" >> "$SHELL_RC"
 fi
 
 echo -e "\n${GREEN}Installation Complete!${NC}"
-echo -e "Restart your terminal or run 'source $SHELL_RC' to enable the '${BLUE}sjt${NC}' command."
-echo -e "Try it now: ${BLUE}sjt${NC}"
+echo -e "Restart your terminal or run 'source $SHELL_RC' to enable the '${BLUE}s2j${NC}' command."
+echo -e "Try it now: ${BLUE}s2j${NC}"

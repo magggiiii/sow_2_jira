@@ -18,5 +18,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Jira Next-Gen Compatibility**: Fixed Epic linking using the modern `parent` field to support Team-managed projects.
 - **Installer Resilience**: Added auto-detection and installation of Git and Docker services across Windows/macOS/Linux.
 - **macOS Compatibility**: Resolved `sed` syntax differences in the installer script.
-- **Shell UX**: Automated terminal reload (`exec $SHELL`) after installation for immediate `sjt` command availability.
+- **Shell UX**: Automated terminal reload (`exec $SHELL`) after installation for immediate `s2j` command availability.
 - **Cache-Busting**: Implemented timestamped URLs in documentation to ensure the latest installer is always fetched.

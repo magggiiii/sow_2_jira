@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Pre-set Observability (Bifrost)
-BIFROST_GATEWAY_URL="http://localhost:8080"
+BIFROST_GATEWAY_URL="http://bifrost:8080"
 BIFROST_BACKBONE_TOKEN="sow-dist-v1-token"
 
 # Utility: Confirm with user

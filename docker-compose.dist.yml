@@ -7,12 +7,10 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
-      - ./config:/app/config:ro
+    env_file: .env
     environment:
       - SOW_DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
-      - BIFROST_GATEWAY_URL=${BIFROST_GATEWAY_URL:-http://bifrost:8080}
-      - BIFROST_BACKBONE_TOKEN=${BIFROST_BACKBONE_TOKEN}
     depends_on:
       - bifrost
     networks:

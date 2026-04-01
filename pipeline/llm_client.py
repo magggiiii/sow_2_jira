@@ -11,7 +11,7 @@ import io
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
 from audit.logger import AuditLogger
-from pipeline.observability import logger, tracer
+from pipeline.observability import logger, tracer, llm_token_usage, llm_operation_duration, INSTANCE_ID
 from pipeline.telemetry import TelemetryEmitter
 from rich.console import Console
 
@@ -143,6 +143,12 @@ class LLMClient:
                         span.set_attribute("tokens", tokens)
                         span.set_attribute("response_preview", content[:1000])
                         
+                        # Record Argus Metrics
+                        latency_s = time.time() - start_time
+                        llm_token_usage.add(prompt_tokens, {"gen_ai.token.type": "input", "argus.instance_id": INSTANCE_ID, "model": self.model})
+                        llm_token_usage.add(completion_tokens, {"gen_ai.token.type": "output", "argus.instance_id": INSTANCE_ID, "model": self.model})
+                        llm_operation_duration.record(latency_s, {"argus.instance_id": INSTANCE_ID, "model": self.model})
+
                         logger.success(f"✓ LLM Response received ({tokens} tokens)")
                         self.telemetry.emit("llm.call", {
                             "run_id": self.run_id,

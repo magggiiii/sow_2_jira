@@ -2,10 +2,12 @@
 import os
 import asyncio
 from dotenv import load_dotenv
+import pytest
 from integrations.jira_mcp_client import JiraMCPClient
 from audit.logger import AuditLogger
 from models.schemas import JiraHierarchy
 
+@pytest.mark.asyncio
 async def test_mcp():
     load_dotenv()
     # MCP might need JIRA_MCP_API or JIRA_API_TOKEN

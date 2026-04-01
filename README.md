@@ -2,7 +2,7 @@
 
 Automate complex B2B project decomposition with high-fidelity LLM orchestration and enterprise-grade observability. Transform dense Statement of Work (SOW) PDFs into actionable, hierarchical Jira tickets in seconds.
 
-![SOW to Jira Banner](https://raw.githubusercontent.com/username/sow_to_jira/main/static/banner.png)
+![SOW to Jira Banner](ascii-art-text.png)
 
 ## ✨ Milestone v1.0 Features
 
@@ -18,43 +18,58 @@ Automate complex B2B project decomposition with high-fidelity LLM orchestration 
 
 ---
 
-## 🛠 Quick Start (One-Click Setup)
+## 🛠 Quick Start (One-Command Setup)
 
-Choose the command for your operating system to install the dependencies (including Docker) and configure the `sjt` alias.
+Install all dependencies (including Docker) and configure the `sjt` alias with a single command. Supports macOS and Ubuntu/Debian.
 
-### macOS (Apple Silicon & Intel)
+### 1. Before You Begin: Generate your Jira API Token
+To push tasks to Jira, you need a Jira API token:
+1.  Visit [Atlassian API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
+2.  Click **Create API token**.
+3.  Enter a **Label** (e.g., `sow-to-jira`) and click **Create**.
+4.  **Copy the token** immediately and save it securely. You will need it during the installation wizard.
+
+### 2. Run the Unified Installer
+Copy and paste the following command into your terminal:
 ```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_mac.sh" | bash
+curl -fsSL "https://calib.dev/mageswaran/sow-to-jira/-/raw/main/install.sh" | bash
 ```
 
-### Ubuntu / Debian
-```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_ubuntu.sh" | bash
-```
+### 3. Complete the Interactive Wizard
+The installer will prompt you for:
+- **LiteLLM Model:** (e.g., `gpt-4o`, `anthropic/claude-3-5-sonnet`)
+- **LiteLLM API Key:** Your OpenAI/Anthropic/etc. key.
+- **Jira Server:** Your Atlassian domain (e.g., `https://your-company.atlassian.net`).
+- **Jira Email:** The email associated with your Atlassian account.
+- **Jira API Token:** The token you generated in Step 1.
 
 ---
 
-## 🏃 Daily Workflow
+## 🏃 Getting Started & Daily Workflow
 
-Once installed, use the **SOW-to-Jira (SJT)** command to launch the engine.
+Once installed, follow these steps to start extracting SOWs:
 
 ### 1. Launch the Stack
+Type the shortcut command to boot the entire engine:
 ```bash
 sjt
 ```
+*Tip: If the command isn't found, run `source ~/.zshrc` (macOS) or `source ~/.bashrc` (Linux) first.*
+
 This boots the **Milestone v1.0 Production Stack**:
-- **Main App**: [http://localhost:8000](http://localhost:8000)
+- **Main App Dashboard**: [http://localhost:8000](http://localhost:8000)
 - **Observability (Grafana)**: [http://localhost:3000](http://localhost:3000)
-- **LLM Gateway (Bifrost)**: [http://localhost:8080](http://localhost:8080)
 
-### 2. Run the Extraction
-You can run the extraction via the Web UI or the interactive CLI wizard:
-```bash
-python3 main.py
-```
+### 2. Run an Extraction
+Choose your preferred interface:
+- **Web UI:** Open [http://localhost:8000](http://localhost:8000) and upload your SOW PDF.
+- **CLI Wizard:** Run `python3 main.py` for a guided terminal experience.
 
-### 3. Review & Push
-Open the dashboard at `http://localhost:8000`, review the extracted hierarchy, edit acceptance criteria, and push approved items directly to Jira Cloud.
+### 3. Review & Push to Jira
+1.  Navigate to the **Dashboard** at `http://localhost:8000`.
+2.  Review the extracted **Epic → Story → Sub-task** hierarchy.
+3.  Edit any descriptions or acceptance criteria as needed.
+4.  Click **Push to Jira** to sync approved items directly to your project.
 
 ---
 

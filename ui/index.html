@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/styles.css?v=4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="app-layout">
@@ -15,7 +15,7 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>SOW to Jira</h2>
-                <button id="themeToggle" class="btn btn-outline" style="min-height: auto; padding: var(--space-4);">
+                <button id="themeToggle" class="btn btn-outline" aria-label="Toggle theme" style="min-height: auto; padding: var(--space-4);">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="5"></circle>
                         <line x1="12" y1="1" x2="12" y2="3"></line>
@@ -231,7 +231,8 @@
         </main>
     </div>
 
-    <div class="toast-container" id="toastContainer"></div>
+    <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+    <div id="globalSpinner" class="spinner-overlay" style="display: none;"><div class="spinner"></div></div>
 
     <template id="taskCardTemplate">
         <div class="task-card">

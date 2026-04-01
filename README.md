@@ -2,7 +2,7 @@
 
 Automate complex B2B project decomposition with high-fidelity LLM orchestration and enterprise-grade observability. Transform dense Statement of Work (SOW) PDFs into actionable, hierarchical Jira tickets in seconds.
 
-![SOW to Jira Banner](https://raw.githubusercontent.com/username/sow_to_jira/main/static/banner.png)
+![SOW to Jira Banner](ascii-art-text.png)
 
 ## ✨ Milestone v1.0 Features
 

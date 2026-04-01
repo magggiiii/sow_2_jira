@@ -8,7 +8,7 @@ Automate complex B2B project decomposition with high-fidelity LLM orchestration 
 
 - **Hierarchical Extraction**: Level-aware decomposition supporting **Epics → Stories → Sub-tasks**.
 - **Universal LLM Routing**: Seamlessly switch between OpenAI, Anthropic, Gemini, and local Ollama models via LiteLLM integration.
-- **Magi-Optics Observability**: Full-stack tracing and logging. Monitor extraction performance and LLM latency using **Grafana, Loki, and Tempo**.
+- **Observability**: Full-stack tracing and logging. Monitor extraction performance and LLM latency using **Grafana, Loki, and Tempo**.
 - **High-Fidelity Terminal UX**: Real-time animated progress bars and formatted run summaries using the `Rich` library.
 - **Enterprise Security**: 
   - **Non-Root Execution**: Containerized app runs as a restricted `sow` user.

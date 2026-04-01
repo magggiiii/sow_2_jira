@@ -11,6 +11,7 @@ services:
     environment:
       - SOW_DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
+      - ARGUS_COLLECTOR_URL=http://argus-collector:4317
     depends_on:
       - bifrost
     networks:
@@ -22,6 +23,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  argus-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: argus-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/argus-collector-edge.yaml:/etc/otel-collector-config.yaml:ro
+      - ./data:/app/data
+    environment:
+      - ARGUS_HQ_URL=${ARGUS_HQ_URL}
+      - ARGUS_BACKBONE_TOKEN=${ARGUS_BACKBONE_TOKEN}
+    networks:
+      - sow-internal
+    restart: unless-stopped
 
   bifrost:
     image: maximhq/bifrost:latest

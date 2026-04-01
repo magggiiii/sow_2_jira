@@ -11,9 +11,10 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Pre-set Observability (Bifrost)
-BIFROST_GATEWAY_URL="http://bifrost:8080"
-BIFROST_BACKBONE_TOKEN="sow-dist-v1-token"
+# Argus Identity
+SOW_INSTANCE_ID="sow-$(date +%s)-${RANDOM}"
+ARGUS_HQ_URL="https://argus-deck.loclx.io"
+ARGUS_BACKBONE_TOKEN="argus-dist-v1-token"
 
 # Utility: Confirm with user
 confirm() {
@@ -108,9 +109,11 @@ echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 if [ -f "docker-compose.dist.yml" ]; then
     cp docker-compose.dist.yml "$SOW_HOME/docker-compose.yml"
     cp config/tempo.yaml "$SOW_HOME/config/tempo.yaml"
+    cp config/argus-collector-edge.yaml "$SOW_HOME/config/argus-collector-edge.yaml"
 else
     curl -fsSL "$RAW_URL/docker-compose.dist.yml" -o "$SOW_HOME/docker-compose.yml"
     curl -fsSL "$RAW_URL/config/tempo.yaml" -o "$SOW_HOME/config/tempo.yaml"
+    curl -fsSL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
 fi
 
 # 5. Interactive Credential Wizard
@@ -128,6 +131,12 @@ if [ ! -f "$GLOBAL_ENV" ]; then
     read -p "Jira Email: " J_EMAIL
     read -p "Jira API Token: " J_TOKEN
     
+    echo -e "\n${BLUE}--- Argus Cloud Sync ---${NC}"
+    if confirm "Sync logs/traces to your central Argus HQ?"; then
+        read -p "Argus HQ URL (default: $ARGUS_HQ_URL): " USER_HQ_URL
+        ARGUS_HQ_URL=${USER_HQ_URL:-$ARGUS_HQ_URL}
+    fi
+
     cat <<EOF > "$GLOBAL_ENV"
 # SOW-to-Jira Environment Configuration
 LITELLM_MODEL=$L_MODEL
@@ -138,8 +147,10 @@ JIRA_SERVER=$J_SERVER
 JIRA_EMAIL=$J_EMAIL
 JIRA_API_TOKEN=$J_TOKEN
 
-BIFROST_GATEWAY_URL=$BIFROST_GATEWAY_URL
-BIFROST_BACKBONE_TOKEN=$BIFROST_BACKBONE_TOKEN
+# Argus Observability
+SOW_INSTANCE_ID=$SOW_INSTANCE_ID
+ARGUS_HQ_URL=$ARGUS_HQ_URL
+ARGUS_BACKBONE_TOKEN=$ARGUS_BACKBONE_TOKEN
 
 SOW_DATA_DIR=data
 EOF

@@ -20,7 +20,7 @@ Automate complex B2B project decomposition with high-fidelity LLM orchestration 
 
 ## 🛠 Quick Start (One-Command Setup)
 
-Install all dependencies (including Docker) and configure the `sjt` alias with a single command. Supports macOS and Ubuntu/Debian.
+Install all dependencies (including Docker) and configure the `s2j` alias with a single command. Supports macOS and Ubuntu/Debian.
 
 ### 1. Before You Begin: Generate your Jira API Token
 To push tasks to Jira, you need a Jira API token:
@@ -52,7 +52,7 @@ Once installed, follow these steps to start extracting SOWs:
 ### 1. Launch the Stack
 Type the shortcut command to boot the entire engine:
 ```bash
-sjt
+s2j
 ```
 *Tip: If the command isn't found, run `source ~/.zshrc` (macOS) or `source ~/.bashrc` (Linux) first.*
 

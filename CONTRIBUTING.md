@@ -14,10 +14,10 @@ We welcome contributions! Whether you're fixing a bug, improving documentation, 
 
 1. Clone the repository locally.
 2. Ensure you have **Docker** and **Docker Compose** installed.
-3. Run the application using the `sjt` command:
+3. Run the application using the `s2j` command:
    ```bash
    bash install.sh
-   sjt
+   s2j
    ```
 
 ## Code of Conduct & Confidentiality

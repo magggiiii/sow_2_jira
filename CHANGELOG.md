@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-01
+
+### Added
+- **Unified One-Command Installer**: Consolidated `install.sh` for macOS and Linux with automated OS detection and a new interactive credential wizard.
+- **Branding & UX**: Replaced the `sjt` shortcut with `s2j` (SOW-to-Jira) and added a new banner and ASCII logo to the installer.
+- **Magi-Optics Observability**: Integrated full-stack tracing and logging via Grafana, Loki, and Tempo; pre-wired all distributed instances for central telemetry sync.
+- **Production UI Overhaul**: Redesigned the entire web dashboard for a professional, high-quality production experience using modern design system components.
+
+### Changed
+- **Provider Consistency**: Centralized all settings logic into a unified `SettingsManager` with immutable per-run LLM configuration.
+- **Docker Distribution**: Switched to pre-built images from `calib.dev` for faster, more reliable deployments.
+- **Credential Security**: Hardened Fernet encryption for at-rest storage of API keys and moved all sensitive data to isolated volumes.
+
+### Fixed
+- **Runtime Logging**: Standardized logs across the PageIndex and LLM pipeline for clean, actionable output.
+- **Docker Networking**: Corrected internal BIFROST gateway routing for containerized execution.
+- **Async Testing**: Fixed `test_jira_mcp.py` collection by correctly identifying it as an asynchronous test.
+- **Volume Masking**: Resolved a critical issue where host volumes were masking application configuration code.
+
 ## [1.0.0] - 2026-03-27
 
 ### Added

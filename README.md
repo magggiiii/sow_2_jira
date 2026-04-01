@@ -18,18 +18,12 @@ Automate complex B2B project decomposition with high-fidelity LLM orchestration 
 
 ---
 
-## 🛠 Quick Start (One-Click Setup)
+## 🛠 Quick Start (One-Command Setup)
 
-Choose the command for your operating system to install the dependencies (including Docker) and configure the `sjt` alias.
+Install all dependencies (including Docker) and configure the `sjt` alias with a single command. Supports macOS and Ubuntu/Debian.
 
-### macOS (Apple Silicon & Intel)
 ```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_mac.sh" | bash
-```
-
-### Ubuntu / Debian
-```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install_ubuntu.sh" | bash
+curl -fsSL "https://calib.dev/mageswaran/sow-to-jira/-/raw/main/install.sh" | bash
 ```
 
 ---

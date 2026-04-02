@@ -139,10 +139,13 @@ if [ ! -f "$GLOBAL_ENV" ]; then
     read -p "Jira Email: " J_EMAIL < /dev/tty
     read -p "Jira API Token: " J_TOKEN < /dev/tty
     
-    echo -e "\n${BLUE}--- Argus Cloud Sync ---${NC}"
-    if confirm "Sync logs/traces to your central Argus HQ?"; then
+    echo -e "\n${BLUE}--- Argus Cloud Sync (Optional) ---${NC}"
+    echo -e "Remote synchronization allows the developer to monitor fleet health and LLM performance."
+    ARGUS_SYNC_ENABLED="false"
+    if confirm "Enable remote synchronization to central Argus HQ?"; then
         read -p "Argus HQ URL (default: $ARGUS_HQ_URL): " USER_HQ_URL < /dev/tty
         ARGUS_HQ_URL=${USER_HQ_URL:-$ARGUS_HQ_URL}
+        ARGUS_SYNC_ENABLED="true"
     fi
 
     cat <<EOF > "$GLOBAL_ENV"
@@ -156,6 +159,7 @@ JIRA_EMAIL=$J_EMAIL
 JIRA_API_TOKEN=$J_TOKEN
 
 # Argus Observability
+ARGUS_SYNC_ENABLED=$ARGUS_SYNC_ENABLED
 SOW_INSTANCE_ID=$SOW_INSTANCE_ID
 ARGUS_HQ_URL=$ARGUS_HQ_URL
 ARGUS_BACKBONE_TOKEN=$ARGUS_BACKBONE_TOKEN

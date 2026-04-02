@@ -106,11 +106,14 @@ SOW-to-Jira provides deep visibility into the extraction lifecycle via Argus.
 - **Fleet Metrics**: Track token usage, latency, and success rates across all users.
 
 **Remote Sync:**
-To point a remote extraction run back to your central Argus HQ deck, configure your `.env`:
+Remote synchronization is **disabled by default**. To enable it, or to point a remote extraction run back to your central Argus HQ deck, configure your `.env`:
 ```env
+ARGUS_SYNC_ENABLED=true
 ARGUS_HQ_URL=https://hz8nuthhmt.loclx.io
 ARGUS_BACKBONE_TOKEN=your-secure-token
 ```
+
+Regardless of this setting, all logs are saved locally in `~/.sow_to_jira/data/audit.jsonl` for manual collection.
 
 ---
 

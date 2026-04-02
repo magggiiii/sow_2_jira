@@ -1,12 +1,12 @@
-name: argus-hq
+name: argus-admin
 
 services:
   # 1. Bifrost Gateway (LLM Proxy & Financials)
   bifrost:
     image: maximhq/bifrost:latest
-    container_name: argus-hq-bifrost
+    container_name: argus-admin-bifrost
     volumes:
-      - ./config/bifrost.hq.yaml:/etc/bifrost/config.yaml:ro
+      - ./config/bifrost.admin.yaml:/etc/bifrost/config.yaml:ro
     ports:
       - "8081:8080" # API & Config UI (Shifted to 8081 to avoid conflict with local bifrost)
     environment:
@@ -18,10 +18,10 @@ services:
   # 1.5 Argus HQ Collector (The Telemetry Traffic Controller)
   argus-collector:
     image: otel/opentelemetry-collector-contrib:latest
-    container_name: argus-hq-collector
+    container_name: argus-admin-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
-      - ./config/argus-collector-hq.yaml:/etc/otel-collector-config.yaml:ro
+      - ./config/argus-collector-admin.yaml:/etc/otel-collector-config.yaml:ro
     ports:
       - "4317:4317" # OTLP gRPC (Exposed via tunnel)
       - "4318:4318" # OTLP HTTP (Exposed via tunnel)
@@ -32,7 +32,7 @@ services:
   # 2. Langfuse (AI Tracing & Analytics)
   langfuse:
     image: langfuse/langfuse:latest
-    container_name: argus-hq-langfuse
+    container_name: argus-admin-langfuse
     ports:
       - "3002:3000" # Shifted to 3002 to avoid conflict with local Grafana
     environment:
@@ -50,7 +50,7 @@ services:
 
   db:
     image: postgres:16
-    container_name: argus-hq-db
+    container_name: argus-admin-db
     environment:
       - POSTGRES_USER=langfuse
       - POSTGRES_PASSWORD=langfuse
@@ -64,7 +64,7 @@ services:
   # 3. Loki (Operational Logs)
   loki:
     image: grafana/loki:2.9.4
-    container_name: argus-hq-loki
+    container_name: argus-admin-loki
     ports:
       - "3101:3100" # Shifted to 3101 to avoid conflict with local Loki
     command: -config.file=/etc/loki/local-config.yaml
@@ -75,7 +75,7 @@ services:
   # 4. Tempo (System Traces)
   tempo:
     image: grafana/tempo:2.3.1
-    container_name: argus-hq-tempo
+    container_name: argus-admin-tempo
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./config/tempo.yaml:/etc/tempo.yaml
@@ -86,9 +86,9 @@ services:
   # 5. Prometheus (Fleet Metrics)
   prometheus:
     image: prom/prometheus:latest
-    container_name: argus-hq-prometheus
+    container_name: argus-admin-prometheus
     volumes:
-      - ./config/prometheus.hq.yml:/etc/prometheus/prometheus.yml
+      - ./config/prometheus.admin.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
     networks:
@@ -98,7 +98,7 @@ services:
   # 6. Grafana (The Single Pane of Glass)
   grafana:
     image: grafana/grafana:10.2.3
-    container_name: argus-hq-grafana
+    container_name: argus-admin-grafana
     ports:
       - "3001:3000" # Use 3001 to avoid conflict with Langfuse
     environment:
@@ -110,7 +110,7 @@ services:
 
 networks:
   argus-network:
-    name: argus-hq-network
+    name: argus-admin-network
 
 volumes:
   langfuse_db:

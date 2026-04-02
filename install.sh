@@ -114,12 +114,12 @@ RAW_URL="https://calib.dev/mageswaran/sow_2_jira/-/raw/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 
 # (Simulated download for now, using local files if available)
-if [ -f "docker-compose.dist.yml" ]; then
-    cp docker-compose.dist.yml "$SOW_HOME/docker-compose.yml"
+if [ -f "docker-compose.user.yml" ]; then
+    cp docker-compose.user.yml "$SOW_HOME/docker-compose.user.yml"
     cp config/tempo.yaml "$SOW_HOME/config/tempo.yaml"
     cp config/argus-collector-edge.yaml "$SOW_HOME/config/argus-collector-edge.yaml"
 else
-    curl -fsSL "$RAW_URL/docker-compose.dist.yml" -o "$SOW_HOME/docker-compose.yml"
+    curl -fsSL "$RAW_URL/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
     curl -fsSL "$RAW_URL/config/tempo.yaml" -o "$SOW_HOME/config/tempo.yaml"
     curl -fsSL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
 fi
@@ -165,7 +165,7 @@ EOF
 fi
 
 # 6. Alias Creation
-LAUNCH_CMD="alias s2j='cd \"$SOW_HOME\" && docker compose up -d && $OPEN_CMD http://localhost:8000'"
+LAUNCH_CMD="alias s2j='cd \"$SOW_HOME\" && docker compose -f docker-compose.user.yml up -d && $OPEN_CMD http://localhost:8000'"
 
 touch "$SHELL_RC"
 if ! grep -q "alias s2j=" "$SHELL_RC"; then

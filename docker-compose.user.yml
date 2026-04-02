@@ -1,7 +1,9 @@
+name: user-stack
+
 services:
   app:
     image: calib.dev/mageswaran/sow_2_jira:v1.0
-    container_name: sow-to-jira-app
+    container_name: user-app
     init: true
     ports:
       - "127.0.0.1:8000:8000"
@@ -26,7 +28,7 @@ services:
 
   argus-collector:
     image: otel/opentelemetry-collector-contrib:latest
-    container_name: argus-collector
+    container_name: user-argus-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./config/argus-collector-edge.yaml:/etc/otel-collector-config.yaml:ro
@@ -40,7 +42,7 @@ services:
 
   bifrost:
     image: maximhq/bifrost:latest
-    container_name: llm-gateway
+    container_name: user-bifrost
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -65,7 +67,7 @@ services:
 
   loki:
     image: grafana/loki:2.9.4
-    container_name: sow-loki
+    container_name: user-loki
     ports:
       - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -79,7 +81,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.3.1
-    container_name: sow-tempo
+    container_name: user-tempo
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./config/tempo.yaml:/etc/tempo.yaml
@@ -93,7 +95,7 @@ services:
 
   grafana:
     image: grafana/grafana:10.2.3
-    container_name: sow-grafana
+    container_name: user-grafana
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -104,4 +106,4 @@ services:
 
 networks:
   sow-internal:
-    name: sow-to-jira-network
+    name: user-network

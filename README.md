@@ -135,7 +135,7 @@ To completely remove SOW-to-Jira, its data, and the `s2j` shortcut from your sys
 ```bash
 # WARNING: This will delete ALL data, logs, and API configurations.
 # 1. Stop and remove containers
-cd ~/.sow_to_jira && docker compose down -v 2>/dev/null
+cd ~/.sow_to_jira && docker compose -f docker-compose.user.yml down -v 2>/dev/null
 # 2. Remove data and shortcut
 rm -rf ~/.sow_to_jira && sed -i.bak '/# SOW-to-Jira/,+1d' ~/.zshrc ~/.bashrc 2>/dev/null
 ```

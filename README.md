@@ -86,8 +86,8 @@ docker compose -f docker-compose.hq.yml up -d
 ### 2. Monitoring Dashboards
 - **Bird's Eye View (Grafana)**: [http://localhost:3001](http://localhost:3001)
   - *Import the dashboard from `config/argus-dashboard.json` on first run.*
-- **AI Deep-Dive (Langfuse)**: [http://localhost:3000](http://localhost:3000)
-- **Traffic Control (Bifrost)**: [http://localhost:8080](http://localhost:8080)
+- **AI Deep-Dive (Langfuse)**: [http://localhost:3002](http://localhost:3002)
+- **Traffic Control (Bifrost)**: [http://localhost:8081](http://localhost:8081)
 
 ### 3. Exposing the HQ via Tunnel
 To receive data from anywhere, run your tunnel provider (e.g., LocalXpose) and point it to your laptop's ports:

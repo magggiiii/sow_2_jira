@@ -1,3 +1,5 @@
+name: argus-hq
+
 services:
   # 1. Bifrost Gateway (LLM Proxy & Financials)
   bifrost:
@@ -6,7 +8,7 @@ services:
     volumes:
       - ./config/bifrost.hq.yaml:/etc/bifrost/config.yaml:ro
     ports:
-      - "8080:8080" # API & Config UI
+      - "8081:8080" # API & Config UI (Shifted to 8081 to avoid conflict with local bifrost)
     environment:
       - ENABLE_GOVERNANCE=true
     networks:
@@ -32,7 +34,7 @@ services:
     image: langfuse/langfuse:latest
     container_name: argus-hq-langfuse
     ports:
-      - "3000:3000"
+      - "3002:3000" # Shifted to 3002 to avoid conflict with local Grafana
     environment:
       - NODE_ENV=production
       - NEXTAUTH_URL=http://localhost:3000
@@ -64,7 +66,7 @@ services:
     image: grafana/loki:2.9.4
     container_name: argus-hq-loki
     ports:
-      - "3100:3100"
+      - "3101:3100" # Shifted to 3101 to avoid conflict with local Loki
     command: -config.file=/etc/loki/local-config.yaml
     networks:
       - argus-network

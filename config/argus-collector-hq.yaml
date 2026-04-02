@@ -1,0 +1,53 @@
+# Argus HQ Collector Configuration
+# The Traffic Controller on your laptop that routes data to local backends.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+
+exporters:
+  # 1. Tempo (System Traces)
+  otlp/tempo:
+    endpoint: "tempo:4317"
+    tls:
+      insecure: true
+
+  # 2. Langfuse (AI Traces & Analytics)
+  otlphttp/langfuse:
+    endpoint: "http://langfuse:3000/api/public/otel"
+    headers:
+      # Authorization string should be generated via: base64(pk-lf-...:sk-lf-...)
+      Authorization: "Basic ${LANGFUSE_AUTH_BASE64}"
+      x-langfuse-ingestion-version: "4"
+
+  # 3. Loki (Operational Logs)
+  loki:
+    endpoint: "http://loki:3100/loki/api/v1/push"
+
+  # 4. Prometheus (Fleet Metrics)
+  prometheus:
+    endpoint: "0.0.0.0:8889" # OTel Collector will expose a scrape endpoint here
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo, otlphttp/langfuse]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [loki]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]

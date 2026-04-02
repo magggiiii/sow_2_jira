@@ -8,7 +8,7 @@ Automate complex B2B project decomposition with high-fidelity LLM orchestration 
 
 - **Hierarchical Extraction**: Level-aware decomposition supporting **Epics → Stories → Sub-tasks**.
 - **Universal LLM Routing**: Seamlessly switch between OpenAI, Anthropic, Gemini, and local Ollama models via LiteLLM integration.
-- **Magi-Optics Observability**: Full-stack tracing and logging. Monitor extraction performance and LLM latency using **Grafana, Loki, and Tempo**.
+- **Argus Global Observability**: Full-stack tracing, logging, and fleet metrics. Monitor remote instances via **Grafana, Loki, Tempo, and Langfuse**.
 - **High-Fidelity Terminal UX**: Real-time animated progress bars and formatted run summaries using the `Rich` library.
 - **Enterprise Security**: 
   - **Non-Root Execution**: Containerized app runs as a restricted `sow` user.
@@ -73,19 +73,42 @@ Choose your preferred interface:
 
 ---
 
+## 👁️ Argus: Global Observability (Admin)
+
+If you are the developer/admin managing the fleet, use the **Argus HQ** stack on your laptop to monitor all remote instances.
+
+### 1. Launch the Argus HQ Deck
+```bash
+docker compose -f docker-compose.hq.yml up -d
+```
+
+### 2. Monitoring Dashboards
+- **Bird's Eye View (Grafana)**: [http://localhost:3001](http://localhost:3001)
+  - *Import the dashboard from `config/argus-dashboard.json` on first run.*
+- **AI Deep-Dive (Langfuse)**: [http://localhost:3000](http://localhost:3000)
+- **Traffic Control (Bifrost)**: [http://localhost:8080](http://localhost:8080)
+
+### 3. Exposing the HQ via Tunnel
+To receive data from anywhere, run your tunnel provider (e.g., LocalXpose) and point it to your laptop's ports:
+- **OTLP (gRPC)**: 4317
+- **OTLP (HTTP)**: 4318
+
+---
+
 ## 📡 Observability & Tracing
 
-SOW-to-Jira provides deep visibility into the extraction lifecycle.
+SOW-to-Jira provides deep visibility into the extraction lifecycle via Argus.
 
 - **Explore Logs**: View standardized application logs in **Grafana Loki**.
 - **Analyze Traces**: Inspect end-to-end trace spans for every PageIndex and LLM call in **Grafana Tempo**.
-- **Metrics**: Track token usage, latency, and success rates across different LLM providers.
+- **AI Analytics**: Side-by-side prompt comparisons and cost tracking in **Langfuse**.
+- **Fleet Metrics**: Track token usage, latency, and success rates across all users.
 
 **Remote Sync:**
-To point a remote extraction run back to your central observability deck, configure your `.env`:
+To point a remote extraction run back to your central Argus HQ deck, configure your `.env`:
 ```env
-BIFROST_GATEWAY_URL=http://your-central-deck:8080
-BIFROST_BACKBONE_TOKEN=your-secure-token
+ARGUS_HQ_URL=https://your-public-tunnel-url.loclx.io
+ARGUS_BACKBONE_TOKEN=your-secure-token
 ```
 
 ---

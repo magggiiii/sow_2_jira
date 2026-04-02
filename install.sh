@@ -102,7 +102,7 @@ fi
 # 4. Artifact Provisioning
 # In a real scenario, these would be downloaded via curl from a central registry.
 # For this task, we assume they are copied from the current source or downloaded.
-RAW_URL="https://calib.dev/mageswaran/sow-to-jira/-/raw/main"
+RAW_URL="https://calib.dev/mageswaran/sow_2_jira/-/raw/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 
 # (Simulated download for now, using local files if available)

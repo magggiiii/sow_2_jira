@@ -1,6 +1,6 @@
 services:
   app:
-    image: calib.dev/mageswaran/sow-to-jira:v1.0
+    image: calib.dev/mageswaran/sow_2_jira:v1.0
     container_name: sow-to-jira-app
     init: true
     ports:

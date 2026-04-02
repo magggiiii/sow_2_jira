@@ -101,10 +101,10 @@ fi
 
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
-if ! docker pull calib.dev/mageswaran/sow_2_jira:v1.0 &> /dev/null; then
-    echo -e "${RED}[ERROR] Could not pull image from calib.dev.${NC}"
-    echo -e "Please ensure the project registry at https://calib.dev/mageswaran/sow_2_jira is set to 'Public'."
-    exit 1
+# Attempt a manifest check instead of a full pull to verify visibility
+if ! docker manifest inspect calib.dev/mageswaran/sow_2_jira:v1.0 &> /dev/null; then
+    echo -e "${YELLOW}[!] Note: Could not verify public image visibility.${NC}"
+    echo -e "If the next step fails, please ensure the project registry at https://calib.dev/mageswaran/sow_2_jira is set to 'Public'."
 fi
 
 # 4. Artifact Provisioning

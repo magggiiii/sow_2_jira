@@ -132,8 +132,16 @@ if [ ! -f "$GLOBAL_ENV" ]; then
     read -p "AI Model (default: gpt-4o): " L_MODEL < /dev/tty
     L_MODEL=${L_MODEL:-gpt-4o}
     
+    # Auto-detect Ollama and suggest base URL
+    DEFAULT_BASE=""
+    if [[ $L_MODEL == ollama/* ]]; then
+        DEFAULT_BASE="http://host.docker.internal:11434"
+        echo -e "${BLUE}[INFO] Ollama detected. Using default base: $DEFAULT_BASE${NC}"
+    fi
+
     read -p "Model API Key: " L_KEY < /dev/tty
     read -p "AI API Base (optional): " L_BASE < /dev/tty
+    L_BASE=${L_BASE:-$DEFAULT_BASE}
     
     read -p "Jira Server (e.g., https://your-domain.atlassian.net): " J_SERVER < /dev/tty
     read -p "Jira Email: " J_EMAIL < /dev/tty

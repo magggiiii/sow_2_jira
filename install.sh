@@ -110,7 +110,7 @@ fi
 # 4. Artifact Provisioning
 # In a real scenario, these would be downloaded via curl from a central registry.
 # For this task, we assume they are copied from the current source or downloaded.
-RAW_URL="https://calib.dev/mageswaran/sow_2_jira/-/raw/milestone-v1-stabilization"
+RAW_URL="https://calib.dev/mageswaran/sow_2_jira/-/raw/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 
 # (Simulated download for now, using local files if available)
@@ -124,50 +124,15 @@ else
     curl -fsSL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
 fi
 
-# 5. Interactive Credential Wizard
+# 5. Environment Setup (Wizard removed, now handled in UI)
 GLOBAL_ENV="$SOW_HOME/.env"
 if [ ! -f "$GLOBAL_ENV" ]; then
-    echo -e "\n${BLUE}--- Credential Wizard ---${NC}"
-    
-    read -p "AI Model (default: gpt-4o): " L_MODEL < /dev/tty
-    L_MODEL=${L_MODEL:-gpt-4o}
-    
-    # Auto-detect Ollama and suggest base URL
-    DEFAULT_BASE=""
-    if [[ $L_MODEL == ollama/* ]]; then
-        DEFAULT_BASE="http://host.docker.internal:11434"
-        echo -e "${BLUE}[INFO] Ollama detected. Using default base: $DEFAULT_BASE${NC}"
-    fi
-
-    read -p "Model API Key: " L_KEY < /dev/tty
-    read -p "AI API Base (optional): " L_BASE < /dev/tty
-    L_BASE=${L_BASE:-$DEFAULT_BASE}
-    
-    read -p "Jira Server (e.g., https://your-domain.atlassian.net): " J_SERVER < /dev/tty
-    read -p "Jira Email: " J_EMAIL < /dev/tty
-    read -p "Jira API Token: " J_TOKEN < /dev/tty
-    
-    echo -e "\n${BLUE}--- Argus Cloud Sync (Optional) ---${NC}"
-    echo -e "Remote synchronization allows the developer to monitor fleet health and LLM performance."
-    ARGUS_SYNC_ENABLED="false"
-    if confirm "Enable remote synchronization to central Argus HQ?"; then
-        read -p "Argus HQ URL (default: $ARGUS_HQ_URL): " USER_HQ_URL < /dev/tty
-        ARGUS_HQ_URL=${USER_HQ_URL:-$ARGUS_HQ_URL}
-        ARGUS_SYNC_ENABLED="true"
-    fi
-
     cat <<EOF > "$GLOBAL_ENV"
 # SOW-to-Jira Environment Configuration
-LITELLM_MODEL=$L_MODEL
-LITELLM_API_KEY=$L_KEY
-LITELLM_API_BASE=$L_BASE
+# Use the Web UI at http://localhost:8000 to configure API keys.
 
-JIRA_SERVER=$J_SERVER
-JIRA_EMAIL=$J_EMAIL
-JIRA_API_TOKEN=$J_TOKEN
-
-# Argus Observability
-ARGUS_SYNC_ENABLED=$ARGUS_SYNC_ENABLED
+# Argus Observability (Optional)
+ARGUS_SYNC_ENABLED=false
 SOW_INSTANCE_ID=$SOW_INSTANCE_ID
 ARGUS_HQ_URL=$ARGUS_HQ_URL
 ARGUS_BACKBONE_TOKEN=$ARGUS_BACKBONE_TOKEN

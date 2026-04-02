@@ -33,20 +33,35 @@ To push tasks to Jira, you need a Jira API token:
 Copy and paste the following command into your terminal:
 
 ```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/milestone-v1-stabilization/install.sh" | bash
+curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh" | bash
 ```
 
-### 3. Complete the Interactive Wizard
-The installer will prompt you for:
-- **AI Model:** (e.g., `gpt-4o`, `anthropic/claude-3-5-sonnet`)
-  - *Ollama Users:* Use the `ollama/` prefix (e.g., `ollama/llama3`).
-- **Model API Key:** Your OpenAI/Anthropic key. 
-  - *Ollama Users:* Leave this blank.
-- **AI API Base (Optional):** Usually blank.
-  - *Ollama Users:* Use `http://host.docker.internal:11434`.
-- **Jira Server:** Your Atlassian domain (e.g., `https://your-company.atlassian.net`).
-- **Jira Email:** The email associated with your Atlassian account.
-- **Jira API Token:** The token you generated in Step 1.
+### 3. Launch and Configure
+1.  Launch the stack by typing `s2j`.
+2.  Open **http://localhost:8000** in your browser.
+3.  Go to the **Settings** section to enter your AI Model, API Keys, and Jira credentials.
+
+---
+
+## 🏗 For Developers: Manual Distribution (Test Users)
+
+If you want to give the software to someone personally without relying on the public registry:
+
+### 1. Build and Tag Locally
+```bash
+docker build -t sow-to-jira:test .
+```
+
+### 2. Export the Image
+```bash
+docker save sow-to-jira:test | gzip > sow-to-jira-v1.tar.gz
+```
+
+### 3. Test User Installation
+1.  Send them the `sow-to-jira-v1.tar.gz` and the `install.sh`.
+2.  They run: `docker load < sow-to-jira-v1.tar.gz`.
+3.  They run: `bash install.sh`.
+4.  They update their `docker-compose.user.yml` to use `image: sow-to-jira:test`.
 
 ---
 

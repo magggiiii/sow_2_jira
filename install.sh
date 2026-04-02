@@ -100,10 +100,11 @@ if ! docker info &> /dev/null; then
 fi
 
 # Ensure registry access
-echo -e "${BLUE}[INFO] Verifying registry access to calib.dev...${NC}"
+echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
 if ! docker pull calib.dev/mageswaran/sow_2_jira:v1.0 &> /dev/null; then
-    echo -e "${YELLOW}[!] Authentication required for calib.dev. Please log in with your GitLab credentials.${NC}"
-    docker login calib.dev
+    echo -e "${RED}[ERROR] Could not pull image from calib.dev.${NC}"
+    echo -e "Please ensure the project registry at https://calib.dev/mageswaran/sow_2_jira is set to 'Public'."
+    exit 1
 fi
 
 # 4. Artifact Provisioning

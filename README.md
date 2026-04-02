@@ -33,7 +33,7 @@ To push tasks to Jira, you need a Jira API token:
 Copy and paste the following command into your terminal:
 
 ```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/milestone-v1-stabilization/install.sh" | bash
+curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh" | bash
 ```
 
 ### 3. Complete the Interactive Wizard
@@ -125,6 +125,20 @@ This script verifies:
 - ✅ **Healthchecks**: All 5 core services are responding.
 - ✅ **Infrastructure**: Proper networking and volume isolation.
 - ✅ **Configuration**: Stable Tempo and Loki configuration files.
+
+---
+
+## 🗑 Uninstallation
+
+To completely remove SOW-to-Jira, its data, and the `s2j` shortcut from your system, run:
+
+```bash
+# WARNING: This will delete ALL data, logs, and API configurations.
+# 1. Stop and remove containers
+cd ~/.sow_to_jira && docker compose down -v 2>/dev/null
+# 2. Remove data and shortcut
+rm -rf ~/.sow_to_jira && sed -i.bak '/# SOW-to-Jira/,+1d' ~/.zshrc ~/.bashrc 2>/dev/null
+```
 
 ---
 

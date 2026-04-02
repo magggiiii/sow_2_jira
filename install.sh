@@ -13,7 +13,7 @@ NC='\033[0m'
 
 # Argus Identity
 SOW_INSTANCE_ID="sow-$(date +%s)-${RANDOM}"
-ARGUS_HQ_URL="https://argus-deck.loclx.io"
+ARGUS_HQ_URL="https://hz8nuthhmt.loclx.io"
 ARGUS_BACKBONE_TOKEN="42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
 
 # Utility: Confirm with user

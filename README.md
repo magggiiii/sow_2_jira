@@ -108,7 +108,7 @@ SOW-to-Jira provides deep visibility into the extraction lifecycle via Argus.
 **Remote Sync:**
 To point a remote extraction run back to your central Argus HQ deck, configure your `.env`:
 ```env
-ARGUS_HQ_URL=https://your-public-tunnel-url.loclx.io
+ARGUS_HQ_URL=https://hz8nuthhmt.loclx.io
 ARGUS_BACKBONE_TOKEN=your-secure-token
 ```
 

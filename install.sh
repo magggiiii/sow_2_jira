@@ -99,6 +99,13 @@ if ! docker info &> /dev/null; then
     fi
 fi
 
+# Ensure registry access
+echo -e "${BLUE}[INFO] Verifying registry access to calib.dev...${NC}"
+if ! docker pull calib.dev/mageswaran/sow_2_jira:v1.0 &> /dev/null; then
+    echo -e "${YELLOW}[!] Authentication required for calib.dev. Please log in with your GitLab credentials.${NC}"
+    docker login calib.dev
+fi
+
 # 4. Artifact Provisioning
 # In a real scenario, these would be downloaded via curl from a central registry.
 # For this task, we assume they are copied from the current source or downloaded.
@@ -121,19 +128,19 @@ GLOBAL_ENV="$SOW_HOME/.env"
 if [ ! -f "$GLOBAL_ENV" ]; then
     echo -e "\n${BLUE}--- Credential Wizard ---${NC}"
     
-    read -p "LiteLLM Model (default: gpt-4o): " L_MODEL
+    read -p "LiteLLM Model (default: gpt-4o): " L_MODEL < /dev/tty
     L_MODEL=${L_MODEL:-gpt-4o}
     
-    read -p "LiteLLM API Key: " L_KEY
-    read -p "LiteLLM API Base (optional): " L_BASE
+    read -p "LiteLLM API Key: " L_KEY < /dev/tty
+    read -p "LiteLLM API Base (optional): " L_BASE < /dev/tty
     
-    read -p "Jira Server (e.g., https://your-domain.atlassian.net): " J_SERVER
-    read -p "Jira Email: " J_EMAIL
-    read -p "Jira API Token: " J_TOKEN
+    read -p "Jira Server (e.g., https://your-domain.atlassian.net): " J_SERVER < /dev/tty
+    read -p "Jira Email: " J_EMAIL < /dev/tty
+    read -p "Jira API Token: " J_TOKEN < /dev/tty
     
     echo -e "\n${BLUE}--- Argus Cloud Sync ---${NC}"
     if confirm "Sync logs/traces to your central Argus HQ?"; then
-        read -p "Argus HQ URL (default: $ARGUS_HQ_URL): " USER_HQ_URL
+        read -p "Argus HQ URL (default: $ARGUS_HQ_URL): " USER_HQ_URL < /dev/tty
         ARGUS_HQ_URL=${USER_HQ_URL:-$ARGUS_HQ_URL}
     fi
 

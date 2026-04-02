@@ -31,6 +31,7 @@ To push tasks to Jira, you need a Jira API token:
 
 ### 2. Run the Unified Installer
 Copy and paste the following command into your terminal:
+
 ```bash
 curl -fsSL "https://calib.dev/mageswaran/sow-to-jira/-/raw/main/install.sh" | bash
 ```

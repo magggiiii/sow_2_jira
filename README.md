@@ -38,8 +38,12 @@ curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh" | bas
 
 ### 3. Complete the Interactive Wizard
 The installer will prompt you for:
-- **LiteLLM Model:** (e.g., `gpt-4o`, `anthropic/claude-3-5-sonnet`)
-- **LiteLLM API Key:** Your OpenAI/Anthropic/etc. key.
+- **AI Model:** (e.g., `gpt-4o`, `anthropic/claude-3-5-sonnet`)
+  - *Ollama Users:* Use the `ollama/` prefix (e.g., `ollama/llama3`).
+- **Model API Key:** Your OpenAI/Anthropic key. 
+  - *Ollama Users:* Leave this blank.
+- **AI API Base (Optional):** Usually blank.
+  - *Ollama Users:* Use `http://host.docker.internal:11434`.
 - **Jira Server:** Your Atlassian domain (e.g., `https://your-company.atlassian.net`).
 - **Jira Email:** The email associated with your Atlassian account.
 - **Jira API Token:** The token you generated in Step 1.

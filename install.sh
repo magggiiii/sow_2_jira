@@ -129,11 +129,11 @@ GLOBAL_ENV="$SOW_HOME/.env"
 if [ ! -f "$GLOBAL_ENV" ]; then
     echo -e "\n${BLUE}--- Credential Wizard ---${NC}"
     
-    read -p "LiteLLM Model (default: gpt-4o): " L_MODEL < /dev/tty
+    read -p "AI Model (default: gpt-4o): " L_MODEL < /dev/tty
     L_MODEL=${L_MODEL:-gpt-4o}
     
-    read -p "LiteLLM API Key: " L_KEY < /dev/tty
-    read -p "LiteLLM API Base (optional): " L_BASE < /dev/tty
+    read -p "Model API Key: " L_KEY < /dev/tty
+    read -p "AI API Base (optional): " L_BASE < /dev/tty
     
     read -p "Jira Server (e.g., https://your-domain.atlassian.net): " J_SERVER < /dev/tty
     read -p "Jira Email: " J_EMAIL < /dev/tty

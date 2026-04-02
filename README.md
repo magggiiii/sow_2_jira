@@ -156,6 +156,8 @@ We use **Caliber** for AI-agent alignment. If you are developing with an AI assi
 npx caliber init
 ```
 
+---
+
 ## 📄 License
 
 Proprietary and Confidential. © 2026 Mageswaran.

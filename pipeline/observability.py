@@ -18,6 +18,9 @@ from opentelemetry.instrumentation.logging import LoggingInstrumentor
 # Dynamic resolution for Argus central observability
 # The app talks to the local Argus Edge Collector (sidecar).
 
+# Toggle for remote Argus synchronization (defaults to OFF)
+SYNC_ENABLED = os.environ.get("ARGUS_SYNC_ENABLED", "false").lower() == "true"
+
 def resolve_collector_endpoint() -> str:
     """
     Resolves the local OTel Collector endpoint.
@@ -44,6 +47,10 @@ def init_argus(service_name: str = "sow-to-jira"):
     2. OTel Logging instrumentation
     3. OTel Metrics
     """
+    if not SYNC_ENABLED:
+        logger.info("Argus remote sync is disabled (default-off). Skipping OTel initialization.")
+        return
+
     # 1. Initialize Traceloop (OpenLLMetry)
     # It handles OTLP export to the endpoint specified in TRACELOOP_BASE_URL or OTLP defaults
     Traceloop.init(
@@ -74,7 +81,7 @@ def init_argus(service_name: str = "sow-to-jira"):
 
     logger.info(f"Argus initialized for instance: {INSTANCE_ID}")
 
-# Global Metrics Instruments
+# Global Metrics Instruments (only used if SYNC_ENABLED)
 meter = metrics.get_meter(DEFAULT_JOB_NAME)
 llm_token_usage = meter.create_counter(
     name="gen_ai.client.token.usage",
@@ -87,30 +94,47 @@ llm_operation_duration = meter.create_histogram(
     unit="s"
 )
 
-# Initialize Argus
+# Initialize Argus (only if enabled)
 init_argus()
 
-# Loguru Configuration
+# ─── Loguru Configuration ───────────────────────────────────────────────────
 logger.remove()
 
 def otel_log_format(record):
-    span = trace.get_current_span()
-    if span and span.get_span_context().is_valid:
-        record["extra"]["otelTraceID"] = format(span.get_span_context().trace_id, "032x")
+    """Format that includes OTel trace ID if synchronization is enabled."""
+    if SYNC_ENABLED:
+        span = trace.get_current_span()
+        if span and span.get_span_context().is_valid:
+            record["extra"]["otelTraceID"] = format(span.get_span_context().trace_id, "032x")
+        else:
+            record["extra"]["otelTraceID"] = "0" * 32
     else:
-        record["extra"]["otelTraceID"] = "0" * 32
+        record["extra"]["otelTraceID"] = "disabled"
+    
     return "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[agent]}</cyan> - <level>{message}</level>\n"
 
+# Standard Console Output
 logger.configure(extra={"agent": "system", "run_id": "none"})
 logger.add(sys.stdout, colorize=True, format=otel_log_format)
 
+# Permanent Local Logs (System & Run-specific)
 LOG_FILE = os.path.join(DATA_DIR, "system.log")
 logger.add(
     LOG_FILE, 
     rotation="10 MB", 
     retention="10 days", 
     compression="zip", 
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[run_id]} | {extra[agent]} | [trace_id={extra[otelTraceID]}] | {message}"
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[run_id]} | {extra[agent]} | [trace={extra[otelTraceID]}] | {message}"
+)
+
+# Permanent LOCAL JSON AUDIT (regardless of sync toggle)
+AUDIT_JSON_FILE = os.path.join(DATA_DIR, "audit.jsonl")
+logger.add(
+    AUDIT_JSON_FILE, 
+    serialize=True, 
+    rotation="50 MB", 
+    retention="30 days",
+    filter=lambda record: record["level"].name != "DEBUG" # Keep audit clean
 )
 
 def add_run_file_logger(run_id: str):
@@ -119,12 +143,16 @@ def add_run_file_logger(run_id: str):
     run_log_path = os.path.join(run_log_dir, f"run_{run_id}.log")
     
     def run_log_format(record):
-        span = trace.get_current_span()
-        if span and span.get_span_context().is_valid:
-            record["extra"]["otelTraceID"] = format(span.get_span_context().trace_id, "032x")
+        if SYNC_ENABLED:
+            span = trace.get_current_span()
+            if span and span.get_span_context().is_valid:
+                record["extra"]["otelTraceID"] = format(span.get_span_context().trace_id, "032x")
+            else:
+                record["extra"]["otelTraceID"] = "0" * 32
         else:
-            record["extra"]["otelTraceID"] = "0" * 32
-        return "{time:HH:mm:ss} | {level: <8} | {extra[agent]} | [trace_id={extra[otelTraceID]}] | {message}\n"
+            record["extra"]["otelTraceID"] = "disabled"
+            
+        return "{time:HH:mm:ss} | {level: <8} | {extra[agent]} | [trace={extra[otelTraceID]}] | {message}\n"
 
     return logger.add(
         run_log_path, 
@@ -144,16 +172,21 @@ def run_logger(run_id: str):
 def trace_span(name: str, agent: str = "system", run_id: str = "none"):
     """
     Decorator for tracing a function.
-    Uses the active OTel tracer (managed by Traceloop/OTel).
+    If SYNC_ENABLED, uses active OTel tracer.
+    If disabled, simply executes the function with loguru context.
     """
-    tracer = trace.get_tracer(__name__)
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            with tracer.start_as_current_span(name) as span:
-                span.set_attribute("agent", agent)
-                span.set_attribute("run_id", run_id)
-                span.set_attribute("argus.instance_id", INSTANCE_ID)
+            if SYNC_ENABLED:
+                tracer = trace.get_tracer(__name__)
+                with tracer.start_as_current_span(name) as span:
+                    span.set_attribute("agent", agent)
+                    span.set_attribute("run_id", run_id)
+                    span.set_attribute("argus.instance_id", INSTANCE_ID)
+                    with logger.contextualize(agent=agent, run_id=run_id):
+                        return func(*args, **kwargs)
+            else:
                 with logger.contextualize(agent=agent, run_id=run_id):
                     return func(*args, **kwargs)
         return wrapper

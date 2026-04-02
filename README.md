@@ -33,7 +33,7 @@ To push tasks to Jira, you need a Jira API token:
 Copy and paste the following command into your terminal:
 
 ```bash
-curl -fsSL "https://calib.dev/mageswaran/sow_2_jira/-/raw/main/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/magggiiii/sow_2_jira/main/install.sh" | bash
 ```
 
 ### 3. Launch and Configure

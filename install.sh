@@ -102,15 +102,15 @@ fi
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
 # Attempt a manifest check instead of a full pull to verify visibility
-if ! docker manifest inspect calib.dev/mageswaran/sow_2_jira:v1.0 &> /dev/null; then
+if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:v1.0 &> /dev/null; then
     echo -e "${YELLOW}[!] Note: Could not verify public image visibility.${NC}"
-    echo -e "If the next step fails, please ensure the project registry at https://calib.dev/mageswaran/sow_2_jira is set to 'Public'."
+    echo -e "If the next step fails, please ensure the project registry at https://ghcr.io/magggiiii/sow_2_jira is set to 'Public'."
 fi
 
 # 4. Artifact Provisioning
 # In a real scenario, these would be downloaded via curl from a central registry.
 # For this task, we assume they are copied from the current source or downloaded.
-RAW_URL="https://calib.dev/mageswaran/sow_2_jira/-/raw/main"
+RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 
 # (Simulated download for now, using local files if available)

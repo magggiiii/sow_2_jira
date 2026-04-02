@@ -2,7 +2,7 @@ name: user-stack
 
 services:
   app:
-    image: calib.dev/mageswaran/sow_2_jira:v1.0
+    image: ghcr.io/magggiiii/sow_2_jira:v1.0
     container_name: user-app
     init: true
     ports:

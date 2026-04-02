@@ -12,7 +12,7 @@ providers:
 
 # Sample Virtual Keys for Remote Instances
 virtual_keys:
-  - name: "sample-instance-alpha"
+  - name: "42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
     routing:
       strategy: "priority"
       targets:

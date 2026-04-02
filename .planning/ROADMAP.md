@@ -19,6 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Docker Distribution** - Distribute application via one-command curl installer and pre-built images. (Completed)
 - [x] **Phase 6: Production UI Overhaul** - Redesign the UI to a professional, production-grade standard. (Completed)
 - [x] **Phase 7: Argus Global Observability Overhaul** - Redesign observability stack for reliable fleet-wide tracing and metrics. (Completed)
+- [x] **Phase 9: Argus Opt-Out & Local JSON Audit** - Default-off remote sync and permanent local JSON audit log. (Completed)
 
 ## Phase Details
 
@@ -112,10 +113,22 @@ Plans:
 Plans:
 - [x] 07-01-ARGUS-OVERHAUL.md — Implementation of Edge/HQ collectors and unified OTel stack.
 
+### Phase 9: Argus Opt-Out & Local JSON Audit
+**Goal**: Turn off remote sync by default and ensure `audit.jsonl` is written locally for manual collection.
+**Depends on**: Phase 7
+**Requirements**: [ARG-05, ARG-06]
+**Success Criteria** (what must be TRUE):
+  1. Installer defaults remote sync to `false`.
+  2. System always writes machine-readable `audit.jsonl` regardless of sync toggle.
+  3. App skips OTel initialization entirely if sync is disabled.
+
+Plans:
+- [x] 09-01-PLAN.md — Implement opt-out toggle and audit.jsonl sink.
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -126,3 +139,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 5. Docker Distribution | 1/1 | Completed | 2026-04-01 |
 | 6. Production UI Overhaul | 1/1 | Completed | 2026-04-01 |
 | 7. Argus Overhaul | 1/1 | Completed | 2026-04-02 |
+| 9. Argus Opt-Out | 1/1 | Completed | 2026-04-02 |

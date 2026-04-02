@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: All phases complete (including Argus Overhaul)
-last_updated: "2026-04-02T10:00:00Z"
+stopped_at: All phases complete (including Argus Opt-Out & Local JSON Audit)
+last_updated: "2026-04-02T17:00:00Z"
 last_activity: 2026-04-02
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 11
-  completed_plans: 11
+  total_phases: 8
+  completed_phases: 8
+  total_plans: 12
+  completed_plans: 12
   percent: 100
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 
 Phase: None
 Plan: All complete
-Status: Milestone v1.0 stabilized, distributed, and over-hauled with Argus Observability.
+Status: Milestone v1.0 stabilized, distributed, and over-hauled with Argus Observability (Opt-out enabled).
 Last activity: 2026-04-02
 
 Progress: [▓▓▓▓▓▓▓▓▓▓] 100%
@@ -36,9 +36,9 @@ Progress: [▓▓▓▓▓▓▓▓▓▓] 100%
 
 **Velocity:**
 
-- Total plans completed: 11
+- Total plans completed: 12
 - Average duration: 15 min (assumed)
-- Total execution time: 2.75 hours (assumed)
+- Total execution time: 3.0 hours (assumed)
 
 **By Phase:**
 
@@ -51,10 +51,11 @@ Progress: [▓▓▓▓▓▓▓▓▓▓] 100%
 | 5 | 1 | 15m | 15m |
 | 6 | 1 | 15m | 15m |
 | 7 | 1 | 15m | 15m |
+| 9 | 1 | 15m | 15m |
 
 **Recent Trend:**
 
-- Last 11 plans: completed
+- Last 12 plans: completed
 - Trend: Stable
 
 *Updated after each plan completion*
@@ -66,11 +67,11 @@ Progress: [▓▓▓▓▓▓▓▓▓▓] 100%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [09-01] Default remote sync to OFF in installer.
+- [09-01] Implement permanent local JSON audit log (`audit.jsonl`) for manual collection.
 - [07-01] Renamed observability suite to Argus.
 - [07-01] Implemented Store-and-Forward architecture using OTel Collector sidecars.
-- [07-01] Integrated Langfuse for AI cost and prompt tracing.
 - [05-01] Unified installer with interactive wizard and pre-set BIFROST backbone credentials.
-- [06-01] Use Space Grotesk + OKLCH + clamp() for production UI overhaul without framework overhead.
 
 ### Pending Todos
 
@@ -82,6 +83,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-04-02T10:00:00Z
+Last session: 2026-04-02T17:00:00Z
 Stopped at: All phases complete
-Resume file: .planning/phases/05-docker-distribution/05-VERIFICATION.md
+Resume file: .planning/phases/09-argus-optout/.continue-here.md

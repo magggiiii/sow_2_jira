@@ -148,9 +148,9 @@ fi
 LAUNCH_CMD="alias s2j='cd \"$SOW_HOME\" && docker compose -f docker-compose.user.yml up -d && $OPEN_CMD http://localhost:8000'"
 
 touch "$SHELL_RC"
-if ! grep -q "alias s2j=" "$SHELL_RC"; then
-    echo -e "\n# SOW-to-Jira\n$LAUNCH_CMD" >> "$SHELL_RC"
-fi
+# Remove old alias if it exists
+sed -i.bak '/alias s2j=/d' "$SHELL_RC" 2>/dev/null || true
+echo -e "\n# SOW-to-Jira\n$LAUNCH_CMD" >> "$SHELL_RC"
 
 echo -e "\n${GREEN}Installation Complete!${NC}"
 echo -e "Restart your terminal or run 'source $SHELL_RC' to enable the '${BLUE}s2j${NC}' command."

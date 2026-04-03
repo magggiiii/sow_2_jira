@@ -3,7 +3,7 @@ name: user-stack
 services:
   app:
     image: ghcr.io/magggiiii/sow_2_jira:v1.1
-    container_name: user-app
+    container_name: s2j-user-app
     init: true
     ports:
       - "127.0.0.1:8000:8000"
@@ -30,7 +30,7 @@ services:
 
   argus-collector:
     image: otel/opentelemetry-collector-contrib:latest
-    container_name: user-argus-collector
+    container_name: s2j-user-argus-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
       - ./config/argus-collector-edge.yaml:/etc/otel-collector-config.yaml:ro
@@ -44,7 +44,7 @@ services:
 
   bifrost:
     image: maximhq/bifrost:latest
-    container_name: user-bifrost
+    container_name: s2j-user-bifrost
     volumes:
       - ./data:/app/data
     environment:
@@ -67,7 +67,7 @@ services:
 
   loki:
     image: grafana/loki:2.9.4
-    container_name: user-loki
+    container_name: s2j-user-loki
     ports:
       - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -81,7 +81,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.3.1
-    container_name: user-tempo
+    container_name: s2j-user-tempo
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./config/tempo.yaml:/etc/tempo.yaml
@@ -95,7 +95,7 @@ services:
 
   grafana:
     image: grafana/grafana:10.2.3
-    container_name: user-grafana
+    container_name: s2j-user-grafana
     ports:
       - "127.0.0.1:3000:3000"
     environment:

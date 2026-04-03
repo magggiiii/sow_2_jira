@@ -6,9 +6,11 @@ import re
 import time
 from typing import Union
 import litellm
+from litellm import RateLimitError, APIConnectionError, Timeout
 import logging
 import contextlib
 import io
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
 from audit.logger import AuditLogger
@@ -117,9 +119,15 @@ class LLMClient:
     def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id, span) -> str:
         logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
         
-        for attempt in range(3):
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+            retry=retry_if_exception_type((RateLimitError, APIConnectionError, Timeout, Exception)),
+            reraise=True
+        )
+        def _do_call():
             if self.stop_event and self.stop_event.is_set():
-                logger.warning(f"› LLM call cancelled by user before attempt {attempt+1}")
+                logger.warning("› LLM call cancelled by user")
                 raise RuntimeError("LLM call cancelled by user")
 
             start_time = time.time()
@@ -183,25 +191,25 @@ class LLMClient:
                 return content
 
             except Exception as e:
-                logger.warning(f"› LLM attempt {attempt+1} failed: {e}")
-                if attempt == 2:
-                    if span:
-                        span.record_exception(e)
-                    logger.error(f"✗ LLM call permanently failed: {e}")
-                    self.telemetry.emit("llm.call", {
-                        "run_id": self.run_id,
-                        "agent": agent_name,
-                        "model": self.model,
-                        "tokens_in": 0,
-                        "tokens_out": 0,
-                        "latency_ms": int((time.time() - start_time) * 1000),
-                        "success": False,
-                    })
-                    raise RuntimeError(
-                        f"LLM call failed after 3 attempts: {e}"
-                    ) from e
-                time.sleep(2 ** attempt)
-        return ""
+                logger.warning(f"› LLM attempt failed: {e}")
+                raise e
+
+        try:
+            return _do_call()
+        except Exception as e:
+            if span:
+                span.record_exception(e)
+            logger.error(f"✗ LLM call permanently failed: {e}")
+            self.telemetry.emit("llm.call", {
+                "run_id": self.run_id,
+                "agent": agent_name,
+                "model": self.model,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "latency_ms": 0,
+                "success": False,
+            })
+            raise RuntimeError(f"LLM call failed after 3 attempts: {e}") from e
 
     def complete_json(
         self,

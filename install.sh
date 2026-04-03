@@ -119,9 +119,9 @@ if [ -f "docker-compose.user.yml" ]; then
     cp config/tempo.yaml "$SOW_HOME/config/tempo.yaml"
     cp config/argus-collector-edge.yaml "$SOW_HOME/config/argus-collector-edge.yaml"
 else
-    curl -fsSL "$RAW_URL/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
-    curl -fsSL "$RAW_URL/config/tempo.yaml" -o "$SOW_HOME/config/tempo.yaml"
-    curl -fsSL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
+    curl -# -fL "$RAW_URL/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
+    curl -# -fL "$RAW_URL/config/tempo.yaml" -o "$SOW_HOME/config/tempo.yaml"
+    curl -# -fL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
 fi
 
 # 5. Environment Setup (Wizard removed, now handled in UI)

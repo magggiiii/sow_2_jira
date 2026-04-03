@@ -119,8 +119,11 @@ if [ -f "docker-compose.user.yml" ]; then
     cp config/tempo.yaml "$SOW_HOME/config/tempo.yaml"
     cp config/argus-collector-edge.yaml "$SOW_HOME/config/argus-collector-edge.yaml"
 else
+    echo "  -> Fetching docker-compose.user.yml..."
     curl -# -fL "$RAW_URL/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
+    echo "  -> Fetching tempo.yaml..."
     curl -# -fL "$RAW_URL/config/tempo.yaml" -o "$SOW_HOME/config/tempo.yaml"
+    echo "  -> Fetching argus-collector-edge.yaml..."
     curl -# -fL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
 fi
 

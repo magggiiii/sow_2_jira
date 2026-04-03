@@ -99,6 +99,42 @@ if ! docker info &> /dev/null; then
     fi
 fi
 
+# 3.5 Ollama Dependency Check & Configuration
+echo -e "${BLUE}[INFO] Checking for Ollama (optional, but required for local models)...${NC}"
+if ! command -v ollama &> /dev/null; then
+    echo -e "${YELLOW}[!] Ollama is not installed.${NC}"
+    if confirm "Install Ollama for local LLM support?"; then
+        if [ "$IS_MAC" = true ]; then
+            if ! command -v brew &> /dev/null; then
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            fi
+            brew install --cask ollama
+            echo -e "${GREEN}✓ Ollama installed via Homebrew.${NC}"
+        else
+            curl -fsSL https://ollama.com/install.sh | sh
+            echo -e "${GREEN}✓ Ollama installed.${NC}"
+        fi
+    fi
+fi
+
+if command -v ollama &> /dev/null; then
+    echo -e "${BLUE}[INFO] Configuring Ollama for Docker access...${NC}"
+    if [ "$IS_MAC" = true ]; then
+        launchctl setenv OLLAMA_HOST "0.0.0.0"
+        echo -e "${YELLOW}[ACTION] Please ensure the Ollama app is running.${NC}"
+        echo -e "${YELLOW}         If it was already running, please completely Quit it and restart it so the new OLLAMA_HOST setting takes effect.${NC}"
+    else
+        # For Linux, configure systemd override for OLLAMA_HOST
+        if [ -d "/etc/systemd/system" ]; then
+            sudo mkdir -p /etc/systemd/system/ollama.service.d
+            echo -e "[Service]\nEnvironment=\"OLLAMA_HOST=0.0.0.0\"" | sudo tee /etc/systemd/system/ollama.service.d/environment.conf > /dev/null
+            sudo systemctl daemon-reload
+            sudo systemctl restart ollama
+            echo -e "${GREEN}✓ Ollama systemd service configured to listen on 0.0.0.0.${NC}"
+        fi
+    fi
+fi
+
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
 # Attempt a manifest check instead of a full pull to verify visibility

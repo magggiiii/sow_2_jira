@@ -81,7 +81,7 @@ def init_argus(service_name: str = "sow-to-jira"):
 
     logger.info(f"Argus initialized for instance: {INSTANCE_ID}")
 
-# Global Metrics Instruments (only used if SYNC_ENABLED)
+# Global Metrics & Tracing Instruments
 meter = metrics.get_meter(DEFAULT_JOB_NAME)
 llm_token_usage = meter.create_counter(
     name="gen_ai.client.token.usage",
@@ -96,6 +96,9 @@ llm_operation_duration = meter.create_histogram(
 
 # Initialize Argus (only if enabled)
 init_argus()
+
+# Global tracer handle
+tracer = trace.get_tracer(DEFAULT_JOB_NAME)
 
 # ─── Loguru Configuration ───────────────────────────────────────────────────
 logger.remove()
@@ -179,7 +182,6 @@ def trace_span(name: str, agent: str = "system", run_id: str = "none"):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             if SYNC_ENABLED:
-                tracer = trace.get_tracer(__name__)
                 with tracer.start_as_current_span(name) as span:
                     span.set_attribute("agent", agent)
                     span.set_attribute("run_id", run_id)

@@ -138,7 +138,7 @@ fi
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
 # Attempt a manifest check instead of a full pull to verify visibility
-if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:v1.0 &> /dev/null; then
+if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:v1.1 &> /dev/null; then
     echo -e "${YELLOW}[!] Note: Could not verify public image visibility.${NC}"
     echo -e "If the next step fails, please ensure the project registry at https://ghcr.io/magggiiii/sow_2_jira is set to 'Public'."
 fi

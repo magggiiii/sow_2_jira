@@ -7,6 +7,8 @@ services:
     init: true
     ports:
       - "127.0.0.1:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
     env_file: .env

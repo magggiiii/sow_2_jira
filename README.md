@@ -40,6 +40,8 @@ curl -fsSL "https://raw.githubusercontent.com/magggiiii/sow_2_jira/main/install.
 1.  Launch the stack by typing `s2j`.
 2.  Open **http://localhost:8000** in your browser.
 3.  Go to the **Settings** section to enter your AI Model, API Keys, and Jira credentials.
+    - *Ollama Users:* Use `http://host.docker.internal:11434` as the API Base.
+    - **Crucial:** You must configure Ollama to listen on all interfaces so Docker can reach it. On macOS, run `launchctl setenv OLLAMA_HOST "0.0.0.0"` in your terminal, then completely quit and restart the Ollama app.
 
 ---
 

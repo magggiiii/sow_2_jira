@@ -210,10 +210,48 @@ chmod +x "$SOW_HOME/s2j.sh"
 
 LAUNCH_CMD="alias s2j='\$HOME/.sow_to_jira/s2j.sh'"
 
+# 7. Admin Shortcut Creation (Developer only)
+# Only create s2j-admin if the admin compose file exists locally during install
+if [ -f "docker-compose.admin.yml" ]; then
+    cp docker-compose.admin.yml "$SOW_HOME/docker-compose.admin.yml"
+    cp config/bifrost.admin.yaml "$SOW_HOME/config/bifrost.admin.yaml"
+    cp config/prometheus.admin.yml "$SOW_HOME/config/prometheus.admin.yml"
+    cp config/argus-collector-admin.yaml "$SOW_HOME/config/argus-collector-admin.yaml"
+    cp config/argus-dashboard.json "$SOW_HOME/config/argus-dashboard.json"
+
+    cat <<EOF > "$SOW_HOME/s2j-admin.sh"
+#!/bin/bash
+SOW_HOME="\$HOME/.sow_to_jira"
+case "\$1" in
+    "uninstall")
+        echo "⚠️  WARNING: This will delete the Argus Admin HQ stack."
+        read -p "Are you sure? [y/N] " confirm
+        if [[ \$confirm == [yY] || \$confirm == [yY][eE][sS] ]]; then
+            echo "Stopping Admin containers..."
+            cd "\$SOW_HOME" && docker compose -f docker-compose.admin.yml down -v 2>/dev/null
+            echo "✅ Admin stack stopped."
+        else
+            echo "Cancelled."
+        fi
+        ;;
+    *)
+        cd "\$SOW_HOME" && docker compose -f docker-compose.admin.yml up -d
+        ;;
+esac
+EOF
+    chmod +x "$SOW_HOME/s2j-admin.sh"
+    ADMIN_CMD="alias s2j-admin='\$HOME/.sow_to_jira/s2j-admin.sh'"
+fi
+
 touch "$SHELL_RC"
-# Remove old alias if it exists
+# Remove old aliases if they exist
 sed -i.bak '/alias s2j=/d' "$SHELL_RC" 2>/dev/null || true
+sed -i.bak '/alias s2j-admin=/d' "$SHELL_RC" 2>/dev/null || true
+
 echo -e "\n# SOW-to-Jira\n$LAUNCH_CMD" >> "$SHELL_RC"
+if [ -n "$ADMIN_CMD" ]; then
+    echo "$ADMIN_CMD" >> "$SHELL_RC"
+fi
 
 echo -e "\n${GREEN}Installation Complete!${NC}"
 echo -e "Restart your terminal or run 'source $SHELL_RC' to enable the '${BLUE}s2j${NC}' command."

@@ -19,10 +19,21 @@ from dotenv import load_dotenv
 import logging
 import httpx
 import time
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Add project root to path for imports
 import sys
 UI_DIR = Path(__file__).parent
+sys.path.insert(0, str(UI_DIR.parent))
+
+def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return url
+    if "localhost" in url or "127.0.0.1" in url:
+        # In a Docker container, localhost is the container itself.
+        # We need host.docker.internal to reach the host machine.
+        return url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
+    return url
 sys.path.insert(0, str(UI_DIR.parent))
 
 # Load environment variables
@@ -359,13 +370,23 @@ def _extract_models_from_response(provider_id: str, data: dict) -> list[str]:
     return [m.get("id") for m in items if m.get("id")]
 
 @app.post("/api/providers/{provider_id}/models")
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException))
+)
 async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
     if provider_id not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=404, detail="Unknown provider")
 
     settings = settings_manager.load()
     provider_settings = settings.get("providers", {}).get(provider_id, {})
-    base_url = resolve_provider_base(provider_id, req.base_url or provider_settings.get("base_url"))
+    
+    # Ensure Docker Host resolution for custom bases
+    provided_base = _ensure_docker_host(req.base_url)
+    stored_base = _ensure_docker_host(provider_settings.get("base_url"))
+    base_url = resolve_provider_base(provider_id, provided_base or stored_base)
+    
     if not base_url:
         raise HTTPException(status_code=400, detail="Base URL is required for this provider")
     
@@ -414,7 +435,7 @@ async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=headers, timeout=8)
+            resp = await client.get(url, headers=headers, timeout=15.0)
             if resp.status_code >= 400:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
             data = resp.json()
@@ -460,7 +481,10 @@ def save_settings(req: SettingsConfig):
         
     provider = req.provider or settings.get("provider") or "openai"
     prev_provider = settings.get("provider")
-    base_url = resolve_provider_base(provider, req.base_url)
+    
+    # Ensure Docker Host resolution for custom bases
+    provided_base = _ensure_docker_host(req.base_url)
+    base_url = resolve_provider_base(provider, provided_base)
 
     settings["provider"] = provider
     settings.setdefault("providers", {})

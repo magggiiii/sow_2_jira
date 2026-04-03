@@ -180,8 +180,35 @@ SOW_DATA_DIR=data
 EOF
 fi
 
-# 6. Alias Creation
-LAUNCH_CMD="alias s2j='cd \"$SOW_HOME\" && docker compose -f docker-compose.user.yml up -d && $OPEN_CMD http://localhost:8000'"
+# 6. Shortcut Creation (Support for uninstall/update)
+cat <<EOF > "$SOW_HOME/s2j.sh"
+#!/bin/bash
+SOW_HOME="\$HOME/.sow_to_jira"
+case "\$1" in
+    "uninstall")
+        echo "⚠️  WARNING: This will delete ALL data, logs, and API configurations."
+        read -p "Are you sure you want to completely remove SOW-to-Jira? [y/N] " confirm
+        if [[ \$confirm == [yY] || \$confirm == [yY][eE][sS] ]]; then
+            echo "Stopping containers..."
+            cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml down -v 2>/dev/null
+            echo "Removing files..."
+            rm -rf "\$SOW_HOME"
+            echo "Removing shortcut from profile..."
+            # Note: Removal from profile requires manual restart or sed
+            sed -i.bak '/# SOW-to-Jira/,+1d' "\$HOME/.zshrc" "\$HOME/.bashrc" 2>/dev/null
+            echo "✅ SOW-to-Jira has been completely removed."
+        else
+            echo "Uninstall cancelled."
+        fi
+        ;;
+    *)
+        cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml up -d && $OPEN_CMD http://localhost:8000
+        ;;
+esac
+EOF
+chmod +x "$SOW_HOME/s2j.sh"
+
+LAUNCH_CMD="alias s2j='\$HOME/.sow_to_jira/s2j.sh'"
 
 touch "$SHELL_RC"
 # Remove old alias if it exists

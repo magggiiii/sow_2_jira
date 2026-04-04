@@ -121,8 +121,6 @@ if command -v ollama &> /dev/null; then
     echo -e "${BLUE}[INFO] Configuring Ollama for Docker access...${NC}"
     if [ "$IS_MAC" = true ]; then
         launchctl setenv OLLAMA_HOST "0.0.0.0"
-        echo -e "${YELLOW}[ACTION] Please ensure the Ollama app is running.${NC}"
-        echo -e "${YELLOW}         If it was already running, please completely Quit it and restart it so the new OLLAMA_HOST setting takes effect.${NC}"
     else
         # For Linux, configure systemd override for OLLAMA_HOST
         if [ -d "/etc/systemd/system" ]; then
@@ -130,9 +128,30 @@ if command -v ollama &> /dev/null; then
             echo -e "[Service]\nEnvironment=\"OLLAMA_HOST=0.0.0.0\"" | sudo tee /etc/systemd/system/ollama.service.d/environment.conf > /dev/null
             sudo systemctl daemon-reload
             sudo systemctl restart ollama
-            echo -e "${GREEN}✓ Ollama systemd service configured to listen on 0.0.0.0.${NC}"
         fi
     fi
+
+    # Physical Connectivity Check
+    echo -e "${BLUE}[INFO] Verifying Ollama network availability...${NC}"
+    until curl -s http://localhost:11434/api/tags > /dev/null; do
+        echo -e "${YELLOW}[!] Ollama is not responding on port 11434.${NC}"
+        echo -e "${YELLOW}    If you just installed it or updated OLLAMA_HOST, you MUST:${NC}"
+        echo -e "${YELLOW}    1. Find the Ollama icon in your menu bar/tray.${NC}"
+        echo -e "${YELLOW}    2. Click 'Quit Ollama'.${NC}"
+        echo -e "${YELLOW}    3. Restart Ollama from your Applications/Start menu.${NC}"
+        echo -e "Waiting for Ollama to start... (Press Ctrl+C to skip if you don't plan to use local models)"
+        sleep 5
+    done
+    echo -e "${GREEN}✓ Ollama is reachable!${NC}"
+fi
+
+# 3.7 Resolve Docker Host DNS/IP
+if [ "$IS_MAC" = true ]; then
+    DOCKER_HOST_INTERNAL="host.docker.internal"
+else
+    # Try to find the bridge IP for Linux
+    DOCKER_HOST_INTERNAL=$(ip addr show docker0 2>/dev/null | grep -Po 'inet \K[\d.]+' | head -n 1)
+    DOCKER_HOST_INTERNAL=${DOCKER_HOST_INTERNAL:-"host.docker.internal"}
 fi
 
 # Ensure registry access
@@ -175,6 +194,9 @@ ARGUS_SYNC_ENABLED=false
 SOW_INSTANCE_ID=$SOW_INSTANCE_ID
 ARGUS_HQ_URL=$ARGUS_HQ_URL
 ARGUS_BACKBONE_TOKEN=$ARGUS_BACKBONE_TOKEN
+
+# Networking
+DOCKER_HOST_INTERNAL=$DOCKER_HOST_INTERNAL
 
 SOW_DATA_DIR=data
 EOF

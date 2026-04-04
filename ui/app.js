@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressPercentage = getEl('progressPercentage');
     const logConsole = getEl('logConsole');
     const btnCancelProcess = getEl('btnCancelProcess');
+    const btnDismissProgress = getEl('btnDismissProgress');
     const btnDeleteSession = getEl('btnDeleteSession');
     
     // Filters
@@ -319,6 +320,12 @@ document.addEventListener('DOMContentLoaded', () => {
         btnStartProcess.addEventListener('click', startExtraction);
     }
 
+    if (btnDismissProgress) {
+        btnDismissProgress.addEventListener('click', async () => {
+            if (progressOverlay) progressOverlay.style.display = 'none';
+        });
+    }
+
     if (btnCancelProcess) {
         btnCancelProcess.addEventListener('click', async () => {
             if (!activeSessionId) return;
@@ -493,7 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeSessionId = data.run_id;
                 sessionStorage.setItem('activeSessionId', activeSessionId);
                 
-                if (progressOverlay) progressOverlay.style.display = 'flex';
+                showProgressOverlay();
                 if (logConsole) logConsole.innerHTML = '';
                 
                 await loadSessions();
@@ -508,6 +515,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
             showToast('Connection error', 'error');
         }
+    }
+
+    function showProgressOverlay() {
+        if (progressOverlay) progressOverlay.style.display = 'flex';
+        if (btnCancelProcess) btnCancelProcess.style.display = 'inline-flex';
+        if (btnDismissProgress) btnDismissProgress.style.display = 'none';
     }
 
     function getSessionQuery() {
@@ -559,7 +572,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             progressMessage.textContent = `Error: ${status.error}`;
                             progressMessage.style.color = 'var(--error)';
                         }
-                        setTimeout(() => { if (progressOverlay) progressOverlay.style.display = 'none'; }, 5000);
+                        if (btnCancelProcess) btnCancelProcess.style.display = 'none';
+                        if (btnDismissProgress) btnDismissProgress.style.display = 'inline-flex';
                     } else if (status.progress >= 1.0) {
                         clearInterval(statusInterval);
                         if (progressStepTitle) progressStepTitle.textContent = "Complete!";
@@ -568,8 +582,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         } else {
                             showToast('Extraction Complete!', 'success');
                         }
+                        if (btnCancelProcess) btnCancelProcess.style.display = 'none';
+                        if (btnDismissProgress) btnDismissProgress.style.display = 'inline-flex';
                         await loadData();
-                        setTimeout(() => { if (progressOverlay) progressOverlay.style.display = 'none'; }, 2000);
                     } else {
                         // System is idle (not running, no progress yet)
                         clearInterval(statusInterval);
@@ -673,7 +688,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await res.json();
                 if (data.started && data.run_id) {
                     activeSessionId = data.run_id;
-                    if (progressOverlay) progressOverlay.style.display = 'flex';
+                    showProgressOverlay();
                     if (logConsole) logConsole.innerHTML = '';
                     showToast(data.message || 'Jira push started', 'success');
                     startStatusPolling();
@@ -923,7 +938,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (storedId) {
             console.log("Auto-resuming session:", storedId);
             activeSessionId = storedId;
-            if (progressOverlay) progressOverlay.style.display = 'flex';
+            showProgressOverlay();
             if (newExtractionContainer) newExtractionContainer.style.display = 'none';
             startStatusPolling();
         }

@@ -177,6 +177,9 @@ RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 
 # (Simulated download for now, using local files if available)
+# Ensure we don't have lingering Docker-created directories instead of files
+rm -rf "$SOW_HOME/docker-compose.user.yml" "$SOW_HOME/config/user/tempo.yaml" "$SOW_HOME/config/user/argus-collector-edge.yaml" 2>/dev/null || true
+
 if [ -f "infra/user/docker-compose.user.yml" ]; then
     cp infra/user/docker-compose.user.yml "$SOW_HOME/docker-compose.user.yml"
     cp config/user/tempo.yaml "$SOW_HOME/config/user/tempo.yaml"

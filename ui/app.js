@@ -720,6 +720,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!taskListEl) return;
         taskListEl.innerHTML = '';
         const visibleTasks = (taskData.tasks || []).filter(shouldShow);
+        
+        if (visibleTasks.length === 0) {
+            const emptyEl = document.createElement('div');
+            emptyEl.className = 'empty-state';
+            emptyEl.innerHTML = '<h2>No Statement of Work Loaded</h2><p>Upload a PDF or text document to extract Jira tasks.</p>';
+            taskListEl.appendChild(emptyEl);
+        }
+
         if (getEl('showingCount')) getEl('showingCount').textContent = `Showing ${visibleTasks.length} of ${taskData.tasks.length} tasks`;
 
         // Group tasks by SOW section
@@ -874,16 +882,31 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function showToast(message, type = 'success') {
+    function showToast(message, type = 'info') {
         if (!toastContainer) return;
         const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
-        toast.innerHTML = `<span>${message}</span>`;
+        toast.className = 'toast';
+        toast.textContent = message;
+        // In the updated CSS, we can still use type for color if desired,
+        // but the plan spec just says toast.className = 'toast'
+        if (type === 'error') toast.style.borderLeftColor = 'var(--error)';
+        if (type === 'success') toast.style.borderLeftColor = 'var(--success)';
+        
         toastContainer.appendChild(toast);
         setTimeout(() => {
             toast.style.opacity = '0';
             setTimeout(() => toast.remove(), 300);
         }, 3000);
+    }
+
+    function showSpinner() {
+        const spinner = document.getElementById('globalSpinner');
+        if (spinner) spinner.style.display = 'flex';
+    }
+
+    function hideSpinner() {
+        const spinner = document.getElementById('globalSpinner');
+        if (spinner) spinner.style.display = 'none';
     }
 
     // Visibility listener to resume polling when tab becomes focused

@@ -6,7 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
-from rich import print as rprint
+from pipeline.observability import logger
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 
@@ -32,12 +32,12 @@ def ensure_ollama_model(model_name: str) -> None:
             capture_output=True, text=True, timeout=10
         )
         if model_name not in result.stdout:
-            rprint(f"[yellow]Ollama model '{model_name}' not found. Pulling now...[/yellow]")
-            rprint("[dim](This is a one-time download of ~4GB for qwen2.5:7b)[/dim]")
+            logger.info(f"› Ollama model '{model_name}' not found. Pulling now...")
+            logger.info("(This is a one-time download of ~4GB for qwen2.5:7b)")
             subprocess.run(["ollama", "pull", model_name], check=True)
-            rprint(f"[green]Model '{model_name}' ready.[/green]")
+            logger.success(f"✓ Model '{model_name}' ready.")
         else:
-            rprint(f"[green]Ollama model '{model_name}' already available.[/green]")
+            logger.info(f"✓ Ollama model '{model_name}' already available.")
     except FileNotFoundError:
         raise RuntimeError(
             "Ollama not found. Install from https://ollama.com then re-run."
@@ -52,27 +52,27 @@ def startup_wizard() -> RunConfig:
     This runs before the pipeline and before the UI.
     """
     console.rule("[bold cyan]SOW-to-Jira POC[/bold cyan]")
-    rprint("[cyan]Welcome! Answer a few questions to configure this run.[/cyan]\n")
+    logger.info("Welcome! Answer a few questions to configure this run.")
 
     # ── 1. SOW PDF Path ───────────────────────────────────────────────────────
     while True:
         pdf_path = Prompt.ask("Path to SOW PDF", default="data/sample.pdf")
         if Path(pdf_path).exists() and pdf_path.lower().endswith(".pdf"):
             break
-        rprint(f"[red]File not found or not a PDF: {pdf_path}[/red]")
+        logger.error(f"File not found or not a PDF: {pdf_path}")
 
     # ── 2. LLM Mode ───────────────────────────────────────────────────────────
-    rprint("\nLLM Mode:")
-    rprint("  [bold]1[/bold] → API (z.ai GLM via Maxim Bifrost) — Recommended")
-    rprint("  [bold]2[/bold] → Local (Ollama via Maxim Bifrost) — Requires Ollama running")
+    logger.info("LLM Mode:")
+    logger.info("  1 → API (z.ai GLM via Maxim Bifrost) — Recommended")
+    logger.info("  2 → Local (Ollama via Maxim Bifrost) — Requires Ollama running")
     llm_choice = Prompt.ask("Choose", choices=["1", "2"], default="1")
     llm_mode = LLMMode.API if llm_choice == "1" else LLMMode.LOCAL
 
     # ── 3. Jira Hierarchy ─────────────────────────────────────────────────────
-    rprint("\nHow should tasks be structured in Jira?")
-    rprint("  [bold]1[/bold] → Flat — All items created as Tasks (simplest)")
-    rprint("  [bold]2[/bold] → Epic > Task — SOW sections become Epics, items become Tasks")
-    rprint("  [bold]3[/bold] → Story > Sub-task — SOW sections become Stories, items become Sub-tasks")
+    logger.info("How should tasks be structured in Jira?")
+    logger.info("  1 → Flat — All items created as Tasks (simplest)")
+    logger.info("  2 → Epic > Task — SOW sections become Epics, items become Tasks")
+    logger.info("  3 → Story > Sub-task — SOW sections become Stories, items become Sub-tasks")
     hier_choice = Prompt.ask("Choose", choices=["1", "2", "3"], default="1")
     hierarchy_map = {"1": JiraHierarchy.FLAT, "2": JiraHierarchy.EPIC_TASK, "3": JiraHierarchy.STORY_SUBTASK}
     jira_hierarchy = hierarchy_map[hier_choice]
@@ -91,16 +91,8 @@ def startup_wizard() -> RunConfig:
         skip_indexing=flags["skip_indexing"]
     )
 
-    rprint(f"\n[bold green]Configuration locked:[/bold green]")
-    rprint(f"  PDF: {config.sow_pdf_path}")
-    rprint(f"  LLM: {config.llm_mode.value}")
-    rprint(f"  Hierarchy: {config.jira_hierarchy.value}")
-    rprint(f"  Jira Project: {config.jira_project_key}")
-    rprint(f"  Skip Indexing: {config.skip_indexing}")
-    rprint(f"  Run ID: {config.run_id}\n")
-
     if not Confirm.ask("Proceed with pipeline?", default=True):
-        rprint("[yellow]Aborted.[/yellow]")
+        logger.warning("Aborted.")
         sys.exit(0)
 
     return config
@@ -131,10 +123,10 @@ def main():
     orchestrator = PipelineOrchestrator(run_config, app_config, audit)
     tasks = orchestrator.run()
 
-    rprint("\n[bold cyan]Pipeline complete.[/bold cyan]")
-    rprint(f"[bold]{len(tasks)}[/bold] tasks ready for review.\n")
-    rprint("Launch the review UI with:")
-    rprint("  [bold green]uvicorn ui.server:app --reload[/bold green]\n")
+    logger.info("Pipeline complete.")
+    logger.info(f"{len(tasks)} tasks ready for review.")
+    logger.info("Launch the review UI with:")
+    logger.info("  uvicorn ui.server:app --reload")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,71 @@
+# Argus Edge Collector Configuration
+# Optimized for Store-and-Forward reliability from remote instances.
+
+extensions:
+  file_storage:
+    directory: /app/data/argus_storage
+    timeout: 10s
+    fsync: true
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+  
+  # Basic PII Redaction for Prompts (Regex based)
+  attributes/redaction:
+    actions:
+      - key: gen_ai.prompt
+        action: replace
+        pattern: '(?i)(api_key|password|secret|token)[:=]\s*[^\s]+'
+        value: '[REDACTED]'
+      - key: gen_ai.completion
+        action: replace
+        pattern: '(?i)(api_key|password|secret|token)[:=]\s*[^\s]+'
+        value: '[REDACTED]'
+
+  # Ensure Instance ID is always present
+  resource/instance_info:
+    attributes:
+      - key: argus.instance_id
+        from_attribute: argus.instance_id
+        action: upsert
+
+exporters:
+  otlp/argus_hq:
+    endpoint: "${ARGUS_HQ_URL}" # e.g. https://argus-deck.loclx.io
+    headers:
+      Authorization: "Bearer ${ARGUS_BACKBONE_TOKEN}"
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 10000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 0 # Retry indefinitely until success
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/redaction, resource/instance_info, batch]
+      exporters: [otlp/argus_hq]
+    metrics:
+      receivers: [otlp]
+      processors: [resource/instance_info, batch]
+      exporters: [otlp/argus_hq]
+    logs:
+      receivers: [otlp]
+      processors: [resource/instance_info, batch]
+      exporters: [otlp/argus_hq]

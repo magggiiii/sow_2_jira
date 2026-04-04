@@ -1,0 +1,116 @@
+name: argus-admin
+
+services:
+  # 1. Bifrost Gateway (LLM Proxy & Financials)
+  bifrost:
+    image: maximhq/bifrost:latest
+    container_name: s2j-admin-bifrost
+    volumes:
+      - ./config/bifrost.admin.yaml:/etc/bifrost/config.yaml:ro
+    ports:
+      - "8081:8080" # API & Config UI (Shifted to 8081 to avoid conflict with local bifrost)
+    environment:
+      - ENABLE_GOVERNANCE=true
+    networks:
+      - argus-network
+    restart: always
+
+  # 1.5 Argus HQ Collector (The Telemetry Traffic Controller)
+  argus-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: s2j-admin-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/argus-collector-admin.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC (Exposed via tunnel)
+      - "4318:4318" # OTLP HTTP (Exposed via tunnel)
+    networks:
+      - argus-network
+    restart: always
+
+  # 2. Langfuse (AI Tracing & Analytics)
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: s2j-admin-langfuse
+    ports:
+      - "3002:3000" # Shifted to 3002 to avoid conflict with local Grafana
+    environment:
+      - NODE_ENV=production
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=my-secret-key-change-me
+      - DATABASE_URL=postgresql://langfuse:langfuse@db:5432/langfuse
+      - SALT=my-salt-change-me
+      - TELEMETRY_ENABLED=false
+    depends_on:
+      - db
+    networks:
+      - argus-network
+    restart: always
+
+  db:
+    image: postgres:16
+    container_name: s2j-admin-db
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse_db:/var/lib/postgresql/data
+    networks:
+      - argus-network
+    restart: always
+
+  # 3. Loki (Operational Logs)
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: s2j-admin-loki
+    ports:
+      - "3101:3100" # Shifted to 3101 to avoid conflict with local Loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - argus-network
+    restart: always
+
+  # 4. Tempo (System Traces)
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: s2j-admin-tempo
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./config/tempo.yaml:/etc/tempo.yaml
+    networks:
+      - argus-network
+    restart: always
+
+  # 5. Prometheus (Fleet Metrics)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: s2j-admin-prometheus
+    volumes:
+      - ./config/prometheus.admin.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - argus-network
+    restart: always
+
+  # 6. Grafana (The Single Pane of Glass)
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: s2j-admin-grafana
+    ports:
+      - "3001:3000" # Use 3001 to avoid conflict with Langfuse
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    networks:
+      - argus-network
+    restart: always
+
+networks:
+  argus-network:
+    name: argus-admin-network
+
+volumes:
+  langfuse_db:

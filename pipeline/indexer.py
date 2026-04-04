@@ -9,7 +9,7 @@ verification, and recursive node splitting.
 import sys
 import json
 from pathlib import Path
-from rich import print as rprint
+from pipeline.observability import logger
 
 # Ensure pageindex is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -36,7 +36,7 @@ class DocumentIndexer:
         self.last_tree = None
         self.last_result = None
 
-    def build_tree(self, pdf_path: str, status_callback=None, stop_event=None) -> list[dict]:
+    def build_tree(self, pdf_path: str, status_callback=None, stop_event=None, run_id: str = "none") -> list[dict]:
         """
         Run PageIndex on the PDF file.
         Returns a flat list of nodes for the extraction pipeline.
@@ -45,7 +45,7 @@ class DocumentIndexer:
         def _report(msg, progress=0.05):
             if status_callback:
                 status_callback(1, msg, progress)
-            rprint(f"[cyan]{msg}[/cyan]")
+            logger.info(f"› {msg}")
 
         _report(f"PageIndex: Parsing PDF {Path(pdf_path).name}...", 0.05)
 
@@ -63,7 +63,7 @@ class DocumentIndexer:
         def pageindex_cb(msg):
             _report(msg)
 
-        result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event)
+        result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id)
         
         if stop_event and stop_event.is_set():
             _report("PageIndex: Extraction aborted by user", 0.30)

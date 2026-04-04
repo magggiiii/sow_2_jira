@@ -1,16 +1,20 @@
+name: user-stack
+
 services:
   app:
-    build: .
-    container_name: sow-to-jira-app
+    image: ghcr.io/magggiiii/sow_2_jira:v1.1
+    container_name: s2j-user-app
     init: true
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - sow_data:/app/data
+      - ./data:/app/data
+    env_file: .env
     environment:
       - SOW_DATA_DIR=/app/data
       - PYTHONUNBUFFERED=1
-      - BIFROST_GATEWAY_URL=http://bifrost:8080
+      - ARGUS_COLLECTOR_URL=http://argus-collector:4317
+      - DOCKER_HOST_INTERNAL=${DOCKER_HOST_INTERNAL:-host.docker.internal}
     depends_on:
       - bifrost
     networks:
@@ -23,13 +27,25 @@ services:
       retries: 3
       start_period: 20s
 
+  argus-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: s2j-user-argus-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/argus-collector-edge.yaml:/etc/otel-collector-config.yaml:ro
+      - ./data:/app/data
+    environment:
+      - ARGUS_HQ_URL=${ARGUS_HQ_URL}
+      - ARGUS_BACKBONE_TOKEN=${ARGUS_BACKBONE_TOKEN}
+    networks:
+      - sow-internal
+    restart: unless-stopped
+
   bifrost:
     image: maximhq/bifrost:latest
-    container_name: llm-gateway
-    ports:
-      - "8080:8080"
+    container_name: s2j-user-bifrost
     volumes:
-      - sow_data:/app/data
+      - ./data:/app/data
     environment:
       - LOKI_URL=http://loki:3100
       - TEMPO_URL=http://tempo:4317
@@ -50,7 +66,7 @@ services:
 
   loki:
     image: grafana/loki:2.9.4
-    container_name: sow-loki
+    container_name: s2j-user-loki
     ports:
       - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -64,7 +80,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.3.1
-    container_name: sow-tempo
+    container_name: s2j-user-tempo
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
       - ./config/tempo.yaml:/etc/tempo.yaml
@@ -78,7 +94,7 @@ services:
 
   grafana:
     image: grafana/grafana:10.2.3
-    container_name: sow-grafana
+    container_name: s2j-user-grafana
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -89,7 +105,4 @@ services:
 
 networks:
   sow-internal:
-    name: sow-to-jira-network
-
-volumes:
-  sow_data:
+    name: user-network

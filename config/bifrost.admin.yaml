@@ -1,0 +1,37 @@
+# Argus HQ Bifrost Configuration
+# Handles Virtual Keys, Budgets, and Local Backends for the Central Deck.
+
+providers:
+  - name: openai-hq
+    type: openai
+    api_key: "env.OPENAI_API_KEY"
+  
+  - name: anthropic-hq
+    type: anthropic
+    api_key: "env.ANTHROPIC_API_KEY"
+
+# Sample Virtual Keys for Remote Instances
+virtual_keys:
+  - name: "42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
+    routing:
+      strategy: "priority"
+      targets:
+        - provider: "openai-hq"
+    budget:
+      limit: 10.00 # USD
+      reset: "monthly"
+
+governance:
+  enabled: true
+  prometheus_export: true
+
+plugins:
+  - name: otel
+    enabled: true
+    config:
+      service_name: "argus-hq-bifrost"
+      collector_url: "argus-collector:4317"
+      protocol: "grpc"
+      trace_type: "genai_extension"
+      metrics_enabled: true
+      metrics_endpoint: "argus-collector:4317"

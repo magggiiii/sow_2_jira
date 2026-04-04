@@ -83,14 +83,14 @@ GLOBAL_ENV="$SOW_HOME/.env"
 [ ! -f "$GLOBAL_ENV" ] && cp .env.example "$GLOBAL_ENV"
 
 SHELL_RC="$HOME/.zshrc"
-LAUNCH_CMD="alias sjt='export SOW_DATA_HOME=\"$SOW_DATA\" && export SOW_ENV_FILE=\"$GLOBAL_ENV\" && cd \"$SOW_SOURCE\" && docker-compose -f docker-compose.yml up -d && open http://localhost:8000'"
+LAUNCH_CMD="alias s2j='export SOW_DATA_HOME=\"$SOW_DATA\" && export SOW_ENV_FILE=\"$GLOBAL_ENV\" && cd \"$SOW_SOURCE\" && docker-compose -f docker-compose.yml up -d && open http://localhost:8000'"
 
 # Portable update of .zshrc
 touch "$SHELL_RC"
-grep -v "alias sjt=" "$SHELL_RC" > "$SHELL_RC.tmp" || true
+grep -v "alias s2j=" "$SHELL_RC" > "$SHELL_RC.tmp" || true
 echo -e "\n# SOW-to-Jira\n$LAUNCH_CMD" >> "$SHELL_RC.tmp"
 mv "$SHELL_RC.tmp" "$SHELL_RC"
 
 echo -e "\n${GREEN}Configuration Complete!${NC}"
-echo -e "Reloading shell... Typing ${BLUE}sjt${NC} will now launch the app."
+echo -e "Reloading shell... Typing ${BLUE}s2j${NC} will now launch the app."
 exec zsh

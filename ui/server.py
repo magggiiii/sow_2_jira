@@ -19,19 +19,17 @@ from dotenv import load_dotenv
 import logging
 import httpx
 import time
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Add project root to path for imports
 import sys
 UI_DIR = Path(__file__).parent
 sys.path.insert(0, str(UI_DIR.parent))
 
-# Load environment variables
-load_dotenv()
-
 from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
-from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base
+from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pipeline.observability import trace_span, sync_telemetry, logger
@@ -253,54 +251,51 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
             "created_at": datetime.utcnow().isoformat()
         }, f)
         
-    # Initialize run-level file logger
-    from pipeline.observability import add_run_file_logger
-    logger_id = add_run_file_logger(run_id)
+    from pipeline.observability import run_logger
     
-    try:
-        # Load app config
-        config_path = Path("config/sow_config.json")
-        with open(config_path) as f:
-            app_config = json.load(f)
+    with run_logger(run_id):
+        try:
+            # Load app config
+            config_path = Path("config/sow_config.json")
+            with open(config_path) as f:
+                app_config = json.load(f)
+                
+            # Build RunConfig
+            run_cfg = RunConfig(
+                sow_pdf_path=str(UPLOAD_DIR / req.pdf_filename),
+                llm_mode=LLMMode(req.llm_mode),
+                jira_hierarchy=JiraHierarchy(req.jira_hierarchy),
+                jira_project_key=req.jira_project_key,
+                skip_indexing=req.skip_indexing,
+                max_nodes=req.max_nodes,
+                run_id=run_id
+            )
             
-        # Build RunConfig
-        run_cfg = RunConfig(
-            sow_pdf_path=str(UPLOAD_DIR / req.pdf_filename),
-            llm_mode=LLMMode(req.llm_mode),
-            jira_hierarchy=JiraHierarchy(req.jira_hierarchy),
-            jira_project_key=req.jira_project_key,
-            skip_indexing=req.skip_indexing,
-            max_nodes=req.max_nodes,
-            run_id=run_id
-        )
-        
-        audit = AuditLogger()
-        
-        def status_cb(step, msg, progress):
-            status.current_step = step
-            status.message = msg
-            status.progress = progress
-            status.logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
-            if len(status.logs) > 50:
-                status.logs.pop(0)
+            audit = AuditLogger()
             
-        orchestrator = PipelineOrchestrator(run_cfg, app_config, audit, status_callback=status_cb)
-        active_orchestrators[run_id] = orchestrator
-        orchestrator.run()
-        
-        status.message = "Pipeline Complete"
-        status.progress = 1.0
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        status.error = str(e)
-        status.message = f"Error: {str(e)}"
-    finally:
-        status.is_running = False
-        if run_id in active_orchestrators:
-            del active_orchestrators[run_id]
-        if logger_id:
-            logger.remove(logger_id)
+            def status_cb(step, msg, progress):
+                status.current_step = step
+                status.message = msg
+                status.progress = progress
+                status.logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+                if len(status.logs) > 50:
+                    status.logs.pop(0)
+                
+            orchestrator = PipelineOrchestrator(run_cfg, app_config, audit, status_callback=status_cb)
+            active_orchestrators[run_id] = orchestrator
+            orchestrator.run()
+            
+            status.message = "Pipeline Complete"
+            status.progress = 1.0
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            status.error = str(e)
+            status.message = f"Error: {str(e)}"
+        finally:
+            status.is_running = False
+            if run_id in active_orchestrators:
+                del active_orchestrators[run_id]
 
 @app.post("/api/cancel/{run_id}")
 async def cancel_run(run_id: str):
@@ -362,15 +357,28 @@ def _extract_models_from_response(provider_id: str, data: dict) -> list[str]:
     return [m.get("id") for m in items if m.get("id")]
 
 @app.post("/api/providers/{provider_id}/models")
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException))
+)
 async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
     if provider_id not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=404, detail="Unknown provider")
 
     settings = settings_manager.load()
     provider_settings = settings.get("providers", {}).get(provider_id, {})
-    base_url = resolve_provider_base(provider_id, req.base_url or provider_settings.get("base_url"))
+    
+    # Resolve the base URL (uses provided if present, else stored, else registry default)
+    raw_base = resolve_provider_base(provider_id, req.base_url or provider_settings.get("base_url"))
+    
+    # Ensure Docker Host resolution for the FINAL string
+    base_url = _ensure_docker_host(raw_base)
+    
     if not base_url:
         raise HTTPException(status_code=400, detail="Base URL is required for this provider")
+    
+    logger.info(f"› Attempting model discovery for {provider_id} at {base_url}")
     
     stored_key = None
     if provider_settings.get("api_key"):
@@ -417,7 +425,7 @@ async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(url, headers=headers, timeout=8)
+            resp = await client.get(url, headers=headers, timeout=15.0)
             if resp.status_code >= 400:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
             data = resp.json()
@@ -463,7 +471,10 @@ def save_settings(req: SettingsConfig):
         
     provider = req.provider or settings.get("provider") or "openai"
     prev_provider = settings.get("provider")
-    base_url = resolve_provider_base(provider, req.base_url)
+    
+    # Resolve and translate the base URL
+    raw_base = resolve_provider_base(provider, req.base_url)
+    base_url = _ensure_docker_host(raw_base)
 
     settings["provider"] = provider
     settings.setdefault("providers", {})
@@ -614,79 +625,73 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
     active_runs[run_id] = status
     _append_status_log(status, "Initializing Jira push")
 
-    from integrations.jira_client import JiraClient
-    from audit.logger import AuditLogger
-    from pipeline.observability import add_run_file_logger
+    from pipeline.observability import run_logger
 
-    logger_id = add_run_file_logger(run_id)
+    with run_logger(run_id):
+        try:
+            data = load_data(session_id)
+            run_config = data.get("config", {}) if isinstance(data.get("config"), dict) else {}
 
-    try:
-        data = load_data(session_id)
-        run_config = data.get("config", {}) if isinstance(data.get("config"), dict) else {}
+            project_key = (req.jira_project_key if (req and req.jira_project_key)
+                           else os.environ.get("JIRA_PROJECT_KEY", run_config.get("jira_project_key", "PROJ")))
 
-        project_key = (req.jira_project_key if (req and req.jira_project_key)
-                       else os.environ.get("JIRA_PROJECT_KEY", run_config.get("jira_project_key", "PROJ")))
+            if run_config.get("jira_project_key") != project_key:
+                run_config["jira_project_key"] = project_key
+                data["config"] = run_config
 
-        if run_config.get("jira_project_key") != project_key:
-            run_config["jira_project_key"] = project_key
-            data["config"] = run_config
+            hierarchy_val = (req.jira_hierarchy if req and req.jira_hierarchy
+                             else run_config.get("jira_hierarchy", "flat"))
 
-        hierarchy_val = (req.jira_hierarchy if req and req.jira_hierarchy
-                         else run_config.get("jira_hierarchy", "flat"))
+            os.environ["JIRA_PROJECT_KEY"] = project_key
+            hierarchy = JiraHierarchy(hierarchy_val)
 
-        os.environ["JIRA_PROJECT_KEY"] = project_key
-        hierarchy = JiraHierarchy(hierarchy_val)
+            tasks_data = data.get("tasks", [])
+            managed_tasks = [ManagedTask(**t) for t in tasks_data]
+            approved_tasks = [t for t in managed_tasks if t.status == TaskStatus.APPROVED]
 
-        tasks_data = data.get("tasks", [])
-        managed_tasks = [ManagedTask(**t) for t in tasks_data]
-        approved_tasks = [t for t in managed_tasks if t.status == TaskStatus.APPROVED]
+            if not approved_tasks:
+                status.message = "No approved tasks to push"
+                status.progress = 1.0
+                status.is_running = False
+                _append_status_log(status, "No approved tasks found")
+                return
 
-        if not approved_tasks:
-            status.message = "No approved tasks to push"
+            audit = AuditLogger()
+            jira = JiraClient(hierarchy, audit, run_config.get("run_id", session_id or "ui"), project_key=project_key)
+
+            status.progress = 0.2
+            _append_status_log(status, f"Pushing {len(approved_tasks)} tasks")
+            results = jira.push_tasks(approved_tasks)
+
+            result_map = {str(r.task_id): r for r in results}
+            for i, t in enumerate(tasks_data):
+                if t.get("status") == "APPROVED":
+                    res = result_map.get(str(t.get("id")))
+                    if res and res.success:
+                        tasks_data[i]["status"] = "PUSHED"
+
+            save_data(data, session_id)
+
+            total_passed = sum(1 for r in results if r.success)
+            total_failed = len(results) - total_passed
+            overall_success = total_failed == 0
+
+            first_error = next((r.error for r in results if not r.success and r.error), None)
+            message = f"Push complete. {total_passed} passed, {total_failed} failed."
+            if first_error:
+                message += f" First error: {first_error[:100]}..."
+
             status.progress = 1.0
+            status.message = message
+            _append_status_log(status, message)
             status.is_running = False
-            _append_status_log(status, "No approved tasks found")
-            return
-
-        audit = AuditLogger()
-        jira = JiraClient(hierarchy, audit, run_config.get("run_id", session_id or "ui"), project_key=project_key)
-
-        status.progress = 0.2
-        _append_status_log(status, f"Pushing {len(approved_tasks)} tasks")
-        results = jira.push_tasks(approved_tasks)
-
-        result_map = {str(r.task_id): r for r in results}
-        for i, t in enumerate(tasks_data):
-            if t.get("status") == "APPROVED":
-                res = result_map.get(str(t.get("id")))
-                if res and res.success:
-                    tasks_data[i]["status"] = "PUSHED"
-
-        save_data(data, session_id)
-
-        total_passed = sum(1 for r in results if r.success)
-        total_failed = len(results) - total_passed
-        overall_success = total_failed == 0
-
-        first_error = next((r.error for r in results if not r.success and r.error), None)
-        message = f"Push complete. {total_passed} passed, {total_failed} failed."
-        if first_error:
-            message += f" First error: {first_error[:100]}..."
-
-        status.progress = 1.0
-        status.message = message
-        _append_status_log(status, message)
-        status.is_running = False
-        if not overall_success:
-            status.error = first_error or "Push completed with failures"
-    except Exception as e:
-        status.error = str(e)
-        status.message = f"Error: {str(e)}"
-        _append_status_log(status, f"Error: {str(e)}")
-        status.is_running = False
-    finally:
-        if logger_id:
-            logger.remove(logger_id)
+            if not overall_success:
+                status.error = first_error or "Push completed with failures"
+        except Exception as e:
+            status.error = str(e)
+            status.message = f"Error: {str(e)}"
+            _append_status_log(status, f"Error: {str(e)}")
+            status.is_running = False
 
 @app.post("/api/push")
 def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = None):

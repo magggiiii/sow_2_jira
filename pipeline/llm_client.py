@@ -3,15 +3,18 @@
 import os
 import json
 import re
+import time
 from typing import Union
 import litellm
+from litellm import RateLimitError, APIConnectionError, Timeout
 import logging
 import contextlib
 import io
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
 from audit.logger import AuditLogger
-from pipeline.observability import logger, tracer
+from pipeline.observability import logger, tracer, llm_token_usage, llm_operation_duration, INSTANCE_ID, SYNC_ENABLED
 from pipeline.telemetry import TelemetryEmitter
 from rich.console import Console
 
@@ -61,11 +64,12 @@ class LLMClient:
     Ensures per-run configuration is used instead of global environment.
     """
 
-    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None):
+    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None):
         _configure_litellm_logging()
         self.mode = mode
         self.audit_logger = audit_logger
         self.run_id = run_id
+        self.stop_event = stop_event
 
         # Use provided config or resolve from mode
         self.provider_config = provider_config or configure_litellm_for_mode(mode)
@@ -73,7 +77,7 @@ class LLMClient:
         self.telemetry = TelemetryEmitter()
         
         # Configure litellm to send traces to OpenTelemetry if Telemetry is enabled
-        if os.environ.get("BIFROST_TELEMETRY_URL"):
+        if SYNC_ENABLED:
             litellm.success_callback = ["opentelemetry"]
             litellm.failure_callback = ["opentelemetry"]
 
@@ -97,7 +101,11 @@ class LLMClient:
         Send a completion request. Returns the response text.
         Logs token usage to audit log and sends traces to Tempo.
         """
-        import time
+        
+        # Setup context for when SYNC is disabled
+        if not SYNC_ENABLED:
+            with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
+                return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id, None)
 
         with tracer.start_as_current_span(f"LLM_CALL_{agent_name}") as span:
             span.set_attribute("agent", agent_name)
@@ -106,81 +114,102 @@ class LLMClient:
             span.set_attribute("prompt_preview", prompt[:1000])
 
             with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
-                logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
+                return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id, span)
+
+    def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id, span) -> str:
+        logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
+        
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+            retry=retry_if_exception_type((RateLimitError, APIConnectionError, Timeout, Exception)),
+            reraise=True
+        )
+        def _do_call():
+            if self.stop_event and self.stop_event.is_set():
+                logger.warning("› LLM call cancelled by user")
+                raise RuntimeError("LLM call cancelled by user")
+
+            start_time = time.time()
+            try:
+                kwargs = {
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "extra_headers": self.extra_headers,
+                }
                 
-                for attempt in range(3):
-                    start_time = time.time()
-                    try:
-                        kwargs = {
-                            "model": self.model,
-                            "messages": [
-                                {"role": "system", "content": system},
-                                {"role": "user", "content": prompt},
-                            ],
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                            "extra_headers": self.extra_headers,
-                        }
-                        
-                        if self.provider_config.api_key:
-                            kwargs["api_key"] = self.provider_config.api_key
-                        if self.provider_config.api_base:
-                            kwargs["api_base"] = self.provider_config.api_base
+                if self.provider_config.api_key:
+                    kwargs["api_key"] = self.provider_config.api_key
+                if self.provider_config.api_base:
+                    kwargs["api_base"] = self.provider_config.api_base
 
-                        with console.status(f"Waiting for LLM ({self.model})..."):
-                            with _suppress_litellm_output():
-                                response = litellm.completion(**kwargs)
-                        content = response.choices[0].message.content or ""
-                        tokens = response.usage.total_tokens if response.usage else 0
-                        prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
-                        completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
+                with console.status(f"Waiting for LLM ({self.model})..."):
+                    with _suppress_litellm_output():
+                        response = litellm.completion(**kwargs)
+                content = response.choices[0].message.content or ""
+                tokens = response.usage.total_tokens if response.usage else 0
+                prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
+                completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
 
-                        span.set_attribute("tokens", tokens)
-                        span.set_attribute("response_preview", content[:1000])
-                        
-                        logger.success(f"✓ LLM Response received ({tokens} tokens)")
-                        self.telemetry.emit("llm.call", {
-                            "run_id": self.run_id,
-                            "agent": agent_name,
-                            "model": self.model,
-                            "tokens_in": prompt_tokens,
-                            "tokens_out": completion_tokens,
-                            "latency_ms": int((time.time() - start_time) * 1000),
-                            "success": True,
-                        })
+                if span:
+                    span.set_attribute("tokens", tokens)
+                    span.set_attribute("response_preview", content[:1000])
+                
+                # Record Argus Metrics (only if sync enabled)
+                if SYNC_ENABLED:
+                    latency_s = time.time() - start_time
+                    llm_token_usage.add(prompt_tokens, {"gen_ai.token.type": "input", "argus.instance_id": INSTANCE_ID, "model": self.model})
+                    llm_token_usage.add(completion_tokens, {"gen_ai.token.type": "output", "argus.instance_id": INSTANCE_ID, "model": self.model})
+                    llm_operation_duration.record(latency_s, {"argus.instance_id": INSTANCE_ID, "model": self.model})
 
-                        self.audit_logger.log(
-                            run_id=self.run_id,
-                            agent=agent_name,
-                            node_id=node_id,
-                            action="LLM_CALL",
-                            task_id=None,
-                            detail=f"model={self.model} tokens={tokens}",
-                            llm_tokens_used=tokens,
-                            llm_model=self.model,
-                        )
-                        return content
+                logger.success(f"✓ LLM Response received ({tokens} tokens)")
+                self.telemetry.emit("llm.call", {
+                    "run_id": self.run_id,
+                    "agent": agent_name,
+                    "model": self.model,
+                    "tokens_in": prompt_tokens,
+                    "tokens_out": completion_tokens,
+                    "latency_ms": int((time.time() - start_time) * 1000),
+                    "success": True,
+                })
 
-                    except Exception as e:
-                        logger.warning(f"› LLM attempt {attempt+1} failed: {e}")
-                        if attempt == 2:
-                            span.record_exception(e)
-                            logger.error(f"✗ LLM call permanently failed: {e}")
-                            self.telemetry.emit("llm.call", {
-                                "run_id": self.run_id,
-                                "agent": agent_name,
-                                "model": self.model,
-                                "tokens_in": 0,
-                                "tokens_out": 0,
-                                "latency_ms": int((time.time() - start_time) * 1000),
-                                "success": False,
-                            })
-                            raise RuntimeError(
-                                f"LLM call failed after 3 attempts: {e}"
-                            ) from e
-                        time.sleep(2 ** attempt)
+                self.audit_logger.log(
+                    run_id=self.run_id,
+                    agent=agent_name,
+                    node_id=node_id,
+                    action="LLM_CALL",
+                    task_id=None,
+                    detail=f"model={self.model} tokens={tokens}",
+                    llm_tokens_used=tokens,
+                    llm_model=self.model,
+                )
+                return content
 
-        return ""  # unreachable
+            except Exception as e:
+                logger.warning(f"› LLM attempt failed: {e}")
+                raise e
+
+        try:
+            return _do_call()
+        except Exception as e:
+            if span:
+                span.record_exception(e)
+            logger.error(f"✗ LLM call permanently failed: {e}")
+            self.telemetry.emit("llm.call", {
+                "run_id": self.run_id,
+                "agent": agent_name,
+                "model": self.model,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "latency_ms": 0,
+                "success": False,
+            })
+            raise RuntimeError(f"LLM call failed after 3 attempts: {e}") from e
 
     def complete_json(
         self,

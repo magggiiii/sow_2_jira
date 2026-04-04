@@ -103,14 +103,14 @@ if (!(Test-Path $GlobalEnv)) {
     Write-Host "$Green [OK]$Reset Initialized global .env at $GlobalEnv"
 }
 
-# 6. Native Command Registration (sjt)
+# 6. Native Command Registration (s2j)
 $ProfilePath = $PROFILE
 if (!(Test-Path $ProfilePath)) { New-Item -ItemType File -Path $ProfilePath -Force | Out-Null }
 
 $SjtFunction = @"
 
 # SOW-to-Jira Terminal Function
-function sjt {
+function s2j {
     `$env:SOW_DATA_HOME = "$SowData"
     `$env:SOW_ENV_FILE = "$GlobalEnv"
     Set-Location "$SowSource"
@@ -119,15 +119,15 @@ function sjt {
 }
 "@
 
-if ((Get-Content $ProfilePath | Select-String "function sjt {").Count -eq 0) {
+if ((Get-Content $ProfilePath | Select-String "function s2j {").Count -eq 0) {
     Add-Content $ProfilePath $SjtFunction
-    Write-Host "$Green [OK]$Reset Command 'sjt' registered in your profile."
+    Write-Host "$Green [OK]$Reset Command 's2j' registered in your profile."
 }
 
 # 7. Final Instructions
 Write-Host "`n--------------------------------------------------"
 Write-Host "$Green Configuration Complete! $Reset"
 Write-Host "1. Restart your terminal."
-Write-Host "2. Type $Blue sjt $Reset to launch."
+Write-Host "2. Type $Blue s2j $Reset to launch."
 Write-Host "3. Open $Blue Settings $Reset (gear icon) in the UI to add your API keys."
 Write-Host "--------------------------------------------------`n"

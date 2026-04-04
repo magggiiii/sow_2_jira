@@ -32,9 +32,17 @@ results/
 .vscode/
 .idea/
 
-# AI session artifacts (not source code)
+# AI Planning & Workspace Artifacts
+.planning/
+plans/
+.agents/
 GEMINI_*.md
 impeccable_reference/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Cloned repos (deps now in requirements.txt)
 repo/

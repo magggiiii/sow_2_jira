@@ -160,7 +160,7 @@ RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
 echo -e "${BLUE}[INFO] Fetching latest version info...${NC}"
 S2J_VERSION=$(curl -fsSL "$RAW_URL/VERSION" | head -n 1 | tr -d '\r\n')
 S2J_VERSION=${S2J_VERSION:-"latest"}
-echo -e "${BLUE}[INFO] Target Version: v${S2J_VERSION}${NC}"
+echo -e "${BLUE}[INFO] Target Version: ${S2J_VERSION}${NC}"
 
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"

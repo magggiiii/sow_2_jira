@@ -33,7 +33,7 @@ To push tasks to Jira, you need a Jira API token:
 Copy and paste the following command into your terminal:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/magggiiii/sow_2_jira/main/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/magggiiii/sow_2_jira/main/scripts/install/install.sh" | bash
 ```
 
 ### 3. Launch and Configure
@@ -100,9 +100,11 @@ Choose your preferred interface:
 If you are the developer/admin managing the fleet, use the **Argus HQ** stack on your laptop to monitor all remote instances.
 
 ### 1. Launch the Argus HQ Deck
+Use the admin shortcut after running the installer locally:
 ```bash
-docker compose -f docker-compose.hq.yml up -d
+s2j-admin
 ```
+*(Or manually: `docker compose -f infra/admin/docker-compose.admin.yml up -d`)*
 
 ### 2. Monitoring Dashboards
 - **Bird's Eye View (Grafana)**: [http://localhost:3001](http://localhost:3001)

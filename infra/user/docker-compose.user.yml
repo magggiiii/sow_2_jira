@@ -32,7 +32,7 @@ services:
     container_name: s2j-user-argus-collector
     command: ["--config=/etc/otel-collector-config.yaml"]
     volumes:
-      - ./config/argus-collector-edge.yaml:/etc/otel-collector-config.yaml:ro
+      - ./config/user/argus-collector-edge.yaml:/etc/otel-collector-config.yaml:ro
       - ./data:/app/data
     environment:
       - ARGUS_HQ_URL=${ARGUS_HQ_URL}
@@ -83,7 +83,7 @@ services:
     container_name: s2j-user-tempo
     command: [ "-config.file=/etc/tempo.yaml" ]
     volumes:
-      - ./config/tempo.yaml:/etc/tempo.yaml
+      - ./config/user/tempo.yaml:/etc/tempo.yaml
     networks:
       - sow-internal
     healthcheck:

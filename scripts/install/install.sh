@@ -58,7 +58,8 @@ echo -e "${NC}"
 
 # 2. Setup Folders
 SOW_HOME="$HOME/.sow_to_jira"
-mkdir -p "$SOW_HOME/config"
+mkdir -p "$SOW_HOME/config/user"
+mkdir -p "$SOW_HOME/config/admin"
 mkdir -p "$SOW_HOME/data"
 
 # 3. Docker Dependency Check
@@ -176,18 +177,19 @@ RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
 
 # (Simulated download for now, using local files if available)
-if [ -f "docker-compose.user.yml" ]; then
-    cp docker-compose.user.yml "$SOW_HOME/docker-compose.user.yml"
-    cp config/tempo.yaml "$SOW_HOME/config/tempo.yaml"
-    cp config/argus-collector-edge.yaml "$SOW_HOME/config/argus-collector-edge.yaml"
+if [ -f "infra/user/docker-compose.user.yml" ]; then
+    cp infra/user/docker-compose.user.yml "$SOW_HOME/docker-compose.user.yml"
+    cp config/user/tempo.yaml "$SOW_HOME/config/user/tempo.yaml"
+    cp config/user/argus-collector-edge.yaml "$SOW_HOME/config/user/argus-collector-edge.yaml"
 else
     echo "  -> Fetching docker-compose.user.yml..."
-    curl -# -fL "$RAW_URL/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
+    curl -# -fL "$RAW_URL/infra/user/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
     echo "  -> Fetching tempo.yaml..."
-    curl -# -fL "$RAW_URL/config/tempo.yaml" -o "$SOW_HOME/config/tempo.yaml"
+    curl -# -fL "$RAW_URL/config/user/tempo.yaml" -o "$SOW_HOME/config/user/tempo.yaml"
     echo "  -> Fetching argus-collector-edge.yaml..."
-    curl -# -fL "$RAW_URL/config/argus-collector-edge.yaml" -o "$SOW_HOME/config/argus-collector-edge.yaml"
+    curl -# -fL "$RAW_URL/config/user/argus-collector-edge.yaml" -o "$SOW_HOME/config/user/argus-collector-edge.yaml"
 fi
+
 
 # 5. Environment Setup (Wizard removed, now handled in UI)
 GLOBAL_ENV="$SOW_HOME/.env"
@@ -242,12 +244,15 @@ LAUNCH_CMD="alias s2j='\$HOME/.sow_to_jira/s2j.sh'"
 
 # 7. Admin Shortcut Creation (Developer only)
 # Only create s2j-admin if the admin compose file exists locally during install
-if [ -f "docker-compose.admin.yml" ]; then
-    cp docker-compose.admin.yml "$SOW_HOME/docker-compose.admin.yml"
-    cp config/bifrost.admin.yaml "$SOW_HOME/config/bifrost.admin.yaml"
-    cp config/prometheus.admin.yml "$SOW_HOME/config/prometheus.admin.yml"
-    cp config/argus-collector-admin.yaml "$SOW_HOME/config/argus-collector-admin.yaml"
-    cp config/argus-dashboard.json "$SOW_HOME/config/argus-dashboard.json"
+if [ -f "infra/admin/docker-compose.admin.yml" ]; then
+    cp infra/admin/docker-compose.admin.yml "$SOW_HOME/docker-compose.admin.yml"
+    cp config/admin/bifrost.admin.yaml "$SOW_HOME/config/admin/bifrost.admin.yaml"
+    cp config/admin/prometheus.admin.yml "$SOW_HOME/config/admin/prometheus.admin.yml"
+    cp config/admin/argus-collector-admin.yaml "$SOW_HOME/config/admin/argus-collector-admin.yaml"
+    cp config/admin/argus-dashboard.json "$SOW_HOME/config/admin/argus-dashboard.json"
+    cp config/user/tempo.yaml "$SOW_HOME/config/admin/tempo.yaml" # Use user tempo if needed
+
+
 
     cat <<EOF > "$SOW_HOME/s2j-admin.sh"
 #!/bin/bash

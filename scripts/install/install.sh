@@ -53,7 +53,7 @@ cat <<'EOF'
       ████    ██ ██ ████ ██
  ██████  ██████   ██  ██  
 EOF
-echo -e "      SOW-to-Jira v1.0"
+echo -e "      SOW-to-Jira Portable Engine"
 echo -e "${NC}"
 
 # 2. Setup Folders

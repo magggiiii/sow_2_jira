@@ -2,7 +2,7 @@ name: user-stack
 
 services:
   app:
-    image: ghcr.io/magggiiii/sow_2_jira:v1.1
+    image: ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION:-latest}
     container_name: s2j-user-app
     init: true
     ports:

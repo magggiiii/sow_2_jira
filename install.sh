@@ -154,11 +154,18 @@ else
     DOCKER_HOST_INTERNAL=${DOCKER_HOST_INTERNAL:-"host.docker.internal"}
 fi
 
+# 3.8 Fetch Latest Version
+RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
+echo -e "${BLUE}[INFO] Fetching latest version info...${NC}"
+S2J_VERSION=$(curl -fsSL "$RAW_URL/VERSION" | head -n 1 | tr -d '\r\n')
+S2J_VERSION=${S2J_VERSION:-"latest"}
+echo -e "${BLUE}[INFO] Target Version: v${S2J_VERSION}${NC}"
+
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
 # Attempt a manifest check instead of a full pull to verify visibility
-if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:v1.1 &> /dev/null; then
-    echo -e "${YELLOW}[!] Note: Could not verify public image visibility.${NC}"
+if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION} &> /dev/null; then
+    echo -e "${YELLOW}[!] Note: Could not verify public image visibility for version ${S2J_VERSION}.${NC}"
     echo -e "If the next step fails, please ensure the project registry at https://ghcr.io/magggiiii/sow_2_jira is set to 'Public'."
 fi
 
@@ -197,6 +204,7 @@ ARGUS_BACKBONE_TOKEN=$ARGUS_BACKBONE_TOKEN
 
 # Networking
 DOCKER_HOST_INTERNAL=$DOCKER_HOST_INTERNAL
+S2J_VERSION=$S2J_VERSION
 
 SOW_DATA_DIR=data
 EOF

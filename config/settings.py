@@ -24,6 +24,30 @@ def resolve_provider_base(provider: str, base_url: Optional[str]) -> Optional[st
     reg = PROVIDER_REGISTRY.get(provider, {})
     return base_url or reg.get("base_url")
 
+def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
+    """
+    Ensures that local URLs (localhost/127.0.0.1) are translated to the correct
+    Docker host DNS/IP so the container can reach the host machine.
+    Also ensures a protocol prefix is present.
+    """
+    if not url:
+        return url
+    
+    # 1. Handle missing protocol
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+        
+    # 2. Translate localhost to Docker Host
+    # Use environment variable from .env, fallback to standard host.docker.internal
+    docker_host = os.environ.get("DOCKER_HOST_INTERNAL", "host.docker.internal")
+    
+    if "localhost" in url:
+        return url.replace("localhost", docker_host)
+    if "127.0.0.1" in url:
+        return url.replace("127.0.0.1", docker_host)
+        
+    return url
+
 def build_litellm_model(provider: str, model: Optional[str], azure_deployment: Optional[str]) -> str:
     if not model:
         model = ""

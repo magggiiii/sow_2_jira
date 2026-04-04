@@ -26,23 +26,10 @@ import sys
 UI_DIR = Path(__file__).parent
 sys.path.insert(0, str(UI_DIR.parent))
 
-def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
-    if not url:
-        return url
-    if "localhost" in url or "127.0.0.1" in url:
-        # In a Docker container, localhost is the container itself.
-        # We need host.docker.internal to reach the host machine.
-        return url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
-    return url
-sys.path.insert(0, str(UI_DIR.parent))
-
-# Load environment variables
-load_dotenv()
-
 from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
-from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base
+from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pipeline.observability import trace_span, sync_telemetry, logger
@@ -382,13 +369,16 @@ async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
     settings = settings_manager.load()
     provider_settings = settings.get("providers", {}).get(provider_id, {})
     
-    # Ensure Docker Host resolution for custom bases
-    provided_base = _ensure_docker_host(req.base_url)
-    stored_base = _ensure_docker_host(provider_settings.get("base_url"))
-    base_url = resolve_provider_base(provider_id, provided_base or stored_base)
+    # Resolve the base URL (uses provided if present, else stored, else registry default)
+    raw_base = resolve_provider_base(provider_id, req.base_url or provider_settings.get("base_url"))
+    
+    # Ensure Docker Host resolution for the FINAL string
+    base_url = _ensure_docker_host(raw_base)
     
     if not base_url:
         raise HTTPException(status_code=400, detail="Base URL is required for this provider")
+    
+    logger.info(f"› Attempting model discovery for {provider_id} at {base_url}")
     
     stored_key = None
     if provider_settings.get("api_key"):
@@ -482,9 +472,9 @@ def save_settings(req: SettingsConfig):
     provider = req.provider or settings.get("provider") or "openai"
     prev_provider = settings.get("provider")
     
-    # Ensure Docker Host resolution for custom bases
-    provided_base = _ensure_docker_host(req.base_url)
-    base_url = resolve_provider_base(provider, provided_base)
+    # Resolve and translate the base URL
+    raw_base = resolve_provider_base(provider, req.base_url)
+    base_url = _ensure_docker_host(raw_base)
 
     settings["provider"] = provider
     settings.setdefault("providers", {})

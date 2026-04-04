@@ -120,8 +120,8 @@ class LLMClient:
         logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
         
         @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=2, max=10),
+            stop=stop_after_attempt(10),
+            wait=wait_exponential(multiplier=2, min=4, max=60),
             retry=retry_if_exception_type((RateLimitError, APIConnectionError, Timeout, Exception)),
             reraise=True
         )

@@ -242,6 +242,9 @@ case "\$1" in
     "down"|"stop")
         cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml down
         ;;
+    "logs")
+        docker logs -f s2j-user-app
+        ;;
     *)
         echo "\"\$1\" unknown command."
         ;;
@@ -283,6 +286,9 @@ case "\$1" in
         ;;
     "down"|"stop")
         cd "\$SOW_HOME" && docker compose -f docker-compose.admin.yml down
+        ;;
+    "logs")
+        cd "\$SOW_HOME" && docker compose -f docker-compose.admin.yml logs -f
         ;;
     *)
         echo "\"\$1\" unknown command."

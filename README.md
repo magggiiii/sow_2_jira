@@ -82,6 +82,11 @@ This boots the **Milestone v1.0 Production Stack**:
 - **Main App Dashboard**: [http://localhost:8000](http://localhost:8000)
 - **Observability (Grafana)**: [http://localhost:3000](http://localhost:3000)
 
+**To view the live terminal logs of the app, run:**
+```bash
+s2j logs
+```
+
 ### 2. Run an Extraction
 Choose your preferred interface:
 - **Web UI:** Open [http://localhost:8000](http://localhost:8000) and upload your SOW PDF.

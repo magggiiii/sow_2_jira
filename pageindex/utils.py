@@ -48,21 +48,30 @@ def count_tokens(text, model=None):
     return litellm.token_counter(model=model, text=text)
 
 
+def _get_llm_timeout(model):
+    # Standard 60s for APIs, 300s for local Ollama models
+    if model and ("ollama" in model or "local" in model):
+        return 300
+    return 60
+
 def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None):
     max_retries = 10
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
+    timeout = _get_llm_timeout(model)
+    
     for i in range(max_retries):
         if stop_event and stop_event.is_set():
             logger.warning("› LLM completion cancelled by user")
             return ("", "error") if return_finish_reason else ""
         try:
-            with console.status("Waiting for LLM..."):
+            with console.status(f"Waiting for {model}..."):
+                logger.info(f"  ... waiting for {model} response (attempt {i+1}/{max_retries}, timeout: {timeout}s)")
                 with _suppress_litellm_output():
                     kwargs = {
                         "model": model,
                         "messages": messages,
                         "temperature": 0,
-                        "timeout": 60,
+                        "timeout": timeout,
                     }
                     
                     pc = current_provider_config.get()
@@ -81,7 +90,7 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
         except Exception as e:
             logger.error(f"✗ LLM error: {e}")
             if i < max_retries - 1:
-                time.sleep(1)
+                time.sleep(min(2 ** i, 10)) # Exponential backoff
             else:
                 logger.error('✗ Max retries reached for prompt')
                 if return_finish_reason:
@@ -93,18 +102,21 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
 async def llm_acompletion(model, prompt, stop_event=None):
     max_retries = 10
     messages = [{"role": "user", "content": prompt}]
+    timeout = _get_llm_timeout(model)
+    
     for i in range(max_retries):
         if stop_event and stop_event.is_set():
             logger.warning("› LLM completion cancelled by user")
             return ""
         try:
-            with console.status("Waiting for LLM..."):
+            with console.status(f"Waiting for {model}..."):
+                logger.info(f"  ... waiting for {model} response (attempt {i+1}/{max_retries}, timeout: {timeout}s)")
                 with _suppress_litellm_output():
                     kwargs = {
                         "model": model,
                         "messages": messages,
                         "temperature": 0,
-                        "timeout": 60,
+                        "timeout": timeout,
                     }
                     
                     pc = current_provider_config.get()
@@ -119,7 +131,7 @@ async def llm_acompletion(model, prompt, stop_event=None):
         except Exception as e:
             logger.error(f"✗ LLM error: {e}")
             if i < max_retries - 1:
-                await asyncio.sleep(1)
+                await asyncio.sleep(min(2 ** i, 10)) # Exponential backoff
             else:
                 logger.error('✗ Max retries reached for prompt')
                 return ""

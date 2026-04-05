@@ -220,7 +220,7 @@ cat <<EOF > "$SOW_HOME/s2j.sh"
 #!/bin/bash
 SOW_HOME="\$HOME/.sow_to_jira"
 case "\$1" in
-    "uninstall")
+    "uninstall"|"unistall")
         echo "⚠️  WARNING: This will delete ALL data, logs, and API configurations."
         read -p "Are you sure you want to completely remove SOW-to-Jira? [y/N] " confirm
         if [[ \$confirm == [yY] || \$confirm == [yY][eE][sS] ]]; then
@@ -236,8 +236,14 @@ case "\$1" in
             echo "Uninstall cancelled."
         fi
         ;;
-    *)
+    ""|"up"|"start")
         cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml up -d && $OPEN_CMD http://localhost:8000
+        ;;
+    "down"|"stop")
+        cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml down
+        ;;
+    *)
+        echo "Unknown command: '\$1'. Did you mean 's2j' or 's2j uninstall'?"
         ;;
 esac
 EOF
@@ -261,7 +267,7 @@ if [ -f "infra/admin/docker-compose.admin.yml" ]; then
 #!/bin/bash
 SOW_HOME="\$HOME/.sow_to_jira"
 case "\$1" in
-    "uninstall")
+    "uninstall"|"unistall")
         echo "⚠️  WARNING: This will delete the Argus Admin HQ stack."
         read -p "Are you sure? [y/N] " confirm
         if [[ \$confirm == [yY] || \$confirm == [yY][eE][sS] ]]; then
@@ -272,8 +278,14 @@ case "\$1" in
             echo "Cancelled."
         fi
         ;;
-    *)
+    ""|"up"|"start")
         cd "\$SOW_HOME" && docker compose -f docker-compose.admin.yml up -d
+        ;;
+    "down"|"stop")
+        cd "\$SOW_HOME" && docker compose -f docker-compose.admin.yml down
+        ;;
+    *)
+        echo "Unknown command: '\$1'. Did you mean 's2j-admin' or 's2j-admin uninstall'?"
         ;;
 esac
 EOF

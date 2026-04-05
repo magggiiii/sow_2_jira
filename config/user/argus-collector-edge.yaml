@@ -4,7 +4,6 @@
 extensions:
   file_storage:
     directory: /app/data/argus_storage
-    create_directory: true
     timeout: 10s
     fsync: true
 

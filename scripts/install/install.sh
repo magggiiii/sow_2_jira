@@ -201,10 +201,11 @@ if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION} &> /dev
 fi
 
 # 4. Artifact Provisioning
-# In a real scenario, these would be downloaded via curl from a central registry.
-# For this task, we assume they are copied from the current source or downloaded.
-RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
 echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
+
+# Ensure data and storage directories exist
+mkdir -p "$SOW_HOME/data/argus_storage"
+mkdir -p "$SOW_HOME/config/user"
 
 # (Simulated download for now, using local files if available)
 # Ensure we don't have lingering Docker-created directories instead of files

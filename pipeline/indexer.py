@@ -60,8 +60,13 @@ class DocumentIndexer:
             "if_add_node_text": "yes",
         })
 
-        def pageindex_cb(msg):
-            _report(msg)
+        def pageindex_cb(msg, progress=None):
+            if progress is not None:
+                # Map 0.0-1.0 from PageIndex to 0.05-0.25 of the total pipeline
+                mapped_progress = 0.05 + (progress * 0.20)
+                _report(msg, mapped_progress)
+            else:
+                _report(msg)
 
         result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id)
         

@@ -4,6 +4,7 @@
 extensions:
   file_storage:
     directory: /app/data/argus_storage
+    create_directory: true
     timeout: 10s
     fsync: true
 
@@ -19,18 +20,6 @@ processors:
   batch:
     send_batch_size: 1000
     timeout: 10s
-  
-  # Basic PII Redaction for Prompts (Regex based)
-  attributes/redaction:
-    actions:
-      - key: gen_ai.prompt
-        action: replace
-        pattern: '(?i)(api_key|password|secret|token)[:=]\s*[^\s]+'
-        value: '[REDACTED]'
-      - key: gen_ai.completion
-        action: replace
-        pattern: '(?i)(api_key|password|secret|token)[:=]\s*[^\s]+'
-        value: '[REDACTED]'
 
   # Ensure Instance ID is always present
   resource/instance_info:
@@ -41,7 +30,8 @@ processors:
 
 exporters:
   otlp/argus_hq:
-    endpoint: "${ARGUS_HQ_URL}" # e.g. https://argus-deck.loclx.io
+    # otlp exporter expects host:port (no scheme), e.g. argus-hq.example.com:443
+    endpoint: "${ARGUS_HQ_URL}"
     headers:
       Authorization: "Bearer ${ARGUS_BACKBONE_TOKEN}"
     sending_queue:
@@ -59,7 +49,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [attributes/redaction, resource/instance_info, batch]
+      processors: [resource/instance_info, batch]
       exporters: [otlp/argus_hq]
     metrics:
       receivers: [otlp]

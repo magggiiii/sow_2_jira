@@ -4,13 +4,16 @@ import os
 import json
 import re
 import time
-from typing import Union, Optional, Callable
+import datetime
+import random
+from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
+from typing import Union, Optional, Callable, Mapping
 import litellm
 from litellm import RateLimitError, APIConnectionError, Timeout
 import logging
 import contextlib
 import io
-from tenacity import retry, stop_never, wait_exponential, retry_if_exception_type, before_sleep_log
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
 from audit.logger import AuditLogger
@@ -19,6 +22,186 @@ from pipeline.telemetry import TelemetryEmitter
 from rich.console import Console
 
 console = Console()
+
+
+@dataclass
+class RetryHint:
+    source: str
+    wait_seconds: float
+    reason: str
+
+
+def _is_non_retryable_llm_error(err: Exception) -> bool:
+    text = str(err).lower()
+    markers = [
+        "invalid api key",
+        "invalid_api_key",
+        "token expired or incorrect",
+        "provider not provided",
+        "llm provider not provided",
+        "insufficient balance",
+        "no resource package",
+        "unauthorized",
+        "authentication",
+        "401",
+        "403",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def _is_cancelled_error(err: Exception) -> bool:
+    return "cancelled by user" in str(err).lower()
+
+
+def _sleep_with_cancel(total_s: float, stop_event) -> None:
+    end = time.monotonic() + total_s
+    while time.monotonic() < end:
+        if stop_event and stop_event.is_set():
+            raise RuntimeError("LLM call cancelled by user")
+        time.sleep(0.2)
+
+
+def _extract_headers(err: Exception) -> dict[str, str]:
+    sources = []
+    response = getattr(err, "response", None)
+    if response is not None:
+        sources.append(getattr(response, "headers", None))
+    sources.append(getattr(err, "headers", None))
+    sources.append(getattr(err, "response_headers", None))
+
+    headers: dict[str, str] = {}
+    for candidate in sources:
+        if isinstance(candidate, Mapping):
+            for k, v in candidate.items():
+                try:
+                    headers[str(k).lower()] = str(v)
+                except Exception:
+                    continue
+    return headers
+
+
+def _extract_status_code(err: Exception) -> Optional[int]:
+    code = getattr(err, "status_code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(err, "response", None)
+    response_code = getattr(response, "status_code", None)
+    if isinstance(response_code, int):
+        return response_code
+    match = re.search(r"\b(4\d\d|5\d\d)\b", str(err))
+    return int(match.group(1)) if match else None
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    raw = value.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        delta = dt.timestamp() - time.time()
+        return max(0.0, delta)
+    except Exception:
+        return None
+
+
+def extract_retry_hint(error_or_response: Exception) -> Optional[RetryHint]:
+    headers = _extract_headers(error_or_response)
+
+    retry_after = _parse_retry_after(headers.get("retry-after"))
+    if retry_after is not None:
+        return RetryHint(
+            source="retry-after-header",
+            wait_seconds=retry_after,
+            reason="Provider returned Retry-After header",
+        )
+
+    reset_keys = [
+        "x-ratelimit-reset",
+        "x-rate-limit-reset",
+        "ratelimit-reset",
+        "x-ratelimit-reset-requests",
+    ]
+    for key in reset_keys:
+        value = headers.get(key)
+        if not value:
+            continue
+        try:
+            parsed = float(value.strip())
+            if parsed > time.time() * 0.5:
+                wait_s = max(0.0, parsed - time.time())
+            else:
+                wait_s = max(0.0, parsed)
+            return RetryHint(
+                source="x-ratelimit-reset",
+                wait_seconds=wait_s,
+                reason=f"Provider returned {key}",
+            )
+        except Exception:
+            continue
+
+    text = str(error_or_response).lower()
+    msg_match = re.search(
+        r"(retry after|try again in)\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m)?",
+        text,
+    )
+    if msg_match:
+        base = float(msg_match.group(2))
+        unit = (msg_match.group(3) or "s").lower()
+        if unit.startswith("m"):
+            base *= 60.0
+        return RetryHint(
+            source="provider-message",
+            wait_seconds=max(0.0, base),
+            reason="Provider message contained retry delay hint",
+        )
+
+    return None
+
+
+def compute_wait_seconds(retry_hint: Optional[RetryHint], attempt: int, max_wait_s: float) -> float:
+    if retry_hint is not None:
+        return min(max(retry_hint.wait_seconds, 0.0), max_wait_s)
+    base = min(float(2 ** max(attempt - 1, 0)), max_wait_s)
+    jitter = random.uniform(0.0, 1.0)
+    return min(base + jitter, max_wait_s)
+
+
+def is_retryable_remote_error(err: Exception) -> bool:
+    if _is_non_retryable_llm_error(err) or _is_cancelled_error(err):
+        return False
+
+    status_code = _extract_status_code(err)
+    if status_code is not None:
+        if status_code in (429, 408):
+            return True
+        if 500 <= status_code <= 599:
+            return True
+        if status_code in (400, 401, 403, 404, 422):
+            return False
+
+    if isinstance(err, (RateLimitError, APIConnectionError, Timeout, TimeoutError, ConnectionError)):
+        return True
+
+    text = str(err).lower()
+    transient_markers = [
+        "rate limit",
+        "too many requests",
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "service unavailable",
+        "connection reset",
+        "try again",
+    ]
+    return any(marker in text for marker in transient_markers)
 
 def _configure_litellm_logging():
     logging.getLogger("litellm").setLevel(logging.CRITICAL)
@@ -122,96 +305,163 @@ class LLMClient:
         
         # Set a very long timeout for local models (Ollama)
         llm_timeout = 300 if self.mode == LLMMode.LOCAL else 60
+        remote_max_attempts = int(os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_MAX_ATTEMPTS", "8")))
+        remote_max_elapsed_s = int(os.getenv("LLM_REMOTE_MAX_ELAPSED_S", "300"))
+        remote_max_wait_s = int(os.getenv("LLM_REMOTE_MAX_WAIT_S", "300"))
+        is_local_ollama = self.mode == LLMMode.LOCAL or str(self.model).startswith("ollama/")
 
-        @retry(
-            stop=stop_never,
-            wait=wait_exponential(multiplier=2, min=4, max=60),
-            retry=retry_if_exception_type((RateLimitError, APIConnectionError, Timeout, Exception)),
-            before_sleep=before_sleep_log(logging.getLogger("pipeline"), logging.WARNING),
-            reraise=True
-        )
-        def _do_call():
-            if self.stop_event and self.stop_event.is_set():
-                logger.warning("› LLM call cancelled by user")
-                raise RuntimeError("LLM call cancelled by user")
-
-            start_time = time.time()
-            
-            # Update UI message
+        def _perform_one_call(attempt: int, start_time: float, local_wait: bool = False) -> str:
             if self.status_callback:
-                self.status_callback(f"Waiting for {self.model} response...")
+                if local_wait:
+                    self.status_callback(
+                        "Waiting for local Ollama model response. This can take several minutes depending on model size and your machine."
+                    )
+                else:
+                    self.status_callback(f"Waiting for {self.model} response...")
 
-            try:
-                kwargs = {
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "extra_headers": self.extra_headers,
-                }
-                
-                if self.provider_config.api_key:
-                    kwargs["api_key"] = self.provider_config.api_key
-                if self.provider_config.api_base:
-                    kwargs["api_base"] = self.provider_config.api_base
+            kwargs = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "extra_headers": self.extra_headers,
+            }
 
-                with console.status(f"Waiting for LLM ({self.model})..."):
+            if self.provider_config.api_key:
+                kwargs["api_key"] = self.provider_config.api_key
+            if self.provider_config.api_base:
+                kwargs["api_base"] = self.provider_config.api_base
+
+            with console.status(f"Waiting for LLM ({self.model})..."):
+                if local_wait:
+                    logger.info(
+                        f"  ... Waiting for local Ollama model response. This can take several minutes depending on model size and your machine. (attempt {attempt}, timeout window: {llm_timeout}s)"
+                    )
+                else:
                     logger.info(f"  ... waiting for {self.model} response (timeout: {llm_timeout}s)")
-                    with _suppress_litellm_output():
-                        response = litellm.completion(
-                            **kwargs,
-                            timeout=llm_timeout
-                        )
-                content = response.choices[0].message.content or ""
-                tokens = response.usage.total_tokens if response.usage else 0
-                prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
-                completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
+                with _suppress_litellm_output():
+                    response = litellm.completion(
+                        **kwargs,
+                        timeout=llm_timeout
+                    )
 
-                if span:
-                    span.set_attribute("tokens", tokens)
-                    span.set_attribute("response_preview", content[:1000])
-                
-                # Record Argus Metrics (only if sync enabled)
-                if SYNC_ENABLED:
-                    latency_s = time.time() - start_time
-                    llm_token_usage.add(prompt_tokens, {"gen_ai.token.type": "input", "argus.instance_id": INSTANCE_ID, "model": self.model})
-                    llm_token_usage.add(completion_tokens, {"gen_ai.token.type": "output", "argus.instance_id": INSTANCE_ID, "model": self.model})
-                    llm_operation_duration.record(latency_s, {"argus.instance_id": INSTANCE_ID, "model": self.model})
+            content = response.choices[0].message.content or ""
+            tokens = response.usage.total_tokens if response.usage else 0
+            prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
+            completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
 
-                logger.success(f"✓ LLM Response received ({tokens} tokens)")
-                self.telemetry.emit("llm.call", {
-                    "run_id": self.run_id,
-                    "agent": agent_name,
-                    "model": self.model,
-                    "tokens_in": prompt_tokens,
-                    "tokens_out": completion_tokens,
-                    "latency_ms": int((time.time() - start_time) * 1000),
-                    "success": True,
-                })
+            if span:
+                span.set_attribute("tokens", tokens)
+                span.set_attribute("response_preview", content[:1000])
 
-                self.audit_logger.log(
-                    run_id=self.run_id,
-                    agent=agent_name,
-                    node_id=node_id,
-                    action="LLM_CALL",
-                    task_id=None,
-                    detail=f"model={self.model} tokens={tokens}",
-                    llm_tokens_used=tokens,
-                    llm_model=self.model,
-                )
-                return content
+            # Record Argus Metrics (only if sync enabled)
+            if SYNC_ENABLED:
+                latency_s = time.time() - start_time
+                llm_token_usage.add(prompt_tokens, {"gen_ai.token.type": "input", "argus.instance_id": INSTANCE_ID, "model": self.model})
+                llm_token_usage.add(completion_tokens, {"gen_ai.token.type": "output", "argus.instance_id": INSTANCE_ID, "model": self.model})
+                llm_operation_duration.record(latency_s, {"argus.instance_id": INSTANCE_ID, "model": self.model})
 
-            except Exception as e:
-                logger.warning(f"› LLM attempt failed: {e}")
-                if self.status_callback:
-                    self.status_callback(f"LLM Error: Retrying {self.model}...")
-                raise e
+            logger.success(f"✓ LLM Response received ({tokens} tokens)")
+            self.telemetry.emit("llm.call", {
+                "run_id": self.run_id,
+                "agent": agent_name,
+                "model": self.model,
+                "tokens_in": prompt_tokens,
+                "tokens_out": completion_tokens,
+                "latency_ms": int((time.time() - start_time) * 1000),
+                "success": True,
+            })
+
+            self.audit_logger.log(
+                run_id=self.run_id,
+                agent=agent_name,
+                node_id=node_id,
+                action="LLM_CALL",
+                task_id=None,
+                detail=f"model={self.model} tokens={tokens}",
+                llm_tokens_used=tokens,
+                llm_model=self.model,
+            )
+            return content
 
         try:
-            return _do_call()
+            if is_local_ollama:
+                logger.info("› Local Ollama mode: unlimited wait enabled; cancel anytime.")
+                attempt = 0
+                while True:
+                    attempt += 1
+                    if self.stop_event and self.stop_event.is_set():
+                        logger.warning("› LLM call cancelled by user")
+                        raise RuntimeError("LLM call cancelled by user")
+                    start_time = time.time()
+                    try:
+                        return _perform_one_call(attempt=attempt, start_time=start_time, local_wait=True)
+                    except Exception as e:
+                        if _is_non_retryable_llm_error(e):
+                            logger.error(f"✗ Non-retryable LLM error: {e}")
+                            raise RuntimeError(f"Non-retryable LLM error: {e}") from e
+                        if _is_cancelled_error(e):
+                            raise
+                        logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
+                        if self.status_callback:
+                            self.status_callback(
+                                f"Waiting on local Ollama ({self.model})... still processing, retrying automatically."
+                            )
+                        _sleep_with_cancel(min(2 ** (attempt % 6), 30), self.stop_event)
+
+            start_total = time.monotonic()
+            attempt = 0
+            while True:
+                attempt += 1
+                if self.stop_event and self.stop_event.is_set():
+                    logger.warning("› LLM call cancelled by user")
+                    raise RuntimeError("LLM call cancelled by user")
+
+                start_time = time.time()
+                try:
+                    return _perform_one_call(attempt=attempt, start_time=start_time, local_wait=False)
+                except Exception as e:
+                    if _is_non_retryable_llm_error(e):
+                        logger.error(f"✗ Non-retryable LLM error: {e}")
+                        raise RuntimeError(f"Non-retryable LLM error: {e}") from e
+                    if _is_cancelled_error(e):
+                        raise
+                    if not is_retryable_remote_error(e):
+                        raise RuntimeError(f"LLM call failed: {e}") from e
+
+                    elapsed = time.monotonic() - start_total
+                    if attempt >= remote_max_attempts or elapsed >= remote_max_elapsed_s:
+                        raise RuntimeError(
+                            f"Remote LLM retry budget exhausted after {attempt} attempts and {int(elapsed)}s: {e}"
+                        ) from e
+
+                    retry_hint = extract_retry_hint(e)
+                    wait_s = compute_wait_seconds(retry_hint, attempt, remote_max_wait_s)
+                    wait_source = retry_hint.source if retry_hint else "fallback"
+                    wait_reason = retry_hint.reason if retry_hint else "Jittered exponential fallback"
+                    provider_name = (self.provider_config.provider if self.provider_config else "provider")
+
+                    logger.warning(
+                        f"› Remote retry #{attempt} for {self.model}: waiting {wait_s:.1f}s ({wait_source}) - {wait_reason}"
+                    )
+                    if self.status_callback:
+                        self.status_callback(
+                            f"Rate-limited by {provider_name}. Waiting {wait_s:.1f}s ({wait_source}): {wait_reason}"
+                        )
+
+                    self.telemetry.emit("llm.retry", {
+                        "run_id": self.run_id,
+                        "agent": agent_name,
+                        "model": self.model,
+                        "attempt": attempt,
+                        "wait_source": wait_source,
+                        "wait_seconds": float(round(wait_s, 2)),
+                        "error_class": type(e).__name__,
+                    })
+                    _sleep_with_cancel(wait_s, self.stop_event)
         except Exception as e:
             if span:
                 span.record_exception(e)

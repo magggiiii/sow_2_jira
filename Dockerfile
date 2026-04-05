@@ -15,7 +15,7 @@ RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.source="https://github.com/magggiiii/sow_2_jira"
-LABEL org.opencontainers.image.description="SOW-to-Jira Portable Extraction Engine. This v1.1.1 patch resolves the legacy Loki telemetry crash and routes events to the new Argus JSON audit log."
+LABEL org.opencontainers.image.description="SOW-to-Jira Portable Extraction Engine."
 
 WORKDIR /app
 

@@ -13,7 +13,8 @@ NC='\033[0m'
 
 # Argus Identity
 SOW_INSTANCE_ID="sow-$(date +%s)-${RANDOM}"
-ARGUS_HQ_URL="https://hz8nuthhmt.loclx.io"
+# otlp gRPC exporter expects host:port (no scheme)
+ARGUS_HQ_URL="hz8nuthhmt.loclx.io:443"
 ARGUS_BACKBONE_TOKEN="42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
 
 # Utility: Confirm with user
@@ -23,6 +24,27 @@ confirm() {
         [yY][eE][sS]|[yY]) true ;;
         *) false ;;
     esac
+}
+
+normalize_host_port() {
+    local value="$1"
+    value="${value#https://}"
+    value="${value#http://}"
+    if [[ "$value" != *:* ]]; then
+        value="${value}:443"
+    fi
+    echo "$value"
+}
+
+upsert_env_var() {
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    if grep -q "^${key}=" "$file"; then
+        sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file"
+    else
+        echo "${key}=${value}" >> "$file"
+    fi
 }
 
 # 1. OS Detection
@@ -61,6 +83,7 @@ SOW_HOME="$HOME/.sow_to_jira"
 mkdir -p "$SOW_HOME/config/user"
 mkdir -p "$SOW_HOME/config/admin"
 mkdir -p "$SOW_HOME/data"
+mkdir -p "$SOW_HOME/data/argus_storage"
 
 # 3. Docker Dependency Check
 if ! command -v docker &> /dev/null; then
@@ -155,6 +178,8 @@ else
     DOCKER_HOST_INTERNAL=${DOCKER_HOST_INTERNAL:-"host.docker.internal"}
 fi
 
+ARGUS_HQ_URL="$(normalize_host_port "$ARGUS_HQ_URL")"
+
 # 3.8 Fetch Latest Version
 if [ -f "VERSION" ]; then
     S2J_VERSION=$(cat VERSION | head -n 1 | tr -d '\r\n')
@@ -219,6 +244,11 @@ S2J_VERSION=$S2J_VERSION
 SOW_DATA_DIR=data
 EOF
 fi
+
+# Always refresh upgrade-sensitive runtime values on reinstall/update.
+upsert_env_var "$GLOBAL_ENV" "DOCKER_HOST_INTERNAL" "$DOCKER_HOST_INTERNAL"
+upsert_env_var "$GLOBAL_ENV" "S2J_VERSION" "$S2J_VERSION"
+upsert_env_var "$GLOBAL_ENV" "ARGUS_HQ_URL" "$ARGUS_HQ_URL"
 
 # 6. Shortcut Creation (Support for uninstall/update)
 cat <<EOF > "$SOW_HOME/s2j.sh"

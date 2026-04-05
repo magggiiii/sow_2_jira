@@ -1,16 +1,21 @@
 import litellm
 import logging
 import os
+import re
 from datetime import datetime
 import time
 import json
 import PyPDF2
 import copy
 import asyncio
+import random
 import pymupdf
 from io import BytesIO
 import contextlib
 import io
+from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
+from typing import Mapping, Optional
 from dotenv import load_dotenv
 load_dotenv()
 import logging
@@ -42,6 +47,194 @@ def _suppress_litellm_output():
 
 console = Console()
 
+
+def _is_non_retryable_llm_error(err: Exception) -> bool:
+    text = str(err).lower()
+    non_retryable_markers = [
+        "invalid api key",
+        "invalid_api_key",
+        "token expired or incorrect",
+        "provider not provided",
+        "llm provider not provided",
+        "insufficient balance",
+        "no resource package",
+        "authentication",
+        "unauthorized",
+        "401",
+        "403",
+    ]
+    return any(marker in text for marker in non_retryable_markers)
+
+
+@dataclass
+class RetryHint:
+    source: str
+    wait_seconds: float
+    reason: str
+
+
+def _is_local_model(model: Optional[str]) -> bool:
+    model_text = str(model or "").lower()
+    return model_text.startswith("ollama/") or "ollama" in model_text or "local" in model_text
+
+
+def _sleep_with_cancel(total_s: float, stop_event) -> None:
+    end = time.monotonic() + max(0.0, total_s)
+    while time.monotonic() < end:
+        if stop_event and stop_event.is_set():
+            raise RuntimeError("LLM completion cancelled by user")
+        time.sleep(0.2)
+
+
+async def _async_sleep_with_cancel(total_s: float, stop_event) -> None:
+    end = time.monotonic() + max(0.0, total_s)
+    while time.monotonic() < end:
+        if stop_event and stop_event.is_set():
+            raise RuntimeError("LLM completion cancelled by user")
+        await asyncio.sleep(0.2)
+
+
+def _extract_headers(err: Exception) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    response = getattr(err, "response", None)
+    candidates = [
+        getattr(response, "headers", None),
+        getattr(err, "headers", None),
+        getattr(err, "response_headers", None),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, Mapping):
+            for key, value in candidate.items():
+                try:
+                    headers[str(key).lower()] = str(value)
+                except Exception:
+                    continue
+    return headers
+
+
+def _extract_status_code(err: Exception) -> Optional[int]:
+    code = getattr(err, "status_code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(err, "response", None)
+    response_code = getattr(response, "status_code", None)
+    if isinstance(response_code, int):
+        return response_code
+    match = re.search(r"\b(4\d\d|5\d\d)\b", str(err))
+    return int(match.group(1)) if match else None
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    raw = value.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            delta = dt.timestamp() - time.time()
+        else:
+            delta = dt.timestamp() - time.time()
+        return max(0.0, delta)
+    except Exception:
+        return None
+
+
+def extract_retry_hint(error_or_response: Exception) -> Optional[RetryHint]:
+    headers = _extract_headers(error_or_response)
+
+    retry_after = _parse_retry_after(headers.get("retry-after"))
+    if retry_after is not None:
+        return RetryHint(
+            source="retry-after-header",
+            wait_seconds=retry_after,
+            reason="Provider returned Retry-After header",
+        )
+
+    reset_keys = [
+        "x-ratelimit-reset",
+        "x-rate-limit-reset",
+        "ratelimit-reset",
+        "x-ratelimit-reset-requests",
+    ]
+    for key in reset_keys:
+        value = headers.get(key)
+        if not value:
+            continue
+        try:
+            parsed = float(value.strip())
+            if parsed > time.time() * 0.5:
+                wait_s = max(0.0, parsed - time.time())
+            else:
+                wait_s = max(0.0, parsed)
+            return RetryHint(
+                source="x-ratelimit-reset",
+                wait_seconds=wait_s,
+                reason=f"Provider returned {key}",
+            )
+        except Exception:
+            continue
+
+    text = str(error_or_response).lower()
+    msg_match = re.search(
+        r"(retry after|try again in)\s+(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m)?",
+        text,
+    )
+    if msg_match:
+        wait_seconds = float(msg_match.group(2))
+        unit = (msg_match.group(3) or "s").lower()
+        if unit.startswith("m"):
+            wait_seconds *= 60.0
+        return RetryHint(
+            source="provider-message",
+            wait_seconds=max(0.0, wait_seconds),
+            reason="Provider message contained retry delay hint",
+        )
+
+    return None
+
+
+def compute_wait_seconds(retry_hint: Optional[RetryHint], attempt: int, max_wait_s: float) -> float:
+    if retry_hint is not None:
+        return min(max(retry_hint.wait_seconds, 0.0), max_wait_s)
+    base = min(float(2 ** max(attempt - 1, 0)), max_wait_s)
+    jitter = random.uniform(0.0, 1.0)
+    return min(base + jitter, max_wait_s)
+
+
+def is_retryable_remote_error(err: Exception) -> bool:
+    if _is_non_retryable_llm_error(err):
+        return False
+    if "cancelled by user" in str(err).lower():
+        return False
+
+    status_code = _extract_status_code(err)
+    if status_code is not None:
+        if status_code in (429, 408):
+            return True
+        if 500 <= status_code <= 599:
+            return True
+        if status_code in (400, 401, 403, 404, 422):
+            return False
+
+    text = str(err).lower()
+    retryable_markers = [
+        "rate limit",
+        "too many requests",
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "service unavailable",
+        "connection reset",
+        "try again",
+    ]
+    return any(marker in text for marker in retryable_markers)
+
 def count_tokens(text, model=None):
     if not text:
         return 0
@@ -57,91 +250,192 @@ def _get_llm_timeout(model):
 def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None, status_callback=None):
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     timeout = _get_llm_timeout(model)
+    is_local = _is_local_model(model)
+    max_attempts = int(os.getenv("PAGEINDEX_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("PAGEINDEX_LLM_MAX_ATTEMPTS", "8"))))
+    max_elapsed_s = int(os.getenv("PAGEINDEX_REMOTE_MAX_ELAPSED_S", os.getenv("LLM_REMOTE_MAX_ELAPSED_S", "300")))
+    max_wait_s = int(os.getenv("PAGEINDEX_REMOTE_MAX_WAIT_S", os.getenv("LLM_REMOTE_MAX_WAIT_S", "300")))
+    provider_name = current_provider_config.get().provider if current_provider_config.get() else "provider"
+
+    def _invoke(attempt: int):
+        msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
+        if is_local:
+            msg = "Waiting for local Ollama model response. This can take several minutes depending on model size and your machine."
+        if status_callback:
+            status_callback(msg)
+        with console.status(msg):
+            logger.info(f"  ... {msg}")
+            with _suppress_litellm_output():
+                kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0,
+                    "timeout": timeout,
+                }
+                pc = current_provider_config.get()
+                if pc:
+                    if pc.api_key:
+                        kwargs["api_key"] = pc.api_key
+                    if pc.api_base:
+                        kwargs["api_base"] = pc.api_base
+                return litellm.completion(**kwargs)
+
+    if is_local:
+        logger.info("› PageIndex local Ollama mode: unlimited wait enabled; cancel anytime.")
+        attempt = 0
+        while True:
+            attempt += 1
+            if stop_event and stop_event.is_set():
+                logger.warning("› LLM completion cancelled by user")
+                return ("", "error") if return_finish_reason else ""
+            try:
+                response = _invoke(attempt)
+                content = response.choices[0].message.content
+                if return_finish_reason:
+                    finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
+                    return content, finish_reason
+                return content
+            except Exception as e:
+                logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
+                if _is_non_retryable_llm_error(e):
+                    raise RuntimeError(f"Non-retryable LLM error: {e}") from e
+                if stop_event and stop_event.is_set():
+                    return ("", "error") if return_finish_reason else ""
+                if status_callback:
+                    status_callback(
+                        f"Waiting on local Ollama ({model})... still processing, retrying automatically."
+                    )
+                _sleep_with_cancel(min(2 ** (attempt % 6), 30), stop_event)
+
     attempt = 0
-    
+    start_total = time.monotonic()
     while True:
         attempt += 1
         if stop_event and stop_event.is_set():
             logger.warning("› LLM completion cancelled by user")
             return ("", "error") if return_finish_reason else ""
-        
         try:
-            msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
-            if status_callback:
-                status_callback(msg)
-            
-            with console.status(msg):
-                logger.info(f"  ... {msg}")
-                with _suppress_litellm_output():
-                    kwargs = {
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0,
-                        "timeout": timeout,
-                    }
-                    
-                    pc = current_provider_config.get()
-                    if pc:
-                        if pc.api_key:
-                            kwargs["api_key"] = pc.api_key
-                        if pc.api_base:
-                            kwargs["api_base"] = pc.api_base
-
-                    response = litellm.completion(**kwargs)
-            
+            response = _invoke(attempt)
             content = response.choices[0].message.content
             if return_finish_reason:
                 finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
                 return content, finish_reason
             return content
-            
         except Exception as e:
-            logger.error(f"✗ LLM error (Attempt {attempt}): {e}")
-            # Continuous retry with backoff
-            time.sleep(min(2 ** (attempt % 6), 30))
+            if _is_non_retryable_llm_error(e):
+                raise RuntimeError(f"Non-retryable LLM error: {e}") from e
+            if not is_retryable_remote_error(e):
+                raise RuntimeError(f"LLM completion failed: {e}") from e
+
+            elapsed = time.monotonic() - start_total
+            if attempt >= max_attempts or elapsed >= max_elapsed_s:
+                raise RuntimeError(
+                    f"Remote LLM retry budget exhausted after {attempt} attempts and {int(elapsed)}s: {e}"
+                ) from e
+
+            retry_hint = extract_retry_hint(e)
+            wait_s = compute_wait_seconds(retry_hint, attempt, max_wait_s)
+            wait_source = retry_hint.source if retry_hint else "fallback"
+            wait_reason = retry_hint.reason if retry_hint else "Jittered exponential fallback"
+            logger.warning(
+                f"› Remote retry #{attempt} for {model}: waiting {wait_s:.1f}s ({wait_source}) - {wait_reason}"
+            )
+            if status_callback:
+                status_callback(
+                    f"Rate-limited by {provider_name}. Waiting {wait_s:.1f}s ({wait_source}): {wait_reason}"
+                )
+            _sleep_with_cancel(wait_s, stop_event)
 
 
 
 async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
     messages = [{"role": "user", "content": prompt}]
     timeout = _get_llm_timeout(model)
+    is_local = _is_local_model(model)
+    max_attempts = int(os.getenv("PAGEINDEX_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("PAGEINDEX_LLM_MAX_ATTEMPTS", "8"))))
+    max_elapsed_s = int(os.getenv("PAGEINDEX_REMOTE_MAX_ELAPSED_S", os.getenv("LLM_REMOTE_MAX_ELAPSED_S", "300")))
+    max_wait_s = int(os.getenv("PAGEINDEX_REMOTE_MAX_WAIT_S", os.getenv("LLM_REMOTE_MAX_WAIT_S", "300")))
+    provider_name = current_provider_config.get().provider if current_provider_config.get() else "provider"
+
+    async def _invoke(attempt: int):
+        msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
+        if is_local:
+            msg = "Waiting for local Ollama model response. This can take several minutes depending on model size and your machine."
+        if status_callback:
+            status_callback(msg)
+        with console.status(msg):
+            logger.info(f"  ... {msg}")
+            with _suppress_litellm_output():
+                kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0,
+                    "timeout": timeout,
+                }
+                pc = current_provider_config.get()
+                if pc:
+                    if pc.api_key:
+                        kwargs["api_key"] = pc.api_key
+                    if pc.api_base:
+                        kwargs["api_base"] = pc.api_base
+                return await litellm.acompletion(**kwargs)
+
+    if is_local:
+        logger.info("› PageIndex local Ollama mode: unlimited wait enabled; cancel anytime.")
+        attempt = 0
+        while True:
+            attempt += 1
+            if stop_event and stop_event.is_set():
+                logger.warning("› LLM completion cancelled by user")
+                return ""
+            try:
+                response = await _invoke(attempt)
+                return response.choices[0].message.content
+            except Exception as e:
+                logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
+                if _is_non_retryable_llm_error(e):
+                    raise RuntimeError(f"Non-retryable LLM error: {e}") from e
+                if stop_event and stop_event.is_set():
+                    return ""
+                if status_callback:
+                    status_callback(
+                        f"Waiting on local Ollama ({model})... still processing, retrying automatically."
+                    )
+                await _async_sleep_with_cancel(min(2 ** (attempt % 6), 30), stop_event)
+
     attempt = 0
-    
+    start_total = time.monotonic()
     while True:
         attempt += 1
         if stop_event and stop_event.is_set():
             logger.warning("› LLM completion cancelled by user")
             return ""
-            
         try:
-            msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
-            if status_callback:
-                status_callback(msg)
-
-            with console.status(msg):
-                logger.info(f"  ... {msg}")
-                with _suppress_litellm_output():
-                    kwargs = {
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0,
-                        "timeout": timeout,
-                    }
-                    
-                    pc = current_provider_config.get()
-                    if pc:
-                        if pc.api_key:
-                            kwargs["api_key"] = pc.api_key
-                        if pc.api_base:
-                            kwargs["api_base"] = pc.api_base
-
-                    response = await litellm.acompletion(**kwargs)
+            response = await _invoke(attempt)
             return response.choices[0].message.content
-            
         except Exception as e:
-            logger.error(f"✗ LLM error (Attempt {attempt}): {e}")
-            # Continuous retry with backoff
-            await asyncio.sleep(min(2 ** (attempt % 6), 30))
+            if _is_non_retryable_llm_error(e):
+                raise RuntimeError(f"Non-retryable LLM error: {e}") from e
+            if not is_retryable_remote_error(e):
+                raise RuntimeError(f"Async LLM completion failed: {e}") from e
+
+            elapsed = time.monotonic() - start_total
+            if attempt >= max_attempts or elapsed >= max_elapsed_s:
+                raise RuntimeError(
+                    f"Remote LLM retry budget exhausted after {attempt} attempts and {int(elapsed)}s: {e}"
+                ) from e
+
+            retry_hint = extract_retry_hint(e)
+            wait_s = compute_wait_seconds(retry_hint, attempt, max_wait_s)
+            wait_source = retry_hint.source if retry_hint else "fallback"
+            wait_reason = retry_hint.reason if retry_hint else "Jittered exponential fallback"
+            logger.warning(
+                f"› Remote retry #{attempt} for {model}: waiting {wait_s:.1f}s ({wait_source}) - {wait_reason}"
+            )
+            if status_callback:
+                status_callback(
+                    f"Rate-limited by {provider_name}. Waiting {wait_s:.1f}s ({wait_source}): {wait_reason}"
+                )
+            await _async_sleep_with_cancel(wait_s, stop_event)
             
             
 def get_json_content(response):

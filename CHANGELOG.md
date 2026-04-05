@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.7] - 2026-04-05
+
+### Fixed
+- **App boot crash**: Corrected packaged PageIndex source so startup no longer fails with `SyntaxError` in `page_index.py`.
+- **Bifrost healthcheck**: Switched user-stack health probe from `wget --spider` (HEAD) to a GET request so `/health` no longer reports false-unhealthy.
+- **Argus Collector startup**:
+  - enabled `file_storage.create_directory` so spool path is created automatically
+  - removed unsupported `attributes` processor `replace` action from default config
+  - standardized `ARGUS_HQ_URL` format to `host:port` for OTLP gRPC exporter compatibility
+- **Installer upgrades**: `install.sh` now upserts `S2J_VERSION`, `DOCKER_HOST_INTERNAL`, and `ARGUS_HQ_URL` in existing `~/.sow_to_jira/.env` so reruns pick up new releases correctly.
+
 ## [1.1.0] - 2026-04-01
 
 ### Added

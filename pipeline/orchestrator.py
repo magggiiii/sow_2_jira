@@ -178,14 +178,17 @@ class PipelineOrchestrator:
                 task_bar = progress.add_task("[cyan]Extracting nodes...", total=len(nodes))
 
                 for i, node in enumerate(nodes):
+                    # Granular progress: 0.40 + (0.40 * (i / total))
+                    current_node_progress = 0.40 + (0.40 * (i / len(nodes)))
+                    
                     if self.stop_event.is_set():
                         logger.warning(f"› Pipeline cancelled by user at node {i}")
-                        self._update_status(3, "Cancelled by user", (0.40 + (0.40 * (i/len(nodes)))))
+                        self._update_status(3, "Cancelled by user", current_node_progress)
                         return all_closed_tasks
 
                     node_title = node.get('title', f"Node {i}")
                     progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
-                    self._update_status(3, f"Processing: {node_title[:50]}", 0.40 + (0.40 * (i/len(nodes))))
+                    self._update_status(3, f"Processing: {node_title[:50]}", current_node_progress)
 
                     with tracer.start_as_current_span(f"PROCESS_NODE_{node.get('node_id', 'none')}"):
                         # Get text for this node (PageIndex provides it directly)

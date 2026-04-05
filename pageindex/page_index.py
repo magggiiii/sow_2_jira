@@ -343,20 +343,23 @@ def toc_transformer(toc_content, model=None, stop_event=None):
 
 
 
-def find_toc_pages(start_page_index, page_list, opt, logger=None, stop_event=None):
+def find_toc_pages(start_page_index, page_list, opt, logger=None, stop_event=None, status_callback=None):
     logger = logger or logger_global
     logger.info("› find_toc_pages")
     last_page_is_yes = False
     toc_page_list = []
     i = start_page_index
-    
+
     while i < len(page_list):
         if stop_event and stop_event.is_set(): break
         # Only check beyond max_pages if we're still finding TOC pages
         if i >= opt.toc_check_page_num and not last_page_is_yes:
             break
-        detected_result = toc_detector_single_page(page_list[i][0],model=opt.model, stop_event=stop_event)
-        if detected_result == 'yes':
+
+        if status_callback:
+            status_callback(f"PageIndex: Checking page {i+1}/{len(page_list)} for TOC...", i/min(len(page_list), opt.toc_check_page_num + 5) * 0.3)
+
+        detected_result = toc_detector_single_page(page_list[i][0],model=opt.model, stop_event=stop_event)        if detected_result == 'yes':
             logger.info(f'Page {i} has toc')
             toc_page_list.append(i)
             last_page_is_yes = True
@@ -703,13 +706,17 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
 
 
 
-def check_toc(page_list, opt=None, stop_event=None):
-    toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt, stop_event=stop_event)
+def check_toc(page_list, opt=None, stop_event=None, status_callback=None):
+    toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt, stop_event=stop_event, status_callback=status_callback)
     if len(toc_page_list) == 0:
         logger.info("● no toc found")
         return {'toc_content': None, 'toc_page_list': [], 'page_index_given_in_toc': 'no'}
     else:
         logger.info("✓ toc found")
+
+        if status_callback:
+            status_callback("PageIndex: Extracting raw Table of Contents...", 0.4)
+
         toc_json = toc_extractor(page_list, toc_page_list, opt.model, stop_event=stop_event)
 
         if toc_json['page_index_given_in_toc'] == 'yes':
@@ -717,20 +724,20 @@ def check_toc(page_list, opt=None, stop_event=None):
             return {'toc_content': toc_json['toc_content'], 'toc_page_list': toc_page_list, 'page_index_given_in_toc': 'yes'}
         else:
             current_start_index = toc_page_list[-1] + 1
-            
-            while (toc_json['page_index_given_in_toc'] == 'no' and 
-                   current_start_index < len(page_list) and 
+
+            while (toc_json['page_index_given_in_toc'] == 'no' and
+                   current_start_index < len(page_list) and
                    current_start_index < opt.toc_check_page_num):
-                
+
                 if stop_event and stop_event.is_set(): break
 
                 additional_toc_pages = find_toc_pages(
                     start_page_index=current_start_index,
                     page_list=page_list,
                     opt=opt,
-                    stop_event=stop_event
+                    stop_event=stop_event,
+                    status_callback=status_callback
                 )
-                
                 if len(additional_toc_pages) == 0:
                     break
 
@@ -1046,9 +1053,9 @@ async def process_large_node_recursively(node, page_list, opt=None, logger=None,
     return node
 
 @trace_span("PAGEINDEX_TREE_PARSER", agent="PageIndex")
-async def tree_parser(page_list, opt, doc=None, logger=None, stop_event=None, run_id="none"):
+async def tree_parser(page_list, opt, doc=None, logger=None, stop_event=None, run_id="none", status_callback=None):
     logger = logger or logger_global
-    check_toc_result = check_toc(page_list, opt, stop_event=stop_event)
+    check_toc_result = check_toc(page_list, opt, stop_event=stop_event, status_callback=status_callback)
     if logger:
         logger.info(check_toc_result)
 
@@ -1113,8 +1120,8 @@ def page_index_main(doc, opt=None, status_callback=None, stop_event=None, run_id
     async def page_index_builder():
         if stop_event and stop_event.is_set(): return None
         if status_callback:
-            status_callback("PageIndex: Analyzing document structure...")
-        structure = await tree_parser(page_list, opt, doc=doc, logger=json_logger, stop_event=stop_event, run_id=run_id)
+            status_callback("PageIndex: Analyzing document structure...", 0.1)
+        structure = await tree_parser(page_list, opt, doc=doc, logger=json_logger, stop_event=stop_event, run_id=run_id, status_callback=status_callback)
         
         if stop_event and stop_event.is_set(): return None
 

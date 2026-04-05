@@ -148,9 +148,16 @@ class LLMClient:
                 if self.provider_config.api_base:
                     kwargs["api_base"] = self.provider_config.api_base
 
+                # Set a very long timeout for local models (Ollama)
+                llm_timeout = 300 if self.mode == LLMMode.LOCAL else 60
+                
                 with console.status(f"Waiting for LLM ({self.model})..."):
+                    logger.info(f"  ... waiting for {self.model} response (timeout: {llm_timeout}s)")
                     with _suppress_litellm_output():
-                        response = litellm.completion(**kwargs)
+                        response = litellm.completion(
+                            **kwargs,
+                            timeout=llm_timeout
+                        )
                 content = response.choices[0].message.content or ""
                 tokens = response.usage.total_tokens if response.usage else 0
                 prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0

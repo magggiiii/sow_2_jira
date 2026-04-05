@@ -311,13 +311,12 @@ class LLMClient:
         is_local_ollama = self.mode == LLMMode.LOCAL or str(self.model).startswith("ollama/")
 
         def _perform_one_call(attempt: int, start_time: float, local_wait: bool = False) -> str:
+            msg = f"Waiting for {self.model} (Attempt {attempt}, timeout: {llm_timeout}s)"
+            if local_wait:
+                msg = f"Waiting for local {self.model} (Attempt {attempt}, timeout: {llm_timeout}s) - this may take several minutes..."
+
             if self.status_callback:
-                if local_wait:
-                    self.status_callback(
-                        "Waiting for local Ollama model response. This can take several minutes depending on model size and your machine."
-                    )
-                else:
-                    self.status_callback(f"Waiting for {self.model} response...")
+                self.status_callback(msg)
 
             kwargs = {
                 "model": self.model,
@@ -335,13 +334,7 @@ class LLMClient:
             if self.provider_config.api_base:
                 kwargs["api_base"] = self.provider_config.api_base
 
-            with console.status(f"Waiting for LLM ({self.model})..."):
-                if local_wait:
-                    logger.info(
-                        f"  ... Waiting for local Ollama model response. This can take several minutes depending on model size and your machine. (attempt {attempt}, timeout window: {llm_timeout}s)"
-                    )
-                else:
-                    logger.info(f"  ... waiting for {self.model} response (timeout: {llm_timeout}s)")
+            with console.status(f"[bold cyan]{msg}[/]"):
                 with _suppress_litellm_output():
                     response = litellm.completion(
                         **kwargs,
@@ -408,7 +401,7 @@ class LLMClient:
                         logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
                         if self.status_callback:
                             self.status_callback(
-                                f"Waiting on local Ollama ({self.model})... still processing, retrying automatically."
+                                f"Waiting for local {self.model} (Attempt {attempt+1}, timeout: {llm_timeout}s) - still processing..."
                             )
                         _sleep_with_cancel(min(2 ** (attempt % 6), 30), self.stop_event)
 

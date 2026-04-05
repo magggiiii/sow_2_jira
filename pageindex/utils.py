@@ -259,11 +259,10 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
     def _invoke(attempt: int):
         msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
         if is_local:
-            msg = "Waiting for local Ollama model response. This can take several minutes depending on model size and your machine."
+            msg = f"Waiting for local {model} (Attempt {attempt}, timeout: {timeout}s) - this may take several minutes..."
         if status_callback:
             status_callback(msg)
-        with console.status(msg):
-            logger.info(f"  ... {msg}")
+        with console.status(f"[bold cyan]{msg}[/]"):
             with _suppress_litellm_output():
                 kwargs = {
                     "model": model,
@@ -302,7 +301,7 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
                     return ("", "error") if return_finish_reason else ""
                 if status_callback:
                     status_callback(
-                        f"Waiting on local Ollama ({model})... still processing, retrying automatically."
+                        f"Waiting for local {model} (Attempt {attempt+1}, timeout: {timeout}s) - still processing..."
                     )
                 _sleep_with_cancel(min(2 ** (attempt % 6), 30), stop_event)
 
@@ -359,11 +358,10 @@ async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
     async def _invoke(attempt: int):
         msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
         if is_local:
-            msg = "Waiting for local Ollama model response. This can take several minutes depending on model size and your machine."
+            msg = f"Waiting for local {model} (Attempt {attempt}, timeout: {timeout}s) - this may take several minutes..."
         if status_callback:
             status_callback(msg)
-        with console.status(msg):
-            logger.info(f"  ... {msg}")
+        with console.status(f"[bold cyan]{msg}[/]"):
             with _suppress_litellm_output():
                 kwargs = {
                     "model": model,
@@ -398,7 +396,7 @@ async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
                     return ""
                 if status_callback:
                     status_callback(
-                        f"Waiting on local Ollama ({model})... still processing, retrying automatically."
+                        f"Waiting for local {model} (Attempt {attempt+1}, timeout: {timeout}s) - still processing..."
                     )
                 await _async_sleep_with_cancel(min(2 ** (attempt % 6), 30), stop_event)
 

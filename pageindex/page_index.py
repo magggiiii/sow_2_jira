@@ -7,6 +7,10 @@ import re
 from .utils import *
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pipeline.observability import logger, trace_span
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn
+from rich.console import Console
+
+console = Console()
 logger_global = logger
 
 
@@ -341,32 +345,49 @@ def toc_transformer(toc_content, model=None, stop_event=None, status_callback=No
 
 def find_toc_pages(start_page_index, page_list, opt, logger=None, stop_event=None, status_callback=None):
     logger = logger or logger_global
-    logger.info("› find_toc_pages")
     last_page_is_yes = False
     toc_page_list = []
     i = start_page_index
 
-    while i < len(page_list):
-        if stop_event and stop_event.is_set(): break
-        # Only check beyond max_pages if we're still finding TOC pages
-        if i >= opt.toc_check_page_num and not last_page_is_yes:
-            break
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console
+    ) as progress:
+        total_pages = min(len(page_list), opt.toc_check_page_num + 5)
+        task_id = progress.add_task("[cyan]Scanning pages for TOC...", total=total_pages)
 
-        if status_callback:
-            status_callback(f"PageIndex: Checking page {i+1}/{len(page_list)} for TOC...", i/min(len(page_list), opt.toc_check_page_num + 5) * 0.3)
+        while i < len(page_list):
+            if stop_event and stop_event.is_set(): break
+            # Only check beyond max_pages if we're still finding TOC pages
+            if i >= opt.toc_check_page_num and not last_page_is_yes:
+                break
 
-        detected_result = toc_detector_single_page(page_list[i][0], model=opt.model, stop_event=stop_event, status_callback=status_callback)
-        if detected_result == 'yes':
-            logger.info(f'Page {i} has toc')
-            toc_page_list.append(i)
-            last_page_is_yes = True
-        elif detected_result == 'no' and last_page_is_yes:
-            logger.info(f'Found the last page with toc: {i-1}')
-            break
-        i += 1
+            progress.update(task_id, description=f"[cyan]Scanning page {i+1} for TOC...")
+            if status_callback:
+                status_callback(f"PageIndex: Checking page {i+1}/{len(page_list)} for TOC...", i/total_pages * 0.3)
+
+            detected_result = toc_detector_single_page(page_list[i][0], model=opt.model, stop_event=stop_event, status_callback=status_callback)
+            
+            if detected_result == 'yes':
+                logger.success(f'✓ Page {i+1} has TOC')
+                toc_page_list.append(i)
+                last_page_is_yes = True
+                # Dynamically extend progress bar if we found a TOC page late
+                if i >= total_pages - 1:
+                    progress.update(task_id, total=total_pages + 5)
+                    total_pages += 5
+            elif detected_result == 'no' and last_page_is_yes:
+                logger.success(f'✓ Found the last page with TOC: {i}')
+                break
+            
+            progress.advance(task_id)
+            i += 1
     
     if not toc_page_list and logger:
-        logger.info('No toc found')
+        logger.info('● No TOC found')
         
     return toc_page_list
 

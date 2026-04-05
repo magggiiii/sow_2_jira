@@ -156,9 +156,14 @@ else
 fi
 
 # 3.8 Fetch Latest Version
-RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
-echo -e "${BLUE}[INFO] Fetching latest version info...${NC}"
-S2J_VERSION=$(curl -fsSL "$RAW_URL/VERSION" | head -n 1 | tr -d '\r\n')
+if [ -f "VERSION" ]; then
+    S2J_VERSION=$(cat VERSION | head -n 1 | tr -d '\r\n')
+    echo -e "${BLUE}[INFO] Using local version: ${S2J_VERSION}${NC}"
+else
+    RAW_URL="https://raw.githubusercontent.com/magggiiii/sow_2_jira/main"
+    echo -e "${BLUE}[INFO] Fetching latest version info from GitHub...${NC}"
+    S2J_VERSION=$(curl -fsSL "$RAW_URL/VERSION" | head -n 1 | tr -d '\r\n')
+fi
 S2J_VERSION=${S2J_VERSION:-"latest"}
 echo -e "${BLUE}[INFO] Target Version: ${S2J_VERSION}${NC}"
 

@@ -971,7 +971,7 @@ async def verify_toc(page_list, list_result, start_index=1, N=None, model=None):
 
 
 ################### main process #########################################################
-async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=None, start_index=1, opt=None, logger=None):
+async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=None, start_index=1, opt=None, logger=None, stop_event=None):
     logger = logger or logger_global
     logger.debug(f"mode: {mode}")
     logger.debug(f"start_index: {start_index}")
@@ -1006,9 +1006,9 @@ async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=N
         return toc_with_page_number
     else:
         if mode == 'process_toc_with_page_numbers':
-            return await meta_processor(page_list, mode='process_toc_no_page_numbers', toc_content=toc_content, toc_page_list=toc_page_list, start_index=start_index, opt=opt, logger=logger)
+            return await meta_processor(page_list, mode='process_toc_no_page_numbers', toc_content=toc_content, toc_page_list=toc_page_list, start_index=start_index, opt=opt, logger=logger, stop_event=stop_event)
         elif mode == 'process_toc_no_page_numbers':
-            return await meta_processor(page_list, mode='process_no_toc', start_index=start_index, opt=opt, logger=logger)
+            return await meta_processor(page_list, mode='process_no_toc', start_index=start_index, opt=opt, logger=logger, stop_event=stop_event)
         else:
             raise Exception('Processing failed')
         
@@ -1023,7 +1023,7 @@ async def process_large_node_recursively(node, page_list, opt=None, logger=None,
     if node['end_index'] - node['start_index'] > opt.max_page_num_each_node and token_num >= opt.max_token_num_each_node:
         logger.debug(f"large node: {node['title']} start_index: {node['start_index']} end_index: {node['end_index']} token_num: {token_num}")
 
-        node_toc_tree = await meta_processor(node_page_list, mode='process_no_toc', start_index=node['start_index'], opt=opt, logger=logger)
+        node_toc_tree = await meta_processor(node_page_list, mode='process_no_toc', start_index=node['start_index'], opt=opt, logger=logger, stop_event=stop_event)
         node_toc_tree = await check_title_appearance_in_start_concurrent(node_toc_tree, page_list, model=opt.model, logger=logger)
         
         # Filter out items with None physical_index before post_processing

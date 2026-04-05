@@ -4,13 +4,13 @@ import os
 import json
 import re
 import time
-from typing import Union
+from typing import Union, Optional, Callable
 import litellm
 from litellm import RateLimitError, APIConnectionError, Timeout
 import logging
 import contextlib
 import io
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_never, wait_exponential, retry_if_exception_type, before_sleep_log
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
 from audit.logger import AuditLogger
@@ -64,12 +64,13 @@ class LLMClient:
     Ensures per-run configuration is used instead of global environment.
     """
 
-    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None):
+    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None, status_callback: Optional[Callable] = None):
         _configure_litellm_logging()
         self.mode = mode
         self.audit_logger = audit_logger
         self.run_id = run_id
         self.stop_event = stop_event
+        self.status_callback = status_callback
 
         # Use provided config or resolve from mode
         self.provider_config = provider_config or configure_litellm_for_mode(mode)
@@ -119,10 +120,14 @@ class LLMClient:
     def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id, span) -> str:
         logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
         
+        # Set a very long timeout for local models (Ollama)
+        llm_timeout = 300 if self.mode == LLMMode.LOCAL else 60
+
         @retry(
-            stop=stop_after_attempt(10),
+            stop=stop_never,
             wait=wait_exponential(multiplier=2, min=4, max=60),
             retry=retry_if_exception_type((RateLimitError, APIConnectionError, Timeout, Exception)),
+            before_sleep=before_sleep_log(logging.getLogger("pipeline"), logging.WARNING),
             reraise=True
         )
         def _do_call():
@@ -131,6 +136,11 @@ class LLMClient:
                 raise RuntimeError("LLM call cancelled by user")
 
             start_time = time.time()
+            
+            # Update UI message
+            if self.status_callback:
+                self.status_callback(f"Waiting for {self.model} response...")
+
             try:
                 kwargs = {
                     "model": self.model,
@@ -148,9 +158,6 @@ class LLMClient:
                 if self.provider_config.api_base:
                     kwargs["api_base"] = self.provider_config.api_base
 
-                # Set a very long timeout for local models (Ollama)
-                llm_timeout = 300 if self.mode == LLMMode.LOCAL else 60
-                
                 with console.status(f"Waiting for LLM ({self.model})..."):
                     logger.info(f"  ... waiting for {self.model} response (timeout: {llm_timeout}s)")
                     with _suppress_litellm_output():
@@ -199,6 +206,8 @@ class LLMClient:
 
             except Exception as e:
                 logger.warning(f"› LLM attempt failed: {e}")
+                if self.status_callback:
+                    self.status_callback(f"LLM Error: Retrying {self.model}...")
                 raise e
 
         try:
@@ -216,7 +225,7 @@ class LLMClient:
                 "latency_ms": 0,
                 "success": False,
             })
-            raise RuntimeError(f"LLM call failed after 3 attempts: {e}") from e
+            raise RuntimeError(f"LLM call failed: {e}") from e
 
     def complete_json(
         self,

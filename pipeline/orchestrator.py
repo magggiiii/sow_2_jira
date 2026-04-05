@@ -197,7 +197,8 @@ class PipelineOrchestrator:
                         # Extract (hierarchy-aware)
                         raw_tasks = self.extraction_agent.extract(
                             node, section_text, 
-                            hierarchy=self.config.jira_hierarchy.value
+                            hierarchy=self.config.jira_hierarchy.value,
+                            status_callback=lambda msg: self._update_status(3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress)
                         )
 
                         # State management

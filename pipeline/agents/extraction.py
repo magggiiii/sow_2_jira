@@ -114,7 +114,7 @@ class TaskExtractionAgent:
         self.confidence_threshold = confidence_threshold
         self.max_section_chars = max_section_chars
 
-    def extract(self, node: dict, section_text: str, hierarchy: str = "epic_task") -> list[RawTask]:
+    def extract(self, node: dict, section_text: str, hierarchy: str = "epic_task", status_callback=None) -> list[RawTask]:
         """
         Runs extraction on a single PageIndex node.
         Returns a list of RawTask objects.
@@ -122,6 +122,9 @@ class TaskExtractionAgent:
         Auto-adds LOW_CONFIDENCE flag to tasks below threshold.
         Returns empty list if section_text is too short (< 50 chars).
         """
+        # Set the callback on the LLM client temporarily for this call if provided
+        if status_callback and hasattr(self.llm, "status_callback"):
+            self.llm.status_callback = status_callback
         if len(section_text.strip()) < 50:
             self.audit.log(
                 run_id=self.run_id,

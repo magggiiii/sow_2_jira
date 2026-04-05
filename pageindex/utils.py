@@ -54,18 +54,24 @@ def _get_llm_timeout(model):
         return 300
     return 60
 
-def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None):
-    max_retries = 10
+def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None, status_callback=None):
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
     timeout = _get_llm_timeout(model)
+    attempt = 0
     
-    for i in range(max_retries):
+    while True:
+        attempt += 1
         if stop_event and stop_event.is_set():
             logger.warning("› LLM completion cancelled by user")
             return ("", "error") if return_finish_reason else ""
+        
         try:
-            with console.status(f"Waiting for {model}..."):
-                logger.info(f"  ... waiting for {model} response (attempt {i+1}/{max_retries}, timeout: {timeout}s)")
+            msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
+            if status_callback:
+                status_callback(msg)
+            
+            with console.status(msg):
+                logger.info(f"  ... {msg}")
                 with _suppress_litellm_output():
                     kwargs = {
                         "model": model,
@@ -82,35 +88,38 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
                             kwargs["api_base"] = pc.api_base
 
                     response = litellm.completion(**kwargs)
+            
             content = response.choices[0].message.content
             if return_finish_reason:
                 finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
                 return content, finish_reason
             return content
+            
         except Exception as e:
-            logger.error(f"✗ LLM error: {e}")
-            if i < max_retries - 1:
-                time.sleep(min(2 ** i, 10)) # Exponential backoff
-            else:
-                logger.error('✗ Max retries reached for prompt')
-                if return_finish_reason:
-                    return "", "error"
-                return ""
+            logger.error(f"✗ LLM error (Attempt {attempt}): {e}")
+            # Continuous retry with backoff
+            time.sleep(min(2 ** (attempt % 6), 30))
 
 
 
-async def llm_acompletion(model, prompt, stop_event=None):
-    max_retries = 10
+async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
     messages = [{"role": "user", "content": prompt}]
     timeout = _get_llm_timeout(model)
+    attempt = 0
     
-    for i in range(max_retries):
+    while True:
+        attempt += 1
         if stop_event and stop_event.is_set():
             logger.warning("› LLM completion cancelled by user")
             return ""
+            
         try:
-            with console.status(f"Waiting for {model}..."):
-                logger.info(f"  ... waiting for {model} response (attempt {i+1}/{max_retries}, timeout: {timeout}s)")
+            msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
+            if status_callback:
+                status_callback(msg)
+
+            with console.status(msg):
+                logger.info(f"  ... {msg}")
                 with _suppress_litellm_output():
                     kwargs = {
                         "model": model,
@@ -128,13 +137,11 @@ async def llm_acompletion(model, prompt, stop_event=None):
 
                     response = await litellm.acompletion(**kwargs)
             return response.choices[0].message.content
+            
         except Exception as e:
-            logger.error(f"✗ LLM error: {e}")
-            if i < max_retries - 1:
-                await asyncio.sleep(min(2 ** i, 10)) # Exponential backoff
-            else:
-                logger.error('✗ Max retries reached for prompt')
-                return ""
+            logger.error(f"✗ LLM error (Attempt {attempt}): {e}")
+            # Continuous retry with backoff
+            await asyncio.sleep(min(2 ** (attempt % 6), 30))
             
             
 def get_json_content(response):

@@ -21,6 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 7: Argus Global Observability Overhaul** - Redesign observability stack for reliable fleet-wide tracing and metrics. (Completed)
 - [x] **Phase 9: Argus Opt-Out & Local JSON Audit** - Default-off remote sync and permanent local JSON audit log. (Completed)
 - [x] **Phase 10: Ollama Automation & Universal API Robustness** - Automate local Ollama configuration and harden API connections with retry logic. (Completed)
+- [ ] **Phase 11: Evals Architecture** - Set up Langfuse datasets, Python evaluation scripts, and Langchain evals in the admin container.
 
 ## Phase Details
 
@@ -138,6 +139,20 @@ Plans:
 Plans:
 - [x] 10-01-OLLAMA-ROBUSTNESS-PLAN.md — Installer updates and `tenacity` retry implementation.
 
+### Phase 11: Evals Architecture
+**Goal**: Run offline evaluations in the admin container using Langfuse Python SDK and LangChain evaluation chains, scoring production traces without adding latency.
+**Depends on**: Phase 10
+**Requirements**: [EVAL-01, EVAL-02, EVAL-03]
+**Success Criteria** (what must be TRUE):
+  1. Langfuse dataset contains exhaustive ground-truth tickets for all features in the SOW.
+  2. Python evaluation script correctly executes LLM-as-a-judge precision/recall metrics.
+  3. Evaluation scores are successfully pushed back to Langfuse without affecting user container performance.
+**Plans**: 2 plans
+
+Plans:
+- [ ] 11-01-PLAN.md — Golden Dataset & Hierarchical Evaluator
+- [ ] 11-02-PLAN.md — Dataset Runner & Admin Integration
+
 ## Progress
 
 **Execution Order:**
@@ -154,3 +169,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9 →
 | 7. Argus Overhaul | 1/1 | Completed | 2026-04-02 |
 | 9. Argus Opt-Out | 1/1 | Completed | 2026-04-02 |
 | 10. Ollama Automation | 1/1 | Completed | 2026-04-03 |
+| 11. Evals Architecture | 0/2 | Pending | |

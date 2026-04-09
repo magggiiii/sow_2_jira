@@ -147,16 +147,17 @@ Plans:
   1. Langfuse dataset contains exhaustive ground-truth tickets for all features in the SOW.
   2. Python evaluation script correctly executes LLM-as-a-judge precision/recall metrics.
   3. Evaluation scores are successfully pushed back to Langfuse without affecting user container performance.
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
-- [ ] 11-01-PLAN.md — Golden Dataset & Hierarchical Evaluator
-- [ ] 11-02-PLAN.md — Dataset Runner & Admin Integration
+- [ ] 11-01-PLAN.md — Admin Evaluator Infrastructure & Local Model Config
+- [ ] 11-02-PLAN.md — Hierarchical Golden Dataset & Seeding
+- [ ] 11-03-PLAN.md — Hierarchical LLM-as-a-Judge & Scoring
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9 → 10
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9 → 10 → 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -169,4 +170,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 9 →
 | 7. Argus Overhaul | 1/1 | Completed | 2026-04-02 |
 | 9. Argus Opt-Out | 1/1 | Completed | 2026-04-02 |
 | 10. Ollama Automation | 1/1 | Completed | 2026-04-03 |
-| 11. Evals Architecture | 0/2 | Pending | |
+| 11. Evals Architecture | 0/3 | Pending | |

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.14] - 2026-04-10
+
+### Added
+- **Evals Architecture**: Context and setup for Langfuse dataset seed scripts (`scripts/seed_langfuse_dataset.py`, `scripts/seed_full_langfuse_dataset.py`) and admin evaluator container planning.
+
+### Fixed
+- **PageIndex JSON Parsing**: Resolved `AttributeError: 'dict' object has no attribute 'extend'` in `pageindex/page_index.py` during LLM parsing fallbacks when processing the table of contents.
+
 ## [1.1.7] - 2026-04-05
 
 ### Fixed

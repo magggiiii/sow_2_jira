@@ -302,7 +302,13 @@ def toc_transformer(toc_content, model=None, stop_event=None, status_callback=No
         return cleaned_response
     
     last_complete = get_json_content(last_complete)
+    loop_count = 0
     while not (if_complete == "yes" and finish_reason == "finished"):
+        loop_count += 1
+        if loop_count > 10:
+            logger.warning("toc_transformer loop exceeded 10 iterations, breaking to prevent infinite loop.")
+            break
+            
         if stop_event and stop_event.is_set(): break
         position = last_complete.rfind('}')
         if position != -1:
@@ -328,16 +334,20 @@ def toc_transformer(toc_content, model=None, stop_event=None, status_callback=No
 
         new_complete, finish_reason = llm_completion(model=model, prompt=prompt, return_finish_reason=True, stop_event=stop_event, status_callback=status_callback)
 
-        if new_complete.startswith('```json'):
-            new_complete =  get_json_content(new_complete)
-            last_complete = last_complete+new_complete
+        new_complete_clean = get_json_content(new_complete)
+        if new_complete_clean:
+            last_complete = last_complete + new_complete_clean
 
         if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model, stop_event=stop_event, status_callback=status_callback)
 
 
-    last_complete = json.loads(last_complete)
+    try:
+        last_complete = json.loads(last_complete)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse TOC JSON: {e}")
+        return []
 
-    cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
+    cleaned_response=convert_page_to_int(last_complete.get('table_of_contents', []))
     return cleaned_response
     
 
@@ -481,8 +491,13 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None, status_cal
     logger.debug(f'len(group_texts): {len(group_texts)}')
 
     toc_with_page_number= generate_toc_init(group_texts[0], model, status_callback=status_callback)
+    if isinstance(toc_with_page_number, dict):
+        toc_with_page_number = [toc_with_page_number] if toc_with_page_number else []
+
     for group_text in group_texts[1:]:
         toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model, status_callback=status_callback)    
+        if isinstance(toc_with_page_number_additional, dict):
+            toc_with_page_number_additional = [toc_with_page_number_additional] if toc_with_page_number_additional else []
         toc_with_page_number.extend(toc_with_page_number_additional)
     logger.debug(f'generate_toc: {toc_with_page_number}')
 
@@ -912,7 +927,14 @@ async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=N
         elif mode == 'process_toc_no_page_numbers':
             return await meta_processor(page_list, mode='process_no_toc', start_index=start_index, opt=opt, logger=logger, stop_event=stop_event, status_callback=status_callback)
         else:
-            raise Exception('Processing failed')
+            # If we fall all the way back to process_no_toc and it still fails (e.g. returns empty or low accuracy),
+            # we should just return whatever we managed to extract instead of crashing the pipeline.
+            if len(toc_with_page_number) > 0:
+                logger.warning('Fallback process_no_toc produced low accuracy, returning best effort.')
+                return toc_with_page_number
+            else:
+                logger.warning('Processing failed to extract any structure. Returning flat document node.')
+                return [{'title': 'Document', 'physical_index': 1, 'start_index': 1, 'end_index': len(page_list)}]
         
  
 @trace_span("PAGEINDEX_PROCESS_LARGE_NODE", agent="PageIndex")

@@ -33,7 +33,7 @@ results/
 .idea/
 
 # AI Planning & Workspace Artifacts
-.planning/
+#.planning/
 plans/
 .agents/
 GEMINI_*.md
@@ -45,4 +45,5 @@ impeccable_reference/
 htmlcov/
 
 # Cloned repos (deps now in requirements.txt)
-repo/
+repo/.github_token
+test_sow_tmp.pdf

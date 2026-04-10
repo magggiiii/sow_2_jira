@@ -303,20 +303,23 @@ class LLMClient:
     def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id, span) -> str:
         logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
         
-        # Set a very long timeout for local models (Ollama)
-        llm_timeout = 300 if self.mode == LLMMode.LOCAL else 60
         remote_max_attempts = int(os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_MAX_ATTEMPTS", "8")))
         remote_max_elapsed_s = int(os.getenv("LLM_REMOTE_MAX_ELAPSED_S", "300"))
         remote_max_wait_s = int(os.getenv("LLM_REMOTE_MAX_WAIT_S", "300"))
         is_local_ollama = self.mode == LLMMode.LOCAL or str(self.model).startswith("ollama/")
+        
+        # Set a very long timeout for local models (Ollama)
+        llm_timeout = 3600 if is_local_ollama else 60
 
         def _perform_one_call(attempt: int, start_time: float, local_wait: bool = False) -> str:
-            msg = f"Waiting for {self.model} (Attempt {attempt}, timeout: {llm_timeout}s)"
+            action_verb = "Retrying" if attempt > 1 else "Calling"
+            msg = f"{action_verb} {self.model} (Attempt {attempt}, timeout: {llm_timeout}s)"
             if local_wait:
-                msg = f"Waiting for local {self.model} (Attempt {attempt}, timeout: {llm_timeout}s) - this may take several minutes..."
+                msg = f"{action_verb} local {self.model} (Attempt {attempt}, timeout: {llm_timeout}s) - this may take several minutes..."
 
             if self.status_callback:
                 self.status_callback(msg)
+            logger.info(f"› System: Request sent to {self.model} (Attempt {attempt})")
 
             kwargs = {
                 "model": self.model,
@@ -334,12 +337,15 @@ class LLMClient:
             if self.provider_config.api_base:
                 kwargs["api_base"] = self.provider_config.api_base
 
+            req_start = time.time()
             with console.status(f"[bold cyan]{msg}[/]"):
                 with _suppress_litellm_output():
                     response = litellm.completion(
                         **kwargs,
                         timeout=llm_timeout
                     )
+            req_duration = time.time() - req_start
+            logger.info(f"✓ System: Response received from {self.model} in {req_duration:.2f} seconds")
 
             content = response.choices[0].message.content or ""
             tokens = response.usage.total_tokens if response.usage else 0
@@ -398,10 +404,10 @@ class LLMClient:
                             raise RuntimeError(f"Non-retryable LLM error: {e}") from e
                         if _is_cancelled_error(e):
                             raise
-                        logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
+                        logger.warning(f"› Local Ollama error: {e}. Retrying... (attempt {attempt})")
                         if self.status_callback:
                             self.status_callback(
-                                f"Waiting for local {self.model} (Attempt {attempt+1}, timeout: {llm_timeout}s) - still processing..."
+                                f"Waiting for local {self.model} (Attempt {attempt+1}, timeout: {llm_timeout}s) - {e}"
                             )
                         _sleep_with_cancel(min(2 ** (attempt % 6), 30), self.stop_event)
 

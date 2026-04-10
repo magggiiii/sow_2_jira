@@ -51,10 +51,22 @@ def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
 def build_litellm_model(provider: str, model: Optional[str], azure_deployment: Optional[str]) -> str:
     if not model:
         model = ""
-    if "/" in model:
+    
+    # If the model already starts with the correct provider prefix, return it as is
+    if provider == "ollama" and model.startswith("ollama/"):
         return model
+    if provider == "google" and (model.startswith("gemini/") or model.startswith("vertex_ai/")):
+        return model
+    if provider == "azure" and model.startswith("azure/"):
+        return model
+    
+    # Force provider prefix for Ollama even if name contains slashes (e.g. hf.co/...)
     if provider == "ollama":
         return f"ollama/{model}" if model else "ollama/"
+    
+    # For other providers, if it already has a slash, assume it's already prefixed
+    if "/" in model:
+        return model
     if provider == "google":
         return f"gemini/{model}" if model else "gemini/"
     if provider in {"anthropic", "cohere"}:

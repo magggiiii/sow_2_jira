@@ -10,6 +10,11 @@ providers:
     type: anthropic
     api_key: "env.ANTHROPIC_API_KEY"
 
+  - name: ollama-local
+    type: openai
+    base_url: "http://host.docker.internal:11434/v1"
+    api_key: "ollama"
+
 # Sample Virtual Keys for Remote Instances
 virtual_keys:
   - name: "42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
@@ -19,6 +24,15 @@ virtual_keys:
         - provider: "openai-hq"
     budget:
       limit: 10.00 # USD
+      reset: "monthly"
+
+  - name: "evaluator-key-local-ollama"
+    routing:
+      strategy: "priority"
+      targets:
+        - provider: "ollama-local"
+    budget:
+      limit: 1000.00 # local is free, but let's set a high budget
       reset: "monthly"
 
 governance:

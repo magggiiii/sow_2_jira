@@ -11,6 +11,8 @@ services:
       - "8081:8080" # API & Config UI (Shifted to 8081 to avoid conflict with local bifrost)
     environment:
       - ENABLE_GOVERNANCE=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - argus-network
     restart: always
@@ -104,6 +106,23 @@ services:
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    networks:
+      - argus-network
+    restart: always
+
+  # 7. Evaluator (Offline LLM-as-a-judge)
+  evaluator:
+    build:
+      context: ./evaluator
+    container_name: s2j-admin-evaluator
+    environment:
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-admin}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-admin}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - BIFROST_URL=http://bifrost:8080/v1
+    depends_on:
+      - langfuse
+      - bifrost
     networks:
       - argus-network
     restart: always

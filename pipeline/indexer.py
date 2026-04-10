@@ -42,10 +42,11 @@ class DocumentIndexer:
         Returns a flat list of nodes for the extraction pipeline.
         Stores the full tree in self.last_tree for hierarchical access.
         """
-        def _report(msg, progress=0.05):
+        def _report(msg, progress=0.05, log_to_terminal=True):
             if status_callback:
                 status_callback(1, msg, progress)
-            logger.info(f"› {msg}")
+            if log_to_terminal:
+                logger.info(f"› {msg}")
 
         _report(f"PageIndex: Parsing PDF {Path(pdf_path).name}...", 0.05)
 
@@ -61,12 +62,13 @@ class DocumentIndexer:
         })
 
         def pageindex_cb(msg, progress=None):
+            log_it = not msg.startswith("Waiting for")
             if progress is not None:
                 # Map 0.0-1.0 from PageIndex to 0.05-0.25 of the total pipeline
                 mapped_progress = 0.05 + (progress * 0.20)
-                _report(msg, mapped_progress)
+                _report(msg, mapped_progress, log_to_terminal=log_it)
             else:
-                _report(msg)
+                _report(msg, log_to_terminal=log_it)
 
         result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id)
         

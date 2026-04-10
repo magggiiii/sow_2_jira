@@ -194,10 +194,17 @@ echo -e "${BLUE}[INFO] Target Version: ${S2J_VERSION}${NC}"
 
 # Ensure registry access
 echo -e "${BLUE}[INFO] Verifying access to SOW-to-Jira images...${NC}"
-# Attempt a manifest check instead of a full pull to verify visibility
-if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION} &> /dev/null; then
-    echo -e "${YELLOW}[!] Note: Could not verify public image visibility for version ${S2J_VERSION}.${NC}"
-    echo -e "If the next step fails, please ensure the project registry at https://ghcr.io/magggiiii/sow_2_jira is set to 'Public'."
+if docker image inspect ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION} &> /dev/null; then
+    echo -e "${GREEN}✓ Local image found for version ${S2J_VERSION}.${NC}"
+elif [ -f "Dockerfile" ]; then
+    echo -e "${BLUE}[INFO] Local source detected. Building image locally...${NC}"
+    docker build -t ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION} .
+else
+    # Attempt a manifest check instead of a full pull to verify visibility
+    if ! docker manifest inspect ghcr.io/magggiiii/sow_2_jira:${S2J_VERSION} &> /dev/null; then
+        echo -e "${YELLOW}[!] Note: Could not verify public image visibility for version ${S2J_VERSION}.${NC}"
+        echo -e "If the next step fails, please ensure the project registry at https://ghcr.io/magggiiii/sow_2_jira is set to 'Public'."
+    fi
 fi
 
 # 4. Artifact Provisioning

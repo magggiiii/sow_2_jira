@@ -242,9 +242,9 @@ def count_tokens(text, model=None):
 
 
 def _get_llm_timeout(model):
-    # Standard 60s for APIs, 300s for local Ollama models
+    # Standard 60s for APIs, 3600s for local Ollama models
     if model and ("ollama" in model or "local" in model):
-        return 300
+        return 3600
     return 60
 
 def llm_completion(model, prompt, chat_history=None, return_finish_reason=False, stop_event=None, status_callback=None):
@@ -257,11 +257,14 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
     provider_name = current_provider_config.get().provider if current_provider_config.get() else "provider"
 
     def _invoke(attempt: int):
-        msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
+        action_verb = "Retrying" if attempt > 1 else "Calling"
+        msg = f"{action_verb} {model} (Attempt {attempt}, timeout: {timeout}s)"
         if is_local:
-            msg = f"Waiting for local {model} (Attempt {attempt}, timeout: {timeout}s) - this may take several minutes..."
+            msg = f"{action_verb} local {model} (Attempt {attempt}, timeout: {timeout}s) - this may take several minutes..."
         if status_callback:
             status_callback(msg)
+        logger.info(f"› System: Request sent to {model} (Attempt {attempt})")
+        req_start = time.time()
         with console.status(f"[bold cyan]{msg}[/]"):
             with _suppress_litellm_output():
                 kwargs = {
@@ -276,7 +279,10 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
                         kwargs["api_key"] = pc.api_key
                     if pc.api_base:
                         kwargs["api_base"] = pc.api_base
-                return litellm.completion(**kwargs)
+                response = litellm.completion(**kwargs)
+        req_duration = time.time() - req_start
+        logger.info(f"✓ System: Response received from {model} in {req_duration:.2f} seconds")
+        return response
 
     if is_local:
         logger.info("› PageIndex local Ollama mode: unlimited wait enabled; cancel anytime.")
@@ -294,14 +300,14 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False,
                     return content, finish_reason
                 return content
             except Exception as e:
-                logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
+                logger.warning(f"› Local Ollama error: {e}. Retrying... (attempt {attempt})")
                 if _is_non_retryable_llm_error(e):
                     raise RuntimeError(f"Non-retryable LLM error: {e}") from e
                 if stop_event and stop_event.is_set():
                     return ("", "error") if return_finish_reason else ""
                 if status_callback:
                     status_callback(
-                        f"Waiting for local {model} (Attempt {attempt+1}, timeout: {timeout}s) - still processing..."
+                        f"Waiting for local {model} (Attempt {attempt+1}, timeout: {timeout}s) - {e}"
                     )
                 _sleep_with_cancel(min(2 ** (attempt % 6), 30), stop_event)
 
@@ -356,11 +362,14 @@ async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
     provider_name = current_provider_config.get().provider if current_provider_config.get() else "provider"
 
     async def _invoke(attempt: int):
-        msg = f"Waiting for {model} (Attempt {attempt}, timeout: {timeout}s)"
+        action_verb = "Retrying" if attempt > 1 else "Calling"
+        msg = f"{action_verb} {model} (Attempt {attempt}, timeout: {timeout}s)"
         if is_local:
-            msg = f"Waiting for local {model} (Attempt {attempt}, timeout: {timeout}s) - this may take several minutes..."
+            msg = f"{action_verb} local {model} (Attempt {attempt}, timeout: {timeout}s) - this may take several minutes..."
         if status_callback:
             status_callback(msg)
+        logger.info(f"› System: Request sent to {model} (Attempt {attempt})")
+        req_start = time.time()
         with console.status(f"[bold cyan]{msg}[/]"):
             with _suppress_litellm_output():
                 kwargs = {
@@ -375,7 +384,10 @@ async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
                         kwargs["api_key"] = pc.api_key
                     if pc.api_base:
                         kwargs["api_base"] = pc.api_base
-                return await litellm.acompletion(**kwargs)
+                response = await litellm.acompletion(**kwargs)
+        req_duration = time.time() - req_start
+        logger.info(f"✓ System: Response received from {model} in {req_duration:.2f} seconds")
+        return response
 
     if is_local:
         logger.info("› PageIndex local Ollama mode: unlimited wait enabled; cancel anytime.")
@@ -389,14 +401,14 @@ async def llm_acompletion(model, prompt, stop_event=None, status_callback=None):
                 response = await _invoke(attempt)
                 return response.choices[0].message.content
             except Exception as e:
-                logger.warning(f"› Local Ollama still processing / unavailable. Retrying... (attempt {attempt})")
+                logger.warning(f"› Local Ollama error: {e}. Retrying... (attempt {attempt})")
                 if _is_non_retryable_llm_error(e):
                     raise RuntimeError(f"Non-retryable LLM error: {e}") from e
                 if stop_event and stop_event.is_set():
                     return ""
                 if status_callback:
                     status_callback(
-                        f"Waiting for local {model} (Attempt {attempt+1}, timeout: {timeout}s) - still processing..."
+                        f"Waiting for local {model} (Attempt {attempt+1}, timeout: {timeout}s) - {e}"
                     )
                 await _async_sleep_with_cancel(min(2 ** (attempt % 6), 30), stop_event)
 
@@ -668,6 +680,9 @@ class JsonLogger:
     def error(self, message, **kwargs):
         self.log("ERROR", message, **kwargs)
 
+    def warning(self, message, **kwargs):
+        self.log("WARNING", message, **kwargs)
+
     def debug(self, message, **kwargs):
         self.log("DEBUG", message, **kwargs)
 
@@ -743,6 +758,41 @@ def add_preface_if_needed(data):
     return data
 
 
+
+def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, overlap_page=1):
+    num_tokens = sum(token_lengths)
+
+    if num_tokens <= max_tokens:
+        # merge all pages into one text
+        page_text = "".join(page_contents)
+        return [page_text]
+
+    subsets = []
+    current_subset = []
+    current_token_count = 0
+
+    import math
+    expected_parts_num = math.ceil(num_tokens / max_tokens)
+    average_tokens_per_part = math.ceil(((num_tokens / expected_parts_num) + max_tokens) / 2)
+
+    for i, (page_content, page_tokens) in enumerate(zip(page_contents, token_lengths)):
+        if current_token_count + page_tokens > average_tokens_per_part:
+            subsets.append(''.join(current_subset))
+            # Start new subset from overlap if specified
+            overlap_start = max(i - overlap_page, 0)
+            current_subset = page_contents[overlap_start:i]
+            current_token_count = sum(token_lengths[overlap_start:i])
+
+        # Add current page to the subset
+        current_subset.append(page_content)
+        current_token_count += page_tokens
+
+    # Add the last subset if it contains any pages
+    if current_subset:
+        subsets.append(''.join(current_subset))
+
+    logger.debug(f"divide page_list to groups {len(subsets)}")
+    return subsets
 
 def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
     if pdf_parser == "PyPDF2":

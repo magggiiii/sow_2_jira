@@ -1,3 +1,77 @@
+# AGENTS.md
+
+> Mirror of `CLAUDE.md` for agent runtimes that look for `AGENTS.md` (e.g. Codex). When you update guidance, update both files — the prelude below should match `CLAUDE.md` verbatim. The GSD-managed blocks further down regenerate from `/gsd:map-codebase`.
+
+## Common Commands
+
+All commands assume the project venv created via `make install`. Use `venv/bin/<tool>` directly if your shell doesn't activate the venv.
+
+### Setup
+```bash
+make install          # Creates ./venv and installs requirements.txt
+make verify           # Smoke-tests that all critical imports resolve
+```
+
+### Run the application
+```bash
+make ui               # uvicorn ui.server:app --reload --port 8000  (web UI at :8000)
+make run              # python main.py  (interactive CLI wizard)
+```
+
+### Tests
+```bash
+venv/bin/pytest tests/                                    # Full pytest suite under tests/
+venv/bin/pytest tests/test_routing.py                     # Single test file
+venv/bin/pytest tests/test_routing.py::test_ensure_docker_host_with_localhost   # Single test
+venv/bin/pytest -k "hierarchical" -v                      # Filter by name expression
+venv/bin/python test_jira_api.py                          # Root-level ad-hoc Jira REST sanity script (requires JIRA_* env)
+venv/bin/python test_jira_mcp.py                          # Root-level Atlassian MCP sanity script
+```
+There is no project-wide lint/format tool configured (no `pyproject.toml`, `ruff.toml`, `.flake8`). Match the existing code style of the file you are editing.
+
+### Docker / stack
+```bash
+docker build -t sow-to-jira:test .                        # Build production image (Gunicorn + Uvicorn worker on :8000)
+s2j                                                       # Launch full stack via installed shortcut (see README)
+s2j logs                                                  # Tail container logs
+bash scripts/prod-check.sh                                # Verify non-root user, healthchecks, infra config
+```
+Note: the GSD-managed Technology Stack section below references `docker-compose.yml`, `docker-compose.ollama.yml`, and `docker-compose.bifrost.yml`. These now live under `infra/` and `scripts/install/`, not the repo root — search there before assuming they're missing.
+
+### Running a single pipeline end-to-end
+The pipeline is driven by `PipelineOrchestrator` (`pipeline/orchestrator.py`). Both `main.py` (CLI) and `ui/server.py` (background task in `run_pipeline_task`) instantiate it with a `RunConfig` (`models/schemas.py`). To debug a stage in isolation, construct `RunConfig` manually and call `PipelineOrchestrator(...).run()` — outputs land in `data/sessions/<run_id>/pipeline_output.json` and the audit log at `data/audit.db`.
+
+## Architecture Quick-Reference
+
+The detailed GSD-managed sections below are authoritative; this is the 30-second orientation:
+
+- **Two surfaces, one engine.** `main.py` (CLI) and `ui/server.py` (FastAPI) both call into `PipelineOrchestrator.run()`. Anything pipeline-related lives in `pipeline/`.
+- **Run lifecycle.** Orchestrator sequences: index PDF (`pipeline/indexer.py` → vendored `pageindex/`) → extract tasks per node (`pipeline/agents/extraction.py`) → state transitions (`pipeline/agents/state.py`) → dedup (`pipeline/agents/deduplication.py`, vector + LLM) → gap recovery (`pipeline/agents/gap_recovery.py`) → checkpoint to `data/sessions/<run_id>/`.
+- **LLM routing.** All LLM calls go through `pipeline/llm_client.py` → `pipeline/llm_router.py` (`configure_litellm_for_mode`). Provider/model selection comes from encrypted `data/settings.json` (Fernet via `data/.keyfile`) with `LITELLM_*` env vars as fallback. Never call `litellm` directly from agents.
+- **Jira push.** Two clients in `integrations/`: `jira_client.py` (direct REST via `jira` SDK) and `jira_mcp_client.py` (Atlassian remote MCP). The UI selects between them. `JiraPushResult` (`models/schemas.py`) is the contract.
+- **Schemas are the contract.** `models/schemas.py` (Pydantic v2) defines `RunConfig`, `RawTask`, `ManagedTask`, `JiraPushResult`, `TaskStatus`, `TaskFlag`, `LLMMode`, `JiraHierarchy`. Cross-layer data flows as these types — don't pass raw dicts.
+- **Observability is centralized.** `pipeline/observability.py` configures Loguru + OpenTelemetry (OTLP → Tempo/Loki via Bifrost). Use `logger.contextualize(agent=..., run_id=...)` for correlated tracing. `audit/logger.py` writes a separate append-only SQLite trail at `data/audit.db`.
+- **Settings are encrypted at rest.** Don't write plaintext credentials to `data/settings.json`. Loading/saving goes through helpers in `ui/server.py` (`_load_settings`, `_save_settings`) and `pipeline/llm_router.py`.
+
+## Repository Layout (only non-obvious bits)
+
+- `pageindex/` — Vendored fork of VectifyAI PageIndex (not a pip dep). Treat as third-party; only `pipeline/indexer.py` should call into it.
+- `tests/` — Real pytest suite. The `test_*.py` files at repo root (`test_jira_api.py`, `test_jira_mcp.py`, `test_discovery.py`, `test_settings.py`) are standalone scripts, not part of the pytest run.
+- `scripts/install/install.sh` — Public installer downloaded by `curl | bash` (see README). Do not break its CLI surface.
+- `scripts/prod-check.sh`, `scripts/verify-telemetry.py` — Production-integrity checks.
+- `infra/` — Argus observability stack (Grafana, Loki, Tempo, Langfuse, Bifrost).
+- `config/sow_config.json` — Jira issue type defaults and extraction/indexing caps (not env-driven).
+- `pageindex/config.yaml` — PageIndex token/page limits and default dynamic model.
+- `CLAUDE.md` / `GEMINI.md` — Mirrors of this file for other agent runtimes; keep in sync if you change shared guidance.
+
+## Caveats & Gotchas
+
+- **Ollama in Docker:** From inside the container, Ollama at `localhost:11434` won't resolve. Use `http://host.docker.internal:11434` and ensure Ollama listens on `0.0.0.0` (`launchctl setenv OLLAMA_HOST "0.0.0.0"` on macOS, then restart the app).
+- **The GSD blocks below are auto-generated** by `/gsd:map-codebase`. Don't hand-edit them — regenerate. Some bullets are stale (e.g., test framework, compose file locations).
+- **GSD workflow guard:** The user prefers edits be initiated through a GSD command (`/gsd:quick`, `/gsd:debug`, `/gsd:execute-phase`). Treat the trailing GSD Workflow Enforcement block as the durable instruction — don't bypass unless explicitly asked.
+
+---
+
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 

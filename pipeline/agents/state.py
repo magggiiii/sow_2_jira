@@ -45,6 +45,9 @@ class TaskStateAgent:
             page_start=node["page_start"],
             page_end=node["page_end"],
             snippet="",
+            parent_id=node.get("parent_id"),
+            parent_chain=list(node.get("parent_chain") or []),
+            depth=int(node.get("depth") or 0),
         )
 
         newly_closed: list[ManagedTask] = []

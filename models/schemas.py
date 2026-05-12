@@ -51,6 +51,12 @@ class LLMMode(str, Enum):
 
 
 class JiraHierarchy(str, Enum):
+    """
+    Output shape for Jira push. Container grouping is structural — driven by
+    SourceRef.parent_id (and parent_chain for multi-level rollup) rather than
+    by section_title strings. STORY_SUBTASK can honor a real 3-level structure
+    when the PageIndex tree has at least two levels of depth.
+    """
     FLAT = "flat"                    # All Tasks, no parent
     EPIC_TASK = "epic_task"          # SOW sections → Epics, items → Tasks
     STORY_SUBTASK = "story_subtask"  # SOW sections → Stories, items → Sub-tasks
@@ -64,6 +70,9 @@ class SourceRef(BaseModel):
     page_start: int                 # 1-indexed
     page_end: int                   # 1-indexed
     snippet: str = ""               # Short verbatim snippet from SOW (max 300 chars)
+    parent_id: Optional[str] = None             # Immediate parent node_id (None for root sections)
+    parent_chain: list[str] = Field(default_factory=list)  # Ancestor node_ids, root first
+    depth: int = 0                              # 0 for root; matches PageIndex tree depth
 
 
 # ─── Raw Extraction Output (from LLM) ────────────────────────────────────────

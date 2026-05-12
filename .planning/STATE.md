@@ -87,6 +87,7 @@ Recent decisions affecting current work:
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260512-001 | First-class OpenRouter provider support (attribution headers, .env example, README, UI helper, smoke script) | 2026-05-12 | 3ed1ae7 | [260512-001-openrouter-first-class](./quick/260512-001-openrouter-first-class/) |
+| 260512-002 | Intelligence layer enhancement: 6-improvement program (hierarchy, structured ACs, semantic coverage, classifier+few-shot, self-critique, cross-run dedup) — 62 new tests, 75/75 full suite green | 2026-05-12 | 5e6b269 | [260512-002-intelligence-layer-enhancement](./quick/260512-002-intelligence-layer-enhancement/) |
 
 ## Session Continuity
 

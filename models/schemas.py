@@ -3,9 +3,9 @@
 from __future__ import annotations
 import contextvars
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID, uuid4
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import datetime
 
 
@@ -62,6 +62,66 @@ class JiraHierarchy(str, Enum):
     STORY_SUBTASK = "story_subtask"  # SOW sections → Stories, items → Sub-tasks
 
 
+class AcceptanceCriterionType(str, Enum):
+    FUNCTIONAL = "functional"
+    NONFUNCTIONAL = "nonfunctional"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+    USABILITY = "usability"
+
+
+# ─── Acceptance Criterion & Dependency ────────────────────────────────────────
+
+class AcceptanceCriterion(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    condition: str                                   # The testable statement
+    type: AcceptanceCriterionType = AcceptanceCriterionType.FUNCTIONAL
+    verified_by: str = "test"                        # test | review | demo | inspection
+
+
+class TaskDependency(BaseModel):
+    target_ref: str                                  # Sibling task title or external ref
+    reason: str                                      # One-line why
+    kind: str = "blocks"                             # blocks | relates_to | duplicates
+
+
+def normalize_acceptance_criteria(
+    items: Optional[list],
+) -> Optional[list[AcceptanceCriterion]]:
+    """
+    Convert a mixed list of strings, dicts, and AcceptanceCriterion objects
+    into a uniform list[AcceptanceCriterion]. This is the backward-compat seam:
+    legacy LLM output and old `pipeline_output.json` checkpoints used plain
+    strings; new output is structured.
+
+    Strings become AcceptanceCriterion(condition=<string>) with default
+    type=FUNCTIONAL and verified_by="test". Dicts get parsed via Pydantic.
+    None/empty returns None.
+    """
+    if not items:
+        return None
+    out: list[AcceptanceCriterion] = []
+    for item in items:
+        if isinstance(item, AcceptanceCriterion):
+            out.append(item)
+        elif isinstance(item, str):
+            condition = item.strip()
+            if not condition:
+                continue
+            out.append(AcceptanceCriterion(condition=condition))
+        elif isinstance(item, dict):
+            try:
+                out.append(AcceptanceCriterion(**item))
+            except Exception:
+                # If a dict can't be parsed, fall back to stringifying its
+                # condition field if present; otherwise skip.
+                cond = item.get("condition") if isinstance(item, dict) else None
+                if cond:
+                    out.append(AcceptanceCriterion(condition=str(cond)))
+        # Anything else (None, numbers, etc.) is silently dropped.
+    return out or None
+
+
 # ─── Source Reference ─────────────────────────────────────────────────────────
 
 class SourceRef(BaseModel):
@@ -81,7 +141,10 @@ class RawTask(BaseModel):
     """Exactly what the Task Extraction Agent LLM returns per task."""
     title: str
     short_description: str
-    acceptance_criteria: Optional[list[str]] = None
+    # Accepts both the new structured form (AcceptanceCriterion/dict) and
+    # legacy plain strings for backward compat. ExtractionAgent normalizes
+    # this to list[AcceptanceCriterion] before handing the task downstream.
+    acceptance_criteria: Optional[list[Union[AcceptanceCriterion, str]]] = None
     use_case: Optional[str] = None
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
@@ -89,6 +152,7 @@ class RawTask(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     flags: list[str] = Field(default_factory=list)
     continues_to_next: bool = False
+    dependencies: list[TaskDependency] = Field(default_factory=list)
 
 
 # ─── Managed Task (after State Agent assigns ID) ──────────────────────────────
@@ -98,7 +162,9 @@ class ManagedTask(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     title: str
     short_description: str
-    acceptance_criteria: Optional[list[str]] = None
+    # Always structured downstream of TaskStateAgent. The field validator
+    # below normalizes legacy string entries so old checkpoints still load.
+    acceptance_criteria: Optional[list[AcceptanceCriterion]] = None
     use_case: Optional[str] = None
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
@@ -109,8 +175,23 @@ class ManagedTask(BaseModel):
     status: TaskStatus = TaskStatus.OPEN
     source_refs: list[SourceRef] = Field(default_factory=list)  # Can span multiple nodes
     merged_from: list[UUID] = Field(default_factory=list)       # IDs merged into this task
+    dependencies: list[TaskDependency] = Field(default_factory=list)
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
     updated_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def _normalize_ac(cls, v):
+        """
+        Lets legacy `pipeline_output.json` files with plain string ACs
+        (e.g. `["[ ] foo"]`) deserialize cleanly. Returns the structured
+        form or None.
+        """
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return normalize_acceptance_criteria(v)
+        return v
 
 
 # ─── Run Configuration (from startup wizard) ─────────────────────────────────

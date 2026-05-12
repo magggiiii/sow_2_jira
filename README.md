@@ -43,6 +43,15 @@ curl -fsSL "https://raw.githubusercontent.com/magggiiii/sow_2_jira/main/scripts/
     - *Ollama Users:* Use `http://host.docker.internal:11434` as the API Base.
     - **Crucial:** You must configure Ollama to listen on all interfaces so Docker can reach it. On macOS, run `launchctl setenv OLLAMA_HOST "0.0.0.0"` in your terminal, then completely quit and restart the Ollama app.
 
+#### Using OpenRouter
+[OpenRouter](https://openrouter.ai) gives you access to 300+ models (OpenAI, Anthropic, Google, Meta, Mistral, and more) behind a single API key — handy when you want to compare providers without juggling credentials.
+
+1.  In **Settings**, select **`openrouter`** as the provider.
+2.  Paste your key (`sk-or-...`) into the **API Key** field. Settings are Fernet-encrypted at rest.
+3.  Click **Fetch Models** — the dropdown will populate with every model your key has access to.
+4.  Pick a model (full IDs at [openrouter.ai/models](https://openrouter.ai/models), e.g. `anthropic/claude-3.5-sonnet`, `openai/gpt-4o`, `meta-llama/llama-3.1-405b`).
+5.  Save. Your runs will appear on the OpenRouter dashboard under the app name `SOW-to-Jira` (override via `OPENROUTER_APP_NAME` / `OPENROUTER_REFERER` env vars).
+
 ---
 
 ## 🏗 For Developers: Manual Distribution (Test Users)

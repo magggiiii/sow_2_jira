@@ -201,8 +201,9 @@
                             <button class="btn btn-outline" id="btnFetchModels">Fetch Models</button>
                             <span id="modelFetchStatus" class="metric-label"></span>
                         </div>
-                        <small id="openrouterModelHelp" class="metric-label" style="display: none; margin-top: var(--space-8);">
-                            Browse the full catalogue at <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.
+                        <small id="openrouterModelHelp" class="metric-label" style="display: none; margin-top: var(--space-8); line-height: 1.5;">
+                            <div>Recommended for SOW extraction: <code style="background: var(--surface-2); padding: 0 4px; border-radius: 3px;">google/gemini-2.5-flash</code> — best quality-per-dollar on this pipeline (~$0.49/run). <button type="button" id="btnUseRecommendedModel" class="btn btn-outline" style="padding: 2px 8px; font-size: 0.85em; margin-left: 4px;">Use it</button></div>
+                            <div style="margin-top: 4px;">Browse the full catalogue at <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.</div>
                         </small>
                     </div>
 

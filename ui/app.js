@@ -284,6 +284,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (azureApiVersion) azureApiVersion.addEventListener('input', scheduleModelFetch);
     if (btnFetchModels) btnFetchModels.addEventListener('click', fetchModels);
 
+    // "Use it" — set the OpenRouter recommended model directly. Works whether
+    // the dropdown has been fetched or is empty; appends the option if missing.
+    const btnUseRecommended = getEl('btnUseRecommendedModel');
+    if (btnUseRecommended) {
+        btnUseRecommended.addEventListener('click', () => {
+            const recommended = 'google/gemini-2.5-flash';
+            if (!providerModelSelect) return;
+            const existing = Array.from(providerModelSelect.options).find(o => o.value === recommended);
+            if (!existing) {
+                const opt = document.createElement('option');
+                opt.value = recommended;
+                opt.textContent = recommended;
+                providerModelSelect.appendChild(opt);
+            }
+            providerModelSelect.value = recommended;
+            if (modelFetchStatus) {
+                modelFetchStatus.textContent = 'Set to recommended';
+                modelFetchStatus.style.color = 'var(--success, #4caf50)';
+            }
+        });
+    }
+
     // --- Upload Logic ---
     if (uploadZone && pdfUpload) {
         uploadZone.addEventListener('click', (e) => {

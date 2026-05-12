@@ -1,7 +1,9 @@
 # integrations/jira_client.py
 
+import json
 import os
-from typing import Union
+from pathlib import Path
+from typing import Optional, Union
 from jira import JIRA
 from models.schemas import ManagedTask, JiraHierarchy, JiraPushResult, TaskFlag
 from audit.logger import AuditLogger
@@ -9,21 +11,64 @@ from pipeline.observability import logger, tracer, trace_span
 
 class JiraClient:
 
-    def __init__(self, hierarchy: JiraHierarchy, audit: AuditLogger, run_id: str, project_key: str):
+    def __init__(
+        self,
+        hierarchy: JiraHierarchy,
+        audit: AuditLogger,
+        run_id: str,
+        project_key: str,
+        node_index: Optional[dict[str, dict]] = None,
+    ):
         self.hierarchy = hierarchy
         self.audit = audit
         self.run_id = run_id
         self.project_key = project_key
         self.server = os.environ["JIRA_SERVER"]
         self.available_issue_types: set[str] = set()
+        self.node_index: dict[str, dict] = node_index or self._load_node_index()
 
         with logger.contextualize(agent="JiraClient", run_id=self.run_id):
             logger.info(f"Initializing JiraClient for project {self.project_key}")
-        
+
         self.jira = JIRA(
             server=self.server,
             basic_auth=(os.environ["JIRA_EMAIL"], os.environ["JIRA_API_TOKEN"]),
         )
+
+    def _load_node_index(self) -> dict[str, dict]:
+        """Best-effort load of the orchestrator-persisted hierarchy map."""
+        path = Path(f"data/sessions/{self.run_id}/node_index.json")
+        if not path.exists():
+            return {}
+        try:
+            with open(path) as f:
+                return json.load(f) or {}
+        except Exception as e:
+            logger.warning(f"Could not read node_index.json at {path}: {e}")
+            return {}
+
+    def _container_key_for(self, task: ManagedTask) -> tuple[Optional[str], str]:
+        """
+        Resolve (group_key, container_title) for a task. The group_key is the
+        node_id used as the cache key — preferring the top-level ancestor so
+        multi-level trees roll up to a single Epic/Story per top section.
+        Falls back to the task's immediate source node (legacy behaviour) when
+        hierarchy metadata is missing on the SourceRef.
+        """
+        if not task.source_refs:
+            return None, "General"
+
+        ref = task.source_refs[0]
+        # Prefer the root ancestor so a 3-level tree maps to one container.
+        root_id = ref.parent_chain[0] if ref.parent_chain else (ref.parent_id or ref.node_id)
+        title = self.node_index.get(root_id, {}).get("title") if root_id else None
+        if not title:
+            # Fallbacks: immediate parent's title, then the source section title.
+            if ref.parent_id:
+                title = self.node_index.get(ref.parent_id, {}).get("title")
+            if not title:
+                title = ref.section_title or "General"
+        return root_id, title
 
     def _validate_project(self) -> set[str]:
         """Pre-flight check: does the project exist and what issue types are available?"""
@@ -83,17 +128,22 @@ class JiraClient:
 
         elif self.hierarchy == JiraHierarchy.EPIC_TASK:
             epic_type = self._resolve_issue_type("Epic", ["Story"])
+            # Cache keyed by structural group_key (root ancestor node_id) so
+            # tasks with the same section_title but different parents land in
+            # different epics, and tasks across sibling nodes under one root
+            # roll up to a single epic.
             epic_cache: dict[str, str] = {}
 
             for task in tasks:
-                section = task.source_refs[0].section_title if task.source_refs else "General"
+                group_key, container_title = self._container_key_for(task)
+                cache_key = group_key or f"__fallback__::{container_title}"
 
-                if section not in epic_cache:
-                    epic_key = self._create_container(section, epic_type)
+                if cache_key not in epic_cache:
+                    epic_key = self._create_container(container_title, epic_type)
                     if epic_key:
-                        epic_cache[section] = epic_key
+                        epic_cache[cache_key] = epic_key
 
-                parent_key = epic_cache.get(section)
+                parent_key = epic_cache.get(cache_key)
                 # Next-Gen Fix: Always pass parent_key to _create_task to be used in 'parent' field
                 result = self._create_task(task, parent_key=parent_key, issue_type=task_type)
                 results.append(result)
@@ -104,14 +154,15 @@ class JiraClient:
             story_cache: dict[str, str] = {}
 
             for task in tasks:
-                section = task.source_refs[0].section_title if task.source_refs else "General"
+                group_key, container_title = self._container_key_for(task)
+                cache_key = group_key or f"__fallback__::{container_title}"
 
-                if section not in story_cache:
-                    story_key = self._create_container(section, story_type)
+                if cache_key not in story_cache:
+                    story_key = self._create_container(container_title, story_type)
                     if story_key:
-                        story_cache[section] = story_key
+                        story_cache[cache_key] = story_key
 
-                parent_key = story_cache.get(section)
+                parent_key = story_cache.get(cache_key)
                 # Next-Gen Fix: Works identically for stories and sub-tasks via 'parent' field
                 result = self._create_task(task, parent_key=parent_key, issue_type=subtask_type)
                 results.append(result)

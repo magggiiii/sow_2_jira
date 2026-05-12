@@ -39,13 +39,24 @@ def resolve_collector_endpoint() -> str:
     Resolves the OTLP trace endpoint.
 
     Priority:
-      1. Langfuse Cloud HTTP endpoint if LANGFUSE_PUBLIC_KEY/SECRET_KEY are set.
-      2. ARGUS_COLLECTOR_URL (local edge collector) — legacy.
+      1. ARGUS_COLLECTOR_URL when set — local OTel collector handles fan-out
+         to Tempo / Langfuse / Loki with its own filters.
+      2. Langfuse Cloud HTTP endpoint when LANGFUSE_PUBLIC_KEY/SECRET_KEY are
+         present and no collector is configured — direct, no fan-out.
       3. localhost:4317 fallback.
     """
+    explicit = os.environ.get("ARGUS_COLLECTOR_URL", "").strip()
+    if explicit:
+        return explicit
     if LANGFUSE_ENABLED:
         return f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces"
-    return os.environ.get("ARGUS_COLLECTOR_URL", "http://localhost:4317")
+    return "http://localhost:4317"
+
+
+def _use_local_collector() -> bool:
+    """True iff ARGUS_COLLECTOR_URL is set — i.e. we're routing through the
+    local OTel collector instead of direct-to-Langfuse."""
+    return bool(os.environ.get("ARGUS_COLLECTOR_URL", "").strip())
 
 # Instance ID for Argus identifying this specific user/installation
 INSTANCE_ID = os.environ.get("SOW_INSTANCE_ID", "unknown-instance")
@@ -73,17 +84,29 @@ def init_argus(service_name: str = "sow-to-jira"):
     endpoint = resolve_collector_endpoint()
     exporter = None
 
-    if LANGFUSE_ENABLED:
-        # Langfuse Cloud OTLP/HTTP with Basic auth header.
+    if _use_local_collector():
+        # Send everything to the local OTel collector via gRPC. The collector
+        # is responsible for fan-out: all spans → Tempo, LLM-only → Langfuse,
+        # logs → Loki. No filtering in app code.
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
+        logger.info(f"Routing OTel traces to local collector at {endpoint}")
+    elif LANGFUSE_ENABLED:
+        # No local collector — send directly to Langfuse Cloud OTLP/HTTP.
+        # Beware: this sends ALL spans (incl. FastAPI + orchestration), making
+        # the Langfuse dashboard noisy. Prefer the local-collector path.
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         auth = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
         exporter = OTLPSpanExporter(
             endpoint=endpoint,
             headers={"Authorization": f"Basic {auth}"},
         )
-        logger.info(f"Routing OTel traces to Langfuse Cloud at {LANGFUSE_BASE_URL}")
+        logger.warning(
+            f"Direct-to-Langfuse mode (no collector). All spans go to {LANGFUSE_BASE_URL}; "
+            "for LLM-only filtering, run the local collector and set ARGUS_COLLECTOR_URL."
+        )
     else:
-        # Legacy: gRPC to local Argus Edge Collector.
+        # Legacy: gRPC to whatever endpoint resolve_collector_endpoint returned.
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
 

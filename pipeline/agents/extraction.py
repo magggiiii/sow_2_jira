@@ -71,7 +71,10 @@ EXTRACTION_PROMPT_TEMPLATE = """You are extracting actionable Jira tickets from 
 - LOW_CONFIDENCE: You are less than 60% sure this is a real task
 
 ═══ OUTPUT FORMAT ═══
-Each object in the returned array must have EXACTLY these fields:
+Return a SINGLE JSON object with two top-level fields:
+- "scratchpad": a short string (max ~80 words) where you think out loud before listing tasks. Use it to identify the atomic units of work, note risks, and check yourself against the rules above. This field is for audit only — keep it terse.
+- "tasks": an array of task objects. Each object must have EXACTLY these fields:
+
 {{
   "title": "string — verb-first, max 80 chars",
   "short_description": "string — 1-2 sentences, what this task delivers",
@@ -92,7 +95,90 @@ Each object in the returned array must have EXACTLY these fields:
   ]
 }}
 
-Return ONLY a valid JSON array. No preamble. No explanation. No markdown.
+If the section is non-actionable, return {{"scratchpad": "...", "tasks": []}}.
+Return ONLY the JSON object. No preamble. No explanation. No markdown.
+
+═══ EXAMPLES ═══
+The following examples show GOOD extractions on realistic SOW phrasings.
+Mirror their granularity, verb-first titles, and structured ACs.
+
+Example 1 — Feature work
+Section snippet:
+"The platform shall provide user authentication. Users must be able to register with email and password, log in, and reset forgotten passwords via an emailed link. Two-factor authentication via TOTP is required for admin accounts."
+
+Output:
+{{"scratchpad": "Auth + 2FA + password reset = 3 atomic tasks. 2FA only for admins, capture in AC.", "tasks": [
+  {{"title": "Implement email/password registration and login API",
+    "short_description": "Build the public auth endpoints that issue session tokens on valid credentials.",
+    "acceptance_criteria": [
+      {{"condition": "POST /auth/register creates a user with hashed password and returns 201", "type": "functional", "verified_by": "test"}},
+      {{"condition": "POST /auth/login returns a signed session token on valid credentials and 401 otherwise", "type": "security", "verified_by": "test"}}
+    ],
+    "use_case": "As a new user, I want to register and log in so that I can access the platform.",
+    "considerations_constraints": ["Passwords must be bcrypt-hashed", "Session tokens must expire"],
+    "deliverables": ["/auth/register endpoint", "/auth/login endpoint"],
+    "mockup_prototype": null, "confidence": 0.9, "flags": [], "continues_to_next": false, "dependencies": []}},
+  {{"title": "Implement password reset via emailed one-time link",
+    "short_description": "Allow users to request a password reset email and complete the reset via a tokenized link.",
+    "acceptance_criteria": [
+      {{"condition": "Reset link is single-use and expires within 30 minutes", "type": "security", "verified_by": "test"}},
+      {{"condition": "POST /auth/reset accepts the link token and a new password and updates the user record", "type": "functional", "verified_by": "test"}}
+    ],
+    "use_case": null, "considerations_constraints": null, "deliverables": ["/auth/reset-request endpoint", "/auth/reset endpoint"],
+    "mockup_prototype": null, "confidence": 0.85, "flags": [], "continues_to_next": false,
+    "dependencies": [{{"target_ref": "Implement email/password registration and login API", "reason": "Reset acts on the user record from registration", "kind": "blocks"}}]}},
+  {{"title": "Add TOTP-based 2FA enforcement for admin accounts",
+    "short_description": "Enroll admins in TOTP and require a valid code on login.",
+    "acceptance_criteria": [
+      {{"condition": "Admin login requires a valid 6-digit TOTP code in addition to password", "type": "security", "verified_by": "test"}}
+    ],
+    "use_case": null, "considerations_constraints": ["Only enforced when the user has role=admin"], "deliverables": ["TOTP enrollment flow", "Login verification step"],
+    "mockup_prototype": null, "confidence": 0.85, "flags": [], "continues_to_next": false,
+    "dependencies": [{{"target_ref": "Implement email/password registration and login API", "reason": "2FA layers on top of password login", "kind": "blocks"}}]}}
+]}}
+
+Example 2 — Integration
+Section snippet:
+"The order service must integrate with the Stripe payment gateway. The integration must support card payments, webhook receipt for payment events, and refunds initiated from the admin console."
+
+Output:
+{{"scratchpad": "Two atomic units: outbound Stripe charge/refund client, and inbound webhook receiver. Admin refund UI is separate from this section.", "tasks": [
+  {{"title": "Integrate Stripe payment client for card charges and refunds",
+    "short_description": "Wrap the Stripe SDK with a typed client used by the order service for charges and refunds.",
+    "acceptance_criteria": [
+      {{"condition": "client.charge(amount, card_token) returns a Stripe payment_intent_id on success", "type": "functional", "verified_by": "test"}},
+      {{"condition": "client.refund(payment_intent_id) returns 200 and marks the order refunded in the local DB", "type": "functional", "verified_by": "test"}}
+    ],
+    "use_case": null, "considerations_constraints": ["Use Stripe test keys in non-prod", "Retries on 5xx are bounded"],
+    "deliverables": ["StripeClient module", "Charge/refund unit tests"], "mockup_prototype": null,
+    "confidence": 0.9, "flags": [], "continues_to_next": false, "dependencies": []}},
+  {{"title": "Build Stripe webhook receiver for payment events",
+    "short_description": "Expose a signed-webhook endpoint that updates order status on payment_intent.succeeded and charge.refunded.",
+    "acceptance_criteria": [
+      {{"condition": "POST /webhooks/stripe rejects requests with an invalid Stripe-Signature header", "type": "security", "verified_by": "test"}},
+      {{"condition": "On payment_intent.succeeded the matching order transitions to PAID", "type": "functional", "verified_by": "test"}}
+    ],
+    "use_case": null, "considerations_constraints": ["Idempotent on event_id"], "deliverables": ["/webhooks/stripe endpoint"],
+    "mockup_prototype": null, "confidence": 0.85, "flags": [], "continues_to_next": false,
+    "dependencies": [{{"target_ref": "Integrate Stripe payment client for card charges and refunds", "reason": "Webhook updates orders charged via the client", "kind": "relates_to"}}]}}
+]}}
+
+Example 3 — Data migration
+Section snippet:
+"Existing customer data currently stored in the legacy MySQL Customers table must be migrated to the new PostgreSQL customers schema. Email addresses must be lower-cased on migration and historical orders must remain linked via customer_id."
+
+Output:
+{{"scratchpad": "One migration task with two clear ACs: lowercase emails and preserve order linkage. Confidence high — concrete source/target named.", "tasks": [
+  {{"title": "Migrate legacy MySQL Customers table into PostgreSQL customers schema",
+    "short_description": "One-time migration that copies all rows, normalizes email casing, and preserves order foreign keys.",
+    "acceptance_criteria": [
+      {{"condition": "All emails in postgres.customers.email are stored lower-cased", "type": "functional", "verified_by": "inspection"}},
+      {{"condition": "orders.customer_id resolves to the matching postgres.customers.id for 100% of historical orders", "type": "functional", "verified_by": "test"}}
+    ],
+    "use_case": null, "considerations_constraints": ["Run in a maintenance window", "Migration must be idempotent"],
+    "deliverables": ["migrate_customers.py script", "Post-migration verification report"],
+    "mockup_prototype": null, "confidence": 0.9, "flags": [], "continues_to_next": false, "dependencies": []}}
+]}}
 
 {hierarchy_context}
 SOW Section Title: {section_title}
@@ -171,7 +257,7 @@ class TaskExtractionAgent:
         )
 
         try:
-            raw_list = self.llm.complete_json(
+            raw_response = self.llm.complete_json(
                 prompt=prompt,
                 system=EXTRACTION_SYSTEM_PROMPT,
                 agent_name="ExtractionAgent",
@@ -187,15 +273,43 @@ class TaskExtractionAgent:
             )
             return []
 
-        if not isinstance(raw_list, list):
+        # New shape: {"scratchpad": "...", "tasks": [...]}.
+        # Legacy shape (still accepted): a bare list of task dicts.
+        scratchpad = ""
+        if isinstance(raw_response, dict):
+            scratchpad = str(raw_response.get("scratchpad", "") or "")
+            raw_list = raw_response.get("tasks", [])
+            if not isinstance(raw_list, list):
+                self.audit.log(
+                    run_id=self.run_id,
+                    agent="ExtractionAgent",
+                    node_id=node["node_id"],
+                    action="EXTRACTION_ERROR",
+                    detail="LLM returned wrapper without a tasks list",
+                )
+                return []
+        elif isinstance(raw_response, list):
+            raw_list = raw_response
+        else:
             self.audit.log(
                 run_id=self.run_id,
                 agent="ExtractionAgent",
                 node_id=node["node_id"],
                 action="EXTRACTION_ERROR",
-                detail="LLM returned non-list JSON",
+                detail="LLM returned neither a wrapper dict nor a task list",
             )
             return []
+
+        # Audit-log the scratchpad so reviewers can see what the model was
+        # thinking, but never propagate it into RawTask.
+        if scratchpad:
+            self.audit.log(
+                run_id=self.run_id,
+                agent="ExtractionAgent",
+                node_id=node["node_id"],
+                action="EXTRACTION_SCRATCHPAD",
+                detail=scratchpad[:1000],
+            )
 
         tasks = []
         for raw in raw_list:

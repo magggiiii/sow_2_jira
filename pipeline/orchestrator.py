@@ -16,6 +16,9 @@ from pipeline.agents.extraction import TaskExtractionAgent
 from pipeline.agents.state import TaskStateAgent
 from pipeline.agents.deduplication import DeduplicationAgent
 from pipeline.agents.gap_recovery import GapRecoveryAgent
+from pipeline.agents.classifier import SectionClassifier
+from pipeline.agents.critic import TaskCritic
+from pipeline.agents.coverage_check import CoverageChecker
 from audit.logger import AuditLogger
 from pipeline.observability import logger, tracer, trace_span, sync_telemetry
 from pipeline.telemetry import TelemetryEmitter
@@ -56,8 +59,33 @@ class PipelineOrchestrator:
             self.llm, audit, config.run_id, threshold, max_section_chars
         )
         self.state_agent = TaskStateAgent(audit, config.run_id)
-        self.dedup_agent = DeduplicationAgent(self.llm, audit, config.run_id, dedup_threshold)
+        self.dedup_agent = DeduplicationAgent(
+            self.llm, audit, config.run_id, dedup_threshold,
+            project_key=(config.jira_project_key or None),
+        )
         self.gap_agent = GapRecoveryAgent(self.llm, audit, config.run_id, max_gap_iter)
+
+        # Intelligence-layer additions (260512-002). Each is togglable via env
+        # because each adds ~1 LLM call per section.
+        self.classifier = (
+            SectionClassifier(self.llm, audit, config.run_id)
+            if os.getenv("SOW_CLASSIFIER_ENABLED", "1") != "0" else None
+        )
+        self.critic = (
+            TaskCritic(
+                self.llm, audit, config.run_id,
+                auto_fix_threshold=float(os.getenv("SOW_CRITIC_THRESHOLD", "0.8")),
+            )
+            if os.getenv("SOW_ENABLE_CRITIC", "1") != "0" else None
+        )
+        self.coverage_checker = (
+            CoverageChecker(
+                self.llm, audit, config.run_id,
+                max_section_chars=max_section_chars,
+            )
+            if os.getenv("SOW_SEMANTIC_COVERAGE", "1") != "0" else None
+        )
+        self.section_coverage_reports: dict[str, dict] = {}
 
         # Configure litellm for PageIndex and build indexer
         pageindex_model = configure_litellm_for_mode(config.llm_mode)
@@ -218,9 +246,20 @@ class PipelineOrchestrator:
                         # Get text for this node (PageIndex provides it directly)
                         section_text = self.indexer.get_node_text(node)
 
+                        # Classifier gate (Improvement #3): skip non-actionable sections
+                        if self.classifier is not None:
+                            classification = self.classifier.classify(node, section_text)
+                            if not self.classifier.should_extract(classification):
+                                logger.info(
+                                    f"› Skipping non-actionable section: {node['title']} "
+                                    f"({classification.type.value}, conf={classification.confidence:.2f})"
+                                )
+                                progress.advance(task_bar)
+                                continue
+
                         # Extract (hierarchy-aware)
                         raw_tasks = self.extraction_agent.extract(
-                            node, section_text, 
+                            node, section_text,
                             hierarchy=self.config.jira_hierarchy.value,
                             status_callback=lambda msg: self._update_status(3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress)
                         )
@@ -229,6 +268,24 @@ class PipelineOrchestrator:
                         open_tasks, newly_closed = self.state_agent.process(
                             raw_tasks, open_tasks, node
                         )
+
+                        # Critic pass (Improvement #4): auto-fix or flag emitted tasks
+                        if self.critic is not None:
+                            emitted = open_tasks + newly_closed
+                            if emitted:
+                                self.critic.critique(emitted, section_text, node)
+
+                        # Semantic coverage check (Improvement #2): what did we miss?
+                        if self.coverage_checker is not None:
+                            section_tasks = open_tasks + newly_closed
+                            report = self.coverage_checker.check_section(
+                                node, section_text, section_tasks
+                            )
+                            if report.missed_items:
+                                self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
+                                for t in section_tasks:
+                                    if TaskFlag.INCOMPLETE not in t.flags:
+                                        t.flags.append(TaskFlag.INCOMPLETE)
 
                         # Mark coverage
                         for task in open_tasks + newly_closed:
@@ -317,6 +374,12 @@ class PipelineOrchestrator:
                     indent=2,
                     default=str,
                 )
+
+            # Semantic coverage reports (Improvement #2) — sibling artifact
+            if self.section_coverage_reports:
+                sem_path = checkpoint_path.parent / "coverage_reports.json"
+                with open(sem_path, "w") as f:
+                    json.dump(self.section_coverage_reports, f, indent=2, default=str)
             self.telemetry.emit("step.completed", {
                 "run_id": self.config.run_id,
                 "step": "save",

@@ -5,7 +5,14 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 from jira import JIRA
-from models.schemas import ManagedTask, JiraHierarchy, JiraPushResult, TaskFlag
+from models.schemas import (
+    AcceptanceCriterion,
+    AcceptanceCriterionType,
+    JiraHierarchy,
+    JiraPushResult,
+    ManagedTask,
+    TaskFlag,
+)
 from audit.logger import AuditLogger
 from pipeline.observability import logger, tracer, trace_span
 
@@ -167,8 +174,113 @@ class JiraClient:
                 result = self._create_task(task, parent_key=parent_key, issue_type=subtask_type)
                 results.append(result)
 
+        # Second pass: resolve task-to-task dependencies into Jira issue links.
+        # Failures are logged + reflected in JiraPushResult.warning rather than
+        # raised, so a flaky link API doesn't fail the whole push.
+        try:
+            self._create_dependency_links(tasks, results)
+        except Exception as e:
+            logger.warning(f"Dependency link pass crashed: {e}")
+
         logger.success(f"Push operation complete. {sum(1 for r in results if r.success)} succeeded.")
         return results
+
+    def _create_dependency_links(
+        self, tasks: list[ManagedTask], results: list[JiraPushResult]
+    ) -> None:
+        """
+        After all tasks are pushed and have Jira keys, walk each task's
+        dependencies and create Jira issue links for every target_ref that
+        resolves to a known task title. Unresolved refs are logged. Per-link
+        failures are non-fatal.
+
+        Link types:
+          kind="blocks"     → "Blocks"
+          kind="duplicates" → "Duplicate"
+          kind="relates_to" → "Relates"
+        """
+        # Build a normalized title -> jira_issue_key lookup. Only tasks that
+        # were pushed successfully and have a key participate.
+        key_by_id = {r.task_id: r.jira_issue_key for r in results if r.success and r.jira_issue_key}
+        title_to_key: dict[str, str] = {}
+        for t in tasks:
+            key = key_by_id.get(t.id)
+            if not key:
+                continue
+            title_to_key[(t.title or "").strip().lower()] = key
+
+        if not title_to_key:
+            return
+
+        link_type_map = {
+            "blocks": "Blocks",
+            "duplicates": "Duplicate",
+            "relates_to": "Relates",
+        }
+
+        linked = 0
+        unresolved = 0
+        for task in tasks:
+            if not task.dependencies:
+                continue
+            source_key = key_by_id.get(task.id)
+            if not source_key:
+                continue
+            result = next((r for r in results if r.task_id == task.id), None)
+            for dep in task.dependencies:
+                ref_norm = (dep.target_ref or "").strip().lower()
+                target_key = title_to_key.get(ref_norm)
+                if not target_key:
+                    unresolved += 1
+                    logger.info(
+                        f"Dependency target unresolved: '{dep.target_ref}' "
+                        f"(from {source_key}); skipping link"
+                    )
+                    self.audit.log(
+                        run_id=self.run_id,
+                        agent="JiraClient",
+                        action="DEP_UNRESOLVED",
+                        task_id=str(task.id),
+                        detail=f"{source_key} depends on '{dep.target_ref}' but no matching task found",
+                    )
+                    continue
+                if target_key == source_key:
+                    continue  # don't self-link
+                link_type = link_type_map.get((dep.kind or "blocks").lower(), "Relates")
+                try:
+                    # inwardIssue=source (this task is blocked by target),
+                    # outwardIssue=target. The jira SDK accepts both kwargs.
+                    self.jira.create_issue_link(
+                        type=link_type,
+                        inwardIssue=source_key,
+                        outwardIssue=target_key,
+                    )
+                    linked += 1
+                    self.audit.log(
+                        run_id=self.run_id,
+                        agent="JiraClient",
+                        action="DEP_LINKED",
+                        task_id=str(task.id),
+                        detail=f"{source_key} -[{link_type}]-> {target_key} ({dep.reason})",
+                    )
+                except Exception as e:
+                    err = f"Link {source_key} -[{link_type}]-> {target_key} failed: {e}"
+                    logger.warning(err)
+                    self.audit.log(
+                        run_id=self.run_id,
+                        agent="JiraClient",
+                        action="DEP_LINK_FAILED",
+                        task_id=str(task.id),
+                        detail=err,
+                    )
+                    if result is not None:
+                        existing = result.warning or ""
+                        result.warning = (existing + " | " if existing else "") + err
+
+        if linked or unresolved:
+            logger.info(
+                f"Dependency links: {linked} created, {unresolved} unresolved"
+            )
 
     def _build_description(self, task: ManagedTask) -> str:
         """Build Jira-formatted description from task fields."""
@@ -185,7 +297,7 @@ class JiraClient:
         lines.append("h3. Acceptance Criteria")
         if task.acceptance_criteria:
             for ac in task.acceptance_criteria:
-                lines.append(f"* {ac}")
+                lines.append(self._render_acceptance_criterion(ac))
         else:
             lines.append("⚠️ *Could not be determined — requires manual review*")
         lines.append("")
@@ -220,6 +332,34 @@ class JiraClient:
             )
 
         return "\n".join(lines)
+
+    def _render_acceptance_criterion(self, ac) -> str:
+        """
+        Render one AC as a Jira wiki-markup checklist bullet. Falls back
+        to plain-string formatting for any legacy entries that survived
+        normalization (shouldn't happen post-1B, but defensive).
+        """
+        # Legacy plain-string fallback
+        if isinstance(ac, str):
+            return f"* {ac}"
+        if not isinstance(ac, AcceptanceCriterion):
+            # Defensive: try to coerce, otherwise stringify.
+            try:
+                return f"* [ ] {getattr(ac, 'condition', str(ac))}"
+            except Exception:
+                return f"* [ ] {ac}"
+        # Suppress the italic annotation when both metadata fields are at
+        # their defaults — keeps the description uncluttered for simple ACs.
+        is_default = (
+            ac.type == AcceptanceCriterionType.FUNCTIONAL
+            and (ac.verified_by or "test").lower() == "test"
+        )
+        if is_default:
+            return f"* [ ] {ac.condition}"
+        return (
+            f"* [ ] {ac.condition} "
+            f"_(type: {ac.type.value}, verified by: {ac.verified_by})_"
+        )
 
     def _build_labels(self, task: ManagedTask) -> list[str]:
         """Convert task flags to Jira labels (Jira labels cannot have spaces)."""

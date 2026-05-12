@@ -51,7 +51,16 @@ def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
 def build_litellm_model(provider: str, model: Optional[str], azure_deployment: Optional[str]) -> str:
     if not model:
         model = ""
-    
+
+    # Aggregator providers always need their own prefix even when the model id
+    # itself contains a slash (e.g. OpenRouter's vendor/model IDs like
+    # "qwen/qwen3.5-flash" → "openrouter/qwen/qwen3.5-flash"). LiteLLM uses the
+    # outermost prefix to pick the provider client, and OpenRouter / Together
+    # both publish models under vendor/model names.
+    if provider in {"openrouter", "together"}:
+        clean = model[len(f"{provider}/"):] if model.startswith(f"{provider}/") else model
+        return f"{provider}/{clean}" if clean else f"{provider}/"
+
     # If the model already starts with the correct provider prefix, return it as is
     if provider == "ollama" and model.startswith("ollama/"):
         return model
@@ -59,11 +68,11 @@ def build_litellm_model(provider: str, model: Optional[str], azure_deployment: O
         return model
     if provider == "azure" and model.startswith("azure/"):
         return model
-    
+
     # Force provider prefix for Ollama even if name contains slashes (e.g. hf.co/...)
     if provider == "ollama":
         return f"ollama/{model}" if model else "ollama/"
-    
+
     # For other providers, if it already has a slash, assume it's already prefixed
     if "/" in model:
         return model
@@ -74,7 +83,7 @@ def build_litellm_model(provider: str, model: Optional[str], azure_deployment: O
     if provider == "azure":
         deployment = azure_deployment or model
         return f"azure/{deployment}" if deployment else "azure/"
-    if provider in {"openai", "openrouter", "groq", "mistral", "together", "zai"}:
+    if provider in {"openai", "groq", "mistral", "zai"}:
         return f"{provider}/{model}" if model else f"{provider}/"
     return model
 

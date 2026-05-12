@@ -49,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const apiKeyGroup = getEl('apiKeyGroup');
     const baseUrlGroup = getEl('baseUrlGroup');
     const azureFields = getEl('azureFields');
+    const openrouterModelHelp = getEl('openrouterModelHelp');
     const azureDeploymentName = getEl('azureDeploymentName');
     const azureApiVersion = getEl('azureApiVersion');
     
@@ -119,6 +120,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (azureFields) {
             azureFields.style.display = provider === 'azure' ? 'block' : 'none';
+        }
+        if (openrouterModelHelp) {
+            openrouterModelHelp.style.display = provider === 'openrouter' ? 'block' : 'none';
         }
         if (apiKeyGroup) {
             apiKeyGroup.style.display = provider === 'ollama' ? 'none' : 'block';

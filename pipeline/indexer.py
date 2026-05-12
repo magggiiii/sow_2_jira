@@ -35,6 +35,7 @@ class DocumentIndexer:
         self.config = config
         self.last_tree = None
         self.last_result = None
+        self.node_index_map: dict[str, dict] = {}
 
     def build_tree(self, pdf_path: str, status_callback=None, stop_event=None, run_id: str = "none") -> list[dict]:
         """
@@ -81,25 +82,52 @@ class DocumentIndexer:
         self.last_tree = result.get("structure", [])
 
         flat_nodes = self.flatten_tree(self.last_tree)
+        self.node_index_map = {n["node_id"]: n for n in flat_nodes if n.get("node_id")}
         _report(f"PageIndex complete: {len(flat_nodes)} nodes extracted", 0.30)
         return flat_nodes
 
     def flatten_tree(self, tree) -> list[dict]:
         """
         Convert PageIndex's hierarchical tree to the pipeline's flat node format.
-        Each node has: node_id, title, page_start, page_end, summary, text
+        Each node has: node_id, title, page_start, page_end, summary, text,
+        plus the hierarchy fields parent_id, parent_chain, depth, node_index.
+
+        parent_id is None for root nodes. parent_chain lists ancestor node_ids
+        with the root first; depth is 0 for roots; node_index is a depth-first
+        ordinal so callers can preserve document order without re-walking.
         """
-        raw_nodes = structure_to_list(tree) if tree else []
-        nodes = []
-        for n in raw_nodes:
+        nodes: list[dict] = []
+        counter = {"i": 0}
+
+        def walk(item, parent_id, parent_chain, depth):
+            if isinstance(item, list):
+                for child in item:
+                    walk(child, parent_id, parent_chain, depth)
+                return
+            if not isinstance(item, dict):
+                return
+
+            node_id = item.get("node_id", "")
             nodes.append({
-                "node_id": n.get("node_id", ""),
-                "title": n.get("title", ""),
-                "page_start": n.get("start_index", 1),
-                "page_end": n.get("end_index", 1),
-                "summary": n.get("summary", ""),
-                "text": n.get("text", ""),
+                "node_id": node_id,
+                "title": item.get("title", ""),
+                "page_start": item.get("start_index", 1),
+                "page_end": item.get("end_index", 1),
+                "summary": item.get("summary", ""),
+                "text": item.get("text", ""),
+                "parent_id": parent_id,
+                "parent_chain": list(parent_chain),
+                "depth": depth,
+                "node_index": counter["i"],
             })
+            counter["i"] += 1
+
+            children = item.get("nodes")
+            if children:
+                walk(children, node_id, parent_chain + [node_id], depth + 1)
+
+        if tree:
+            walk(tree, parent_id=None, parent_chain=[], depth=0)
         return nodes
 
     def get_node_text(self, node: dict, sections: list[dict] = None) -> str:

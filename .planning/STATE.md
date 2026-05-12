@@ -82,8 +82,14 @@ Recent decisions affecting current work:
 
 - None. Milestone complete.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260512-001 | First-class OpenRouter provider support (attribution headers, .env example, README, UI helper, smoke script) | 2026-05-12 | 3ed1ae7 | [260512-001-openrouter-first-class](./quick/260512-001-openrouter-first-class/) |
+
 ## Session Continuity
 
-Last session: 2026-04-09T09:51:55.617Z
+Last session: 2026-05-12 — Completed quick task 260512-001: OpenRouter first-class provider support
 Stopped at: Phase 11 context gathered
 Resume file: .planning/phases/11-evals-architecture/11-CONTEXT.md

@@ -1,7 +1,7 @@
 # pipeline/agents/extraction.py
 
 import json
-from models.schemas import RawTask, TaskFlag
+from models.schemas import RawTask, TaskFlag, normalize_acceptance_criteria
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
 
@@ -30,13 +30,24 @@ EXTRACTION_PROMPT_TEMPLATE = """You are extracting actionable Jira tickets from 
 
 ═══ ACCEPTANCE CRITERIA ═══
 - MUST be testable, measurable conditions — not descriptions of features.
-- Use checklist format: "[ ] Condition that can be verified"
-- GOOD: "[ ] API returns 200 OK with user profile JSON when valid token is provided"
-- GOOD: "[ ] Dashboard loads within 3 seconds on 4G connection"
-- GOOD: "[ ] Error message is displayed when invalid email format is entered"
+- PREFERRED (structured) format per item:
+    {{"condition": "API returns 200 OK with user profile JSON when valid token is provided",
+      "type": "functional", "verified_by": "test"}}
+  Allowed type values: "functional", "nonfunctional", "security", "performance", "usability".
+  Allowed verified_by values: "test", "review", "demo", "inspection".
+- LEGACY (still accepted) format per item: a plain string like "[ ] API returns 200 OK..."
+- GOOD: "[ ] Dashboard loads within 3 seconds on 4G connection" (type: performance)
+- GOOD: "[ ] Error message is displayed when invalid email format is entered" (type: usability)
 - BAD: "The system works correctly" (not testable)
 - BAD: "Users can log in" (too vague — HOW do we verify?)
 - If you cannot determine testable criteria from the text, set to null and add "NO_ACCEPTANCE_CRITERIA" to flags.
+
+═══ DEPENDENCIES ═══
+- Optional. List sibling-task references that must complete before this one.
+- target_ref MUST match another task's TITLE within the same SOW (best-effort string match).
+- reason: one short clause explaining WHY this blocks.
+- kind: "blocks" (default), "relates_to", or "duplicates".
+- Omit the field entirely if no dependencies are obvious.
 
 ═══ WHAT TO EXTRACT ═══
 - Functional requirements → development tasks
@@ -64,14 +75,21 @@ Each object in the returned array must have EXACTLY these fields:
 {{
   "title": "string — verb-first, max 80 chars",
   "short_description": "string — 1-2 sentences, what this task delivers",
-  "acceptance_criteria": ["[ ] testable condition", ...] or null,
+  "acceptance_criteria": [
+    {{"condition": "testable statement", "type": "functional", "verified_by": "test"}},
+    "[ ] legacy plain-string form is also accepted"
+  ] or null,
   "use_case": "string — As a [role], I want [goal] so that [benefit]" or null,
   "considerations_constraints": ["string", ...] or null,
   "deliverables": ["string — concrete output", ...] or null,
   "mockup_prototype": "string — reference to mockup/prototype" or null,
   "confidence": 0.0 to 1.0,
   "flags": ["FLAG_NAME", ...],
-  "continues_to_next": true or false
+  "continues_to_next": true or false,
+  "dependencies": [
+    {{"target_ref": "Title of the task that must finish first",
+      "reason": "Why this blocks", "kind": "blocks"}}
+  ]
 }}
 
 Return ONLY a valid JSON array. No preamble. No explanation. No markdown.
@@ -187,6 +205,11 @@ class TaskExtractionAgent:
                 if task.confidence < self.confidence_threshold:
                     if "LOW_CONFIDENCE" not in task.flags:
                         task.flags.append("LOW_CONFIDENCE")
+                # Normalize ACs to the structured form so the rest of the
+                # pipeline only deals with AcceptanceCriterion objects.
+                task.acceptance_criteria = normalize_acceptance_criteria(
+                    task.acceptance_criteria
+                )
                 tasks.append(task)
             except Exception as e:
                 self.audit.log(

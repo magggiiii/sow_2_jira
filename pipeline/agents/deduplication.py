@@ -4,6 +4,7 @@ import json
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from models.schemas import ManagedTask, TaskStatus, TaskFlag, DedupDecision
+from pipeline.agents.state import _merge_acceptance_criteria, _merge_dependencies
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
 
@@ -181,11 +182,14 @@ class DeduplicationAgent:
 
     def _merge_tasks(self, a: ManagedTask, b: ManagedTask) -> ManagedTask:
         """Merge task B content into task A. Returns A."""
-        # Prefer non-null fields from B if A is missing them
+        # Acceptance criteria are AcceptanceCriterion objects — use the
+        # condition-aware merger (set() would dedup by object identity only).
         if not a.acceptance_criteria and b.acceptance_criteria:
             a.acceptance_criteria = b.acceptance_criteria
         elif a.acceptance_criteria and b.acceptance_criteria:
-            a.acceptance_criteria = list(set(a.acceptance_criteria + b.acceptance_criteria))
+            a.acceptance_criteria = _merge_acceptance_criteria(
+                a.acceptance_criteria, b.acceptance_criteria
+            )
 
         if not a.use_case and b.use_case:
             a.use_case = b.use_case
@@ -202,6 +206,10 @@ class DeduplicationAgent:
             a.deliverables = list(set(
                 (a.deliverables or []) + b.deliverables
             ))
+
+        # Combine dependencies (dedup by target_ref + kind)
+        if b.dependencies:
+            a.dependencies = _merge_dependencies(a.dependencies, b.dependencies)
 
         # Merge source refs
         a.source_refs.extend(b.source_refs)

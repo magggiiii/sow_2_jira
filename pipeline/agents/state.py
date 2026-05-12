@@ -4,11 +4,54 @@ from typing import Optional
 
 from uuid import uuid4
 from difflib import SequenceMatcher
-from models.schemas import ManagedTask, RawTask, TaskStatus, SourceRef, TaskFlag
+from models.schemas import (
+    AcceptanceCriterion,
+    ManagedTask,
+    RawTask,
+    SourceRef,
+    TaskDependency,
+    TaskFlag,
+    TaskStatus,
+    normalize_acceptance_criteria,
+)
 from audit.logger import AuditLogger
 
 
 TITLE_SIMILARITY_THRESHOLD = 0.75  # SequenceMatcher ratio to consider "continuation"
+
+
+def _merge_acceptance_criteria(
+    existing: list[AcceptanceCriterion] | None,
+    incoming: list[AcceptanceCriterion] | None,
+) -> list[AcceptanceCriterion] | None:
+    """Combine two AC lists, deduping by case-insensitive condition string."""
+    combined: list[AcceptanceCriterion] = []
+    seen: set[str] = set()
+    for src in (existing or []), (incoming or []):
+        for ac in src:
+            key = (ac.condition or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            combined.append(ac)
+    return combined or None
+
+
+def _merge_dependencies(
+    existing: list[TaskDependency],
+    incoming: list[TaskDependency],
+) -> list[TaskDependency]:
+    """Combine two dependency lists, deduping by (target_ref, kind)."""
+    combined: list[TaskDependency] = []
+    seen: set[tuple[str, str]] = set()
+    for src in existing, incoming:
+        for dep in src:
+            key = ((dep.target_ref or "").strip().lower(), (dep.kind or "blocks").lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            combined.append(dep)
+    return combined
 
 
 class TaskStateAgent:
@@ -150,11 +193,13 @@ class TaskStateAgent:
         # Append description
         existing.short_description += " " + incoming.short_description
 
-        # Extend lists (deduplicate)
+        # Extend lists (deduplicate). ACs are AcceptanceCriterion objects, so
+        # set() doesn't work — use the dedicated merger.
         if incoming.acceptance_criteria:
-            existing.acceptance_criteria = list(set(
-                (existing.acceptance_criteria or []) + incoming.acceptance_criteria
-            ))
+            incoming_acs = normalize_acceptance_criteria(incoming.acceptance_criteria)
+            existing.acceptance_criteria = _merge_acceptance_criteria(
+                existing.acceptance_criteria, incoming_acs
+            )
         if incoming.considerations_constraints:
             existing.considerations_constraints = list(set(
                 (existing.considerations_constraints or []) + incoming.considerations_constraints
@@ -182,6 +227,12 @@ class TaskStateAgent:
         # Add source ref
         existing.source_refs.append(source_ref)
 
+        # Merge dependencies (dedup by target_ref + kind)
+        if incoming.dependencies:
+            existing.dependencies = _merge_dependencies(
+                existing.dependencies, incoming.dependencies
+            )
+
         # If mockup found in continuation, update
         if incoming.mockup_prototype and not existing.mockup_prototype:
             existing.mockup_prototype = incoming.mockup_prototype
@@ -204,7 +255,7 @@ class TaskStateAgent:
             id=uuid4(),
             title=raw.title,
             short_description=raw.short_description,
-            acceptance_criteria=raw.acceptance_criteria,
+            acceptance_criteria=normalize_acceptance_criteria(raw.acceptance_criteria),
             use_case=raw.use_case,
             considerations_constraints=raw.considerations_constraints,
             deliverables=raw.deliverables,
@@ -214,6 +265,7 @@ class TaskStateAgent:
             continues_to_next=raw.continues_to_next,
             status=TaskStatus.OPEN,
             source_refs=[source_ref],
+            dependencies=list(raw.dependencies or []),
         )
 
     def close_all_remaining(self, open_tasks: list[ManagedTask]) -> list[ManagedTask]:

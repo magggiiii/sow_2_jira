@@ -3,6 +3,7 @@
 import os
 import sys
 import time
+import base64
 import functools
 import contextlib
 from typing import Optional
@@ -15,17 +16,35 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
 # ─── ARGUS BACKBONE ─────────────────────────────────────────────────────────
-# Dynamic resolution for Argus central observability
-# The app talks to the local Argus Edge Collector (sidecar).
+# Two destinations supported:
+#   1. Local Argus Edge Collector at ARGUS_COLLECTOR_URL (the legacy path).
+#   2. Langfuse Cloud directly when LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY
+#      are set — no collector required. Useful for solo/small-team setups
+#      that don't want to run the full Argus HQ deck.
 
-# Toggle for remote Argus synchronization (defaults to OFF)
-SYNC_ENABLED = os.environ.get("ARGUS_SYNC_ENABLED", "false").lower() == "true"
+# Toggle for remote synchronization (defaults to OFF). Auto-enabled when
+# Langfuse Cloud keys are present so users don't have to flip both flags.
+LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
+LANGFUSE_BASE_URL = os.environ.get("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com").rstrip("/")
+LANGFUSE_ENABLED = bool(LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)
+
+SYNC_ENABLED = (
+    os.environ.get("ARGUS_SYNC_ENABLED", "false").lower() == "true"
+    or LANGFUSE_ENABLED
+)
 
 def resolve_collector_endpoint() -> str:
     """
-    Resolves the local OTel Collector endpoint.
-    By default, it expects the collector sidecar on localhost:4317.
+    Resolves the OTLP trace endpoint.
+
+    Priority:
+      1. Langfuse Cloud HTTP endpoint if LANGFUSE_PUBLIC_KEY/SECRET_KEY are set.
+      2. ARGUS_COLLECTOR_URL (local edge collector) — legacy.
+      3. localhost:4317 fallback.
     """
+    if LANGFUSE_ENABLED:
+        return f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces"
     return os.environ.get("ARGUS_COLLECTOR_URL", "http://localhost:4317")
 
 # Instance ID for Argus identifying this specific user/installation
@@ -51,14 +70,27 @@ def init_argus(service_name: str = "sow-to-jira"):
         logger.info("Argus remote sync is disabled (default-off). Skipping OTel initialization.")
         return
 
-    # 1. Initialize Traceloop (OpenLLMetry)
-    # It handles OTLP export to the endpoint specified in TRACELOOP_BASE_URL or OTLP defaults
+    endpoint = resolve_collector_endpoint()
+    exporter = None
+
+    if LANGFUSE_ENABLED:
+        # Langfuse Cloud OTLP/HTTP with Basic auth header.
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        auth = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
+        exporter = OTLPSpanExporter(
+            endpoint=endpoint,
+            headers={"Authorization": f"Basic {auth}"},
+        )
+        logger.info(f"Routing OTel traces to Langfuse Cloud at {LANGFUSE_BASE_URL}")
+    else:
+        # Legacy: gRPC to local Argus Edge Collector.
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
+
     Traceloop.init(
         app_name=service_name,
-        disable_reports=True, # We send via OTLP, not Traceloop's platform
-        exporter_args={
-            "endpoint": resolve_collector_endpoint(),
-        },
+        exporter=exporter,
+        telemetry_enabled=False,  # disable Traceloop platform reporting
         resource_attributes={
             SERVICE_NAME: service_name,
             "argus.instance_id": INSTANCE_ID,

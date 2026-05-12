@@ -26,6 +26,10 @@ import sys
 UI_DIR = Path(__file__).parent
 sys.path.insert(0, str(UI_DIR.parent))
 
+# Load .env BEFORE importing pipeline.observability — that module reads
+# Langfuse/Argus env vars at module-import time.
+load_dotenv(UI_DIR.parent / ".env")
+
 from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger

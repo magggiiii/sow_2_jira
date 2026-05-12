@@ -272,6 +272,13 @@ class LLMClient:
         elif mode == LLMMode.LOCAL and os.environ.get("OLLAMA_BASE_URL"):
             self.extra_headers = {"x-ollama-base-url": os.environ["OLLAMA_BASE_URL"]}
 
+        # OpenRouter attribution: ranks usage on openrouter.ai dashboards/leaderboards
+        if self.provider_config.provider == "openrouter":
+            self.extra_headers["HTTP-Referer"] = os.environ.get(
+                "OPENROUTER_REFERER", "https://github.com/magggiiii/sow_2_jira"
+            )
+            self.extra_headers["X-Title"] = os.environ.get("OPENROUTER_APP_NAME", "SOW-to-Jira")
+
     def complete(
         self,
         prompt: str,

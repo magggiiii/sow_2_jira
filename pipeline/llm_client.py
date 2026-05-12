@@ -503,8 +503,15 @@ class LLMClient:
             node_id=node_id,
         )
         
+        # Step 0: strip <think>...</think> reasoning blocks from thinking
+        # models (Qwen3-thinking, DeepSeek-R1, Gemini "thinking mode", o1-style).
+        # Some models emit a closing </think> with no opener — handle both.
+        cleaned = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+        if cleaned.startswith('</think>'):
+            cleaned = cleaned[len('</think>'):].lstrip()
+
         # Step 1: strip markdown fences anywhere in the response
-        cleaned = re.sub(r'```(?:json)?\s*', '', raw, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r'```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(r'```\s*$', '', cleaned, flags=re.MULTILINE).strip()
 
         # Step 2: strip any conversational preamble before the first [ or {

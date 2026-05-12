@@ -148,6 +148,30 @@ class PipelineOrchestrator:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
 
+        # Persist node hierarchy lookup so downstream consumers (JiraClient,
+        # Wave-2 agents) can resolve parent titles without re-walking the tree.
+        # Keep the payload minimal — title/depth/parent_id are enough today.
+        try:
+            node_index_path = Path(f"data/sessions/{self.config.run_id}/node_index.json")
+            node_index_path.parent.mkdir(parents=True, exist_ok=True)
+            node_index_payload = {
+                n["node_id"]: {
+                    "title": n.get("title", ""),
+                    "parent_id": n.get("parent_id"),
+                    "parent_chain": list(n.get("parent_chain") or []),
+                    "depth": int(n.get("depth") or 0),
+                    "node_index": int(n.get("node_index") or 0),
+                    "page_start": n.get("page_start"),
+                    "page_end": n.get("page_end"),
+                }
+                for n in nodes if n.get("node_id")
+            }
+            with open(node_index_path, "w") as f:
+                json.dump(node_index_payload, f, indent=2)
+        except Exception as e:
+            # Non-fatal: JiraClient has a fallback path when this artifact is absent.
+            logger.warning(f"Could not persist node_index.json: {e}")
+
         self._update_status(2, "Initializing coverage tracker...", 0.30)
         logger.info("› Step 2/5: Initializing coverage tracker...")
         coverage = CoverageTracker(nodes)

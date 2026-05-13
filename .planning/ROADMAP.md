@@ -22,6 +22,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 9: Argus Opt-Out & Local JSON Audit** - Default-off remote sync and permanent local JSON audit log. (Completed)
 - [x] **Phase 10: Ollama Automation & Universal API Robustness** - Automate local Ollama configuration and harden API connections with retry logic. (Completed)
 - [ ] **Phase 11: Evals Architecture** - Set up Langfuse datasets, Python evaluation scripts, and Langchain evals in the admin container.
+- [ ] **Phase 12: Intelligence Layer Tightening** - Restore signal-to-noise on the Wave 1-3 intelligence layer: fix INCOMPLETE flag bomb, zero-merge dedup, and conf=0.00 critic flags surfaced by the first end-to-end validation run.
 
 ## Phase Details
 
@@ -153,6 +154,23 @@ Plans:
 - [ ] 11-01-PLAN.md — Admin Evaluator Infrastructure & Local Model Config
 - [ ] 11-02-PLAN.md — Hierarchical Golden Dataset & Seeding
 - [ ] 11-03-PLAN.md — Hierarchical LLM-as-a-Judge & Scoring
+
+### Phase 12: Intelligence Layer Tightening
+**Goal**: After the first end-to-end run of the intelligence layer (run `20260512-194433-test-sow`, 509 tasks from a 103-node SOW on `openrouter/google/gemini-2.5-flash`), three latent integrity gaps were uncovered: (1) 100% of tickets flagged `INCOMPLETE` because the semantic coverage checker over-reports (618 missed_items, mostly already-extracted or cross-section duplicates); (2) dedup did zero merges because the agent's long pair-decision JSON hits a mid-stream delimiter failure (~29 of 30 extraction failures share the same JSON malformation); (3) the critic returned conf=0.00 on 100% of `CRITIQUE_FLAGGED` entries (175 likely_duplicate + 51 too_broad), unconditionally adding `LOW_CONFIDENCE` / `AMBIGUOUS_SCOPE` flags. This phase fixes all three at root cause and proves the fix with a same-SOW rerun.
+**Depends on**: Phase 11 (Evals Architecture) — the intelligence-layer substrate (Waves 1A/1B + 2A-2D + 3 from quick-task 260512-002) is what this phase tightens.
+**Requirements**: [INT-01, INT-02, INT-03, INT-04, INT-05, INT-06, INT-07]
+**Success Criteria** (what must be TRUE on a fresh `test_sow.pdf` rerun):
+  1. `INCOMPLETE` flag rate < 5% of tickets (down from 100%) — coverage becomes advisory.
+  2. Dedup yields ≥ 20 merges on the same SOW (up from 0).
+  3. Extraction JSON failure rate < 2% of nodes (down from 29%).
+  4. `LOW_CONFIDENCE` flag rate < 10% (down from 29%), every survivor traceable to a non-zero critic confidence.
+  5. `coverage_reports.json` filtered tiered against the final run-wide task corpus (≥0.85 drop, 0.70-0.85 `likely_overlap`, <0.70 `uncovered`), no cross-section duplicates.
+  6. Full pytest suite green (94+ tests), no regression.
+  7. `BEFORE_AFTER.md` exists comparing this run vs. baseline `20260512-194433-test-sow` across all 7 metrics.
+**Plans**: not planned yet
+
+Plans:
+- [ ] (to be created via `/gsd:plan-phase 12`)
 
 ## Progress
 

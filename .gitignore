@@ -48,3 +48,4 @@ htmlcov/
 # Cloned repos (deps now in requirements.txt)
 repo/.github_token
 test_sow_tmp.pdf
+graphify-out/

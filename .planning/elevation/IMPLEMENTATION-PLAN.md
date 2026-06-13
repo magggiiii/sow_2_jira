@@ -1294,3 +1294,30 @@ These are now **MUST** rules, not advisories:
 ### Completeness verdict (v2)
 
 **All 13 CRITICAL + 29 HIGH findings and the 7 promoted MEDIUM/LOW gaps are now carried by explicit change-ids (169 total), and the 5 sequencing risks are binding invariants.** The plan is implementation-ready.
+
+---
+
+## Addendum — Bifrost gateway + Langfuse Cloud (LLM control plane)
+
+Added 2026-06-13. Full design: **`BIFROST-LANGFUSE.md`** (+ its Security Review). Routes **all** LLM calls through a self-hosted **Bifrost** gateway and traces them in **Langfuse Cloud**, with real provider keys held only inside Bifrost (never the app DB). **Platform-wave work** — needs the Bifrost service deployed + a Langfuse Cloud account + keys. Lands **after Wave 1**, folds into the **Wave 4** cutover (and supersedes the Wave 4 "Langfuse-only" observability line).
+
+**Change-ids (`BL-*`, detail in the doc):**
+
+| id | Change | Notes |
+|---|---|---|
+| BL-1 | Bifrost as a private Render Docker service + `s2j-bifrost` env-group | provider keys live here |
+| BL-2 | Collapse the 3 LLMModes onto one OpenAI-compatible Bifrost target in `configure_litellm_for_mode` (revives the dead `BIFROST_*` branch); `LLMProvider` port + AgentRunner unchanged | `BIFROST_ENABLED` toggle, default true |
+| BL-3 | App→Bifrost auth via virtual key (`Bearer`/`x-bf-vk` per gateway config) | — |
+| BL-7 | Per-user virtual-key provisioning on settings-save (model allowlist + budget); store ONLY the encrypted vkey in Postgres | best-effort + pending state |
+| BL-10 | Langfuse via litellm `langfuse_otel` callback (primary), tagged `user_id`/`run_id`/`model`; Bifrost OTel exporter off-by-default backstop | masking ON for SOW bodies |
+| BL-* | Per-user cost/budget via Bifrost governance → feeds the per-run RunHealthReport | (full 14-step list + `render.yaml` fragment in the doc) |
+
+**Binding security baseline (from the Security Review — ship NONE of the cutover without all five):**
+
+- **INV-B1** — Delete `_apply_settings_to_env_legacy` (`ui/server.py:84-116`) + its startup call **in the same change** that enables Bifrost; it currently decrypts real keys into `os.environ`, defeating the vkey model. Add a startup assertion it's gone. (Ties to C-6/C-9/C-10.)
+- **INV-B2** — Real provider keys live ONLY in the Bifrost env-group — never app DB/env/logs/image. Shared-org default; BYOK opt-in + transactional.
+- **INV-B3** — BYOK raw keys are delete-after-provision in a single transaction (never persisted past one successful registration).
+- **INV-B4** — vkey decryption is in-request only; never cached in a module global/class attr/LRU.
+- **INV-B5** — `APP_ENC_KEY` and the provider-key env-group attached to different services; Langfuse masking ON (or metadata-only) for confidential SOWs.
+
+**Decisions to confirm (block BL-2/BL-7/BL-10):** (1) **key ownership** — shared org key *(recommended)* vs per-user BYOK; (2) Render no-KMS two-env-group posture OK?; (3) `BIFROST_ENABLED` toggle *(recommended)* vs hard cutover; (4) Langfuse region (US/EU/HIPAA) + mask vs full bodies; (5) virtual-key granularity — one per user *(recommended)*.

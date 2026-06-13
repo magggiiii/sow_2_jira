@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOW-to-Jira — Elevation Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,400..600&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0a0c0b; --ink-2:#0f1311; --panel:#131714; --panel-2:#1a201c;
+    --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.15);
+    --text:#e9ece8; --muted:#94a098; --faint:#69756d;
+    --ship:#6fe09a;      /* shipped — green */
+    --ship-soft:#a8f0c4;
+    --next:#f0b45a;      /* next — amber */
+    --next-soft:#f6cf93;
+    --plan:#6aa6e0;      /* planned — blue */
+    --plan-soft:#a8cef0;
+    --crit:#ff6b6b;
+    --radius:18px; --maxw:1080px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--ink);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-weight:380;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  body::before{content:"";position:fixed;inset:0;z-index:-2;background:
+    radial-gradient(820px 560px at 85% -8%, rgba(111,224,154,.10), transparent 60%),
+    radial-gradient(680px 480px at 0% 15%, rgba(106,166,224,.07), transparent 58%),
+    radial-gradient(760px 640px at 60% 112%, rgba(240,180,90,.05), transparent 60%);}
+  body::after{content:"";position:fixed;inset:0;z-index:-1;opacity:.02;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px}
+
+  /* hero */
+  header.hero{padding:78px 0 44px}
+  .kicker{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;text-transform:uppercase;color:var(--ship);display:flex;align-items:center;gap:14px}
+  .kicker::before{content:"";width:42px;height:1px;background:var(--ship)}
+  .live{display:inline-flex;align-items:center;gap:7px;margin-left:6px;color:var(--faint)}
+  .live .pulse{width:8px;height:8px;border-radius:50%;background:var(--ship);box-shadow:0 0 0 0 rgba(111,224,154,.6);animation:pulse 2.2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(111,224,154,.5)}70%{box-shadow:0 0 0 9px rgba(111,224,154,0)}100%{box-shadow:0 0 0 0 rgba(111,224,154,0)}}
+  h1{font-family:"Fraunces",serif;font-weight:340;font-size:clamp(2.6rem,6vw,4.7rem);line-height:1.02;letter-spacing:-.02em;margin:22px 0 0;max-width:16ch}
+  h1 em{font-style:italic;color:var(--ship-soft)}
+  .lede{font-size:clamp(1.02rem,1.6vw,1.25rem);color:var(--muted);max-width:58ch;margin-top:18px}
+  .updated{margin-top:22px;font-family:"JetBrains Mono",monospace;font-size:.74rem;color:var(--faint);letter-spacing:.04em}
+  .updated b{color:var(--muted);font-weight:500}
+
+  /* metrics */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:42px 0 4px}
+  .metric{background:var(--panel);padding:26px 22px}
+  .metric .num{font-family:"Fraunces",serif;font-size:clamp(2rem,3.6vw,2.9rem);font-weight:400;line-height:1;letter-spacing:-.02em;color:var(--ship-soft)}
+  .metric .num small{font-size:1.1rem;color:var(--faint);font-style:italic}
+  .metric .lab{margin-top:9px;font-size:.8rem;color:var(--muted);line-height:1.4}
+
+  /* section */
+  section{padding:56px 0;border-top:1px solid var(--line)}
+  .sec-no{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;text-transform:uppercase}
+  .sec-ship .sec-no{color:var(--ship)} .sec-next .sec-no{color:var(--next)} .sec-plan .sec-no{color:var(--plan)}
+  h2{font-family:"Fraunces",serif;font-weight:340;font-size:clamp(1.8rem,3.4vw,2.7rem);letter-spacing:-.015em;line-height:1.08;margin:13px 0 12px;max-width:24ch}
+  .sec-intro{color:var(--muted);max-width:62ch;font-size:1.02rem}
+
+  /* progress bar of waves */
+  .waves{margin-top:34px;display:flex;flex-direction:column;gap:9px}
+  .wbar{display:grid;grid-template-columns:130px 1fr auto;gap:16px;align-items:center}
+  .wbar .wn{font-size:.92rem;font-weight:520}
+  .wbar .wn small{display:block;color:var(--faint);font-size:.74rem;font-weight:340;margin-top:2px}
+  .track{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;position:relative}
+  .track i{position:absolute;inset:0;border-radius:99px;transform-origin:left;transition:transform 1s cubic-bezier(.2,.8,.2,1)}
+  .track i.ship{background:linear-gradient(90deg,#6fe09a,#a8f0c4)}
+  .track i.part{background:linear-gradient(90deg,#f0b45a,#6fe09a)}
+  .track i.plan{background:rgba(106,166,224,.35)}
+  .wpct{font-family:"JetBrains Mono",monospace;font-size:.72rem;color:var(--muted);min-width:42px;text-align:right}
+
+  /* increment group */
+  .increment{margin-top:36px}
+  .inc-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  .inc-head h3{font-family:"Fraunces",serif;font-weight:440;font-size:1.5rem;letter-spacing:-.01em}
+  .sha{font-family:"JetBrains Mono",monospace;font-size:.7rem;color:var(--faint);background:var(--panel-2);border:1px solid var(--line);padding:3px 8px;border-radius:6px}
+  .inc-sub{color:var(--faint);font-size:.86rem;margin-bottom:18px}
+
+  /* upgrade card */
+  .up{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:22px 24px;margin-bottom:13px;position:relative;overflow:hidden;transition:border-color .35s,background .35s}
+  .up::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+  .up.s-ship::before{background:var(--ship)} .up.s-next::before{background:var(--next)} .up.s-plan::before{background:var(--plan)}
+  .up:hover{border-color:var(--line-2);background:var(--panel-2)}
+  .up .uh{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-bottom:10px}
+  .pill{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;padding:4px 9px;border-radius:999px;font-weight:700;white-space:nowrap}
+  .pill.ship{background:rgba(111,224,154,.15);color:var(--ship)} .pill.next{background:rgba(240,180,90,.15);color:var(--next)} .pill.plan{background:rgba(106,166,224,.15);color:var(--plan)}
+  .up h4{font-family:"Hanken Grotesk",sans-serif;font-weight:650;font-size:1.06rem;flex:1;min-width:230px}
+  .tag{font-family:"JetBrains Mono",monospace;font-size:.6rem;color:var(--faint);border:1px solid var(--line-2);padding:3px 7px;border-radius:5px}
+  .up .what{color:var(--muted);font-size:.96rem;margin-bottom:14px}
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .ba .cell{border:1px solid var(--line);border-radius:10px;padding:13px 15px;font-size:.9rem;line-height:1.5}
+  .ba .before{background:rgba(255,107,107,.05);border-color:rgba(255,107,107,.18)}
+  .ba .after{background:rgba(111,224,154,.05);border-color:rgba(111,224,154,.18)}
+  .ba .lbl{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.14em;text-transform:uppercase;display:block;margin-bottom:6px}
+  .ba .before .lbl{color:var(--crit)} .ba .after .lbl{color:var(--ship)}
+  .ba .cell code{font-family:"JetBrains Mono",monospace;font-size:.82em;color:var(--text);background:rgba(255,255,255,.05);padding:1px 5px;border-radius:4px}
+  .why{display:flex;gap:10px;align-items:baseline;font-size:.93rem;color:var(--text)}
+  .why .wl{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ship);white-space:nowrap;padding-top:2px}
+
+  /* compact list for planned */
+  .plist{margin-top:24px;display:flex;flex-direction:column;gap:11px}
+  .pitem{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .pitem .pill{align-self:start;margin-top:2px}
+  .pitem h4{font-weight:600;font-size:1rem;margin-bottom:4px}
+  .pitem p{color:var(--muted);font-size:.9rem}
+  .pitem .need{display:inline-block;margin-top:7px;font-family:"JetBrains Mono",monospace;font-size:.62rem;color:var(--next);letter-spacing:.04em}
+  .pitem .need.svc{color:var(--plan)}
+
+  footer{border-top:1px solid var(--line);padding:28px 0 56px;color:var(--faint);font-family:"JetBrains Mono",monospace;font-size:.7rem;letter-spacing:.05em;line-height:1.7}
+  footer b{color:var(--muted)}
+
+  .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+
+  @media(max-width:780px){
+    .metrics{grid-template-columns:1fr 1fr}
+    .ba{grid-template-columns:1fr}
+    .wbar{grid-template-columns:1fr auto;gap:8px}
+    .wbar .track{grid-column:1 / -1;order:3}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
+    <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
+    <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-06-13 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
+
+    <div class="metrics reveal">
+      <div class="metric"><div class="num">18</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;167</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">5</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">2<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
+    </div>
+  </header>
+
+  <!-- PROGRESS AT A GLANCE -->
+  <section>
+    <div class="sec-no reveal" style="color:var(--ship)">00 — Progress at a glance</div>
+    <h2 class="reveal">The roadmap, and where we are on it.</h2>
+    <p class="sec-intro reveal">Seven tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth).</p>
+    <div class="waves">
+      <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.62)"></i></div><div class="wpct">62%</div></div>
+      <div class="wbar reveal"><div class="wn">Harness core<small>Ports + AgentRunner</small></div><div class="track"><i class="part" style="transform:scaleX(.55)"></i></div><div class="wpct">55%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="plan" style="transform:scaleX(.04)"></i></div><div class="wpct">Planned</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="plan" style="transform:scaleX(0)"></i></div><div class="wpct">Planned</div></div>
+    </div>
+  </section>
+
+  <!-- SHIPPED -->
+  <section class="sec-ship">
+    <div class="sec-no reveal">01 — Shipped &amp; verified</div>
+    <h2 class="reveal">What's done so far.</h2>
+    <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+
+    <!-- WAVE 0 -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 0 — Hardening foundation</h3><span class="sha">09a29d9</span></div>
+      <div class="inc-sub reveal">Made the repo safe to ship from and provable. No product behavior changed — everything after this is provable because of it.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The "Push to Jira" button works again</h4><span class="tag">C-7</span></div>
+        <p class="what">Re-enabled the product's headline feature, which had been silently dead.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>JiraClient</code> was used in <code>/api/push</code> but never imported — every push raised <code>NameError</code>, hidden behind a generic error.</div><div class="cell after"><span class="lbl">After</span>The import is in place; the push handler runs. A CI import-lint will fail the build if an undefined name ever sneaks back.</div></div>
+        <p class="why"><span class="wl">Better</span>The flagship capability is no longer a runtime crash — and can't regress invisibly.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The test suite runs green</h4><span class="tag">H-25</span></div>
+        <p class="what">Unblocked the entire automated safety net.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>pytest</code> aborted during collection (a hard <code>langchain</code> import), so <em>zero</em> of the 100 real tests ran and any CI was red on the first line.</div><div class="cell after"><span class="lbl">After</span>The optional dependency is guarded with <code>importorskip</code>; 100 tests collect and pass, the langchain test skips cleanly.</div></div>
+        <p class="why"><span class="wl">Better</span>Regressions can now be caught automatically — the precondition for everything else.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Secrets stop baking into the Docker image</h4><span class="tag">C-13</span></div>
+        <p class="what">Closed a live credential-leak path in the build.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No <code>.dockerignore</code> + <code>COPY . .</code> meant the on-disk <code>.env</code> and a real GitHub token were copied into every image layer.</div><div class="cell after"><span class="lbl">After</span>A <code>.dockerignore</code> excludes secrets, <code>data/</code>, and junk from the build context.</div></div>
+        <p class="why"><span class="wl">Better</span>Built images no longer ship recoverable credentials. <em>(Rotating the already-exposed tokens is a manual follow-up.)</em></p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Explicit project config + CI pipeline</h4><span class="tag">H-25</span></div>
+        <p class="what">Added <code>pyproject.toml</code> (pytest scope + ruff rules) and a GitHub Actions workflow.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No config files at all; no CI; no lint; live-credential smoke scripts at repo root were auto-collected as "tests."</div><div class="cell after"><span class="lbl">After</span>Test scope is explicit, smoke scripts moved to <code>scripts/check_*.py</code>, and CI runs ruff + pytest + pip-audit on every push/PR.</div></div>
+        <p class="why"><span class="wl">Better</span>Quality is now enforced by machine, not memory; accidental live-credential runs are gone.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Container binds the platform's port</h4><span class="tag">DEP</span></div>
+        <p class="what">Made the image deployable on a managed host.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Hardcoded <code>0.0.0.0:8000</code> — incompatible with platforms that inject a port.</div><div class="cell after"><span class="lbl">After</span>Binds <code>${PORT:-8000}</code>; healthcheck reads the same env.</div></div>
+        <p class="why"><span class="wl">Better</span>The container can run on Render (and similar) without edits.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 3 -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Intelligence-layer quality</h3><span class="sha">1596b0e</span></div>
+      <div class="inc-sub reveal">Fixed the bugs behind "100% INCOMPLETE / 0 merges / conf=0.00." Each landed test-first; +16 regression tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Truncated AI responses fail loudly instead of corrupting silently</h4><span class="tag">C-5 · the #1 root cause</span></div>
+        <p class="what">Fixed the single setting behind most of the intelligence-layer failures.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every AI call capped at <code>max_tokens=4096</code>; long answers were cut off mid-array, regex-scraped, and the broken result was swallowed as "success" — the cause of 0 dedup merges and ~29/30 extraction failures.</div><div class="cell after"><span class="lbl">After</span><code>max_tokens</code> is per-call (default 8192); a length cut-off raises a typed <code>LLMTruncationError</code> instead of returning garbage.</div></div>
+        <p class="why"><span class="wl">Better</span>Truncation is now a visible, handleable failure — not invisible data corruption.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The critic stops flagging when it has no confidence</h4><span class="tag">H-3</span></div>
+        <p class="what">Silenced the noise that flagged every ticket.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Critic flags were applied regardless of confidence — a <code>conf=0.00</code> "shrug" still labelled tickets <code>LOW_CONFIDENCE</code>/<code>AMBIGUOUS_SCOPE</code>; it also guessed at duplicates.</div><div class="cell after"><span class="lbl">After</span>All flag mutations gated at confidence ≥ 0.5; <code>conf=0.00</code> produces nothing; the duplicate role is removed (dedup owns it).</div></div>
+        <p class="why"><span class="wl">Better</span>Flags now mean something — reviewers see real issues, not blanket noise.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>De-duplication no longer loses data</h4><span class="tag">Dedup merge</span></div>
+        <p class="what">Made merges preserve content and order.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>keep_first/keep_second</code> dropped the other task without absorbing its acceptance criteria / deliverables / source refs; a <code>list(set())</code> lost ordering.</div><div class="cell after"><span class="lbl">After</span>Merges absorb the dropped task's content via <code>_merge_tasks</code>, fix <code>merged_from</code>, and preserve order.</div></div>
+        <p class="why"><span class="wl">Better</span>Merging two tickets no longer quietly throws away half their detail.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A "did this stage actually do work?" signal</h4><span class="tag">H-2 · H-6</span></div>
+        <p class="what">Made a no-op dedup pass visible.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>0 merges on 100+ candidate tasks looked identical to a clean run — the exact symptom that shipped undetected.</div><div class="cell after"><span class="lbl">After</span>A large input that yields zero merges now records a <code>DEGRADED</code> signal with a reason.</div></div>
+        <p class="why"><span class="wl">Better</span>"The engine did nothing" is now a detectable state, not silent success.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Coverage stops flagging on empty nodes &amp; low confidence</h4><span class="tag">C-4 (slice) · H-7</span></div>
+        <p class="what">Began dismantling the 100%-INCOMPLETE flag bomb.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>get_gaps</code> ignored its length filter (firing recovery on empty headings), and any single missed item flagged a whole section INCOMPLETE regardless of the checker's confidence.</div><div class="cell after"><span class="lbl">After</span><code>get_gaps</code> honors <code>min_text_length</code>; a pure, unit-tested helper gates INCOMPLETE on <code>checker_confidence</code>.</div></div>
+        <p class="why"><span class="wl">Better</span>The signal is being restored. <em>(Full post-dedup, run-wide restructure is gated behind an eval cassette — see "Next.")</em></p>
+      </div>
+    </div>
+
+    <!-- HARNESS FOUNDATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — ports &amp; adapters foundation</h3><span class="sha">3fa3daa</span></div>
+      <div class="inc-sub reveal">The keystone seam. Additive, zero behavior change — it's what makes every later wave a clean swap rather than a rewrite.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Typed result &amp; contract layer</h4><span class="tag">core/results.py</span></div>
+        <p class="what">Introduced <code>StageResult</code> (OK / DEGRADED / FAILED / SKIPPED + cost/tokens) and <code>LLMResult</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Stage outcomes were untyped; a failed stage and a successful one were indistinguishable to the code after them.</div><div class="cell after"><span class="lbl">After</span>Every stage can return a typed status with a reason and cost.</div></div>
+        <p class="why"><span class="wl">Better</span>The foundation for per-stage health, cost tracking, and "failure is data, not a swallowed exception."</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Ports &amp; adapters (hexagonal seam)</h4><span class="tag">core/ports.py · app/container.py</span></div>
+        <p class="what">Defined Protocol ports (LLM, Jira, audit, object store, embeddings, repositories) + a composition root.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Agents were hard-wired to concrete implementations, process-global <code>os.environ</code>, and local disk — nothing could be swapped or mocked.</div><div class="cell after"><span class="lbl">After</span>The core talks to interfaces; a <code>build_container()</code> factory wires the real implementations in one place; fakes drop in for tests.</div></div>
+        <p class="why"><span class="wl">Better</span>Externals (Postgres, R2, Langfuse, OAuth) become one-line adapter swaps — and the core is finally unit-testable in isolation.</p>
+      </div>
+    </div>
+
+    <!-- AGENTRUNNER -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — AgentRunner seam</h3><span class="sha">d1698c5</span></div>
+      <div class="inc-sub reveal">Routed all six agents through one chokepoint. Behavior-preserving; +24 tests (and finally pinned gap-recovery, which had none).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Every agent's model call flows through one place</h4><span class="tag">AgentRunner · AgentSpec</span></div>
+        <p class="what">Built <code>AgentRunner</code> on the LLM port and routed extraction, classifier, critic, coverage, dedup &amp; gap-recovery through it.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each of the 6 agents called the model directly with inline prompts and its own swallow-the-error handling — six places to fix anything.</div><div class="cell after"><span class="lbl">After</span>All six call <code>self.runner.complete_json(...)</code> — one seam where structured output, validation, retries, gating and health will live.</div></div>
+        <p class="why"><span class="wl">Better</span>The next big fixes (guaranteed structured output, per-stage health) become a change in <em>one</em> file instead of six.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- NEXT -->
+  <section class="sec-next">
+    <div class="sec-no reveal">02 — Next up</div>
+    <h2 class="reveal">Buildable now — on deck.</h2>
+    <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work.</p>
+    <div class="plist">
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Guaranteed structured output (Instructor)</h4><p>Swap the <code>AgentRunner</code> call body for provider JSON-mode + a Pydantic <code>response_model</code> per agent — so all six get validated objects instead of regex-scraped text, in one change. Completes the C-5 root-cause fix.</p><span class="need">needs: adding the <code>instructor</code> dependency (your OK)</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>The guardrail band + per-stage health report</h4><p>Formalize <code>CriticGate</code>/<code>CoverageGate</code>/<code>PushGate</code> in one tested module, and assemble a per-run health report (OK/DEGRADED + cost) surfaced as a badge. Turns the scattered gate logic into one deterministic, auditable layer.</p><span class="need">buildable now on StageResult</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
+    </div>
+  </section>
+
+  <!-- PLANNED -->
+  <section class="sec-plan">
+    <div class="sec-no reveal">03 — Planned (platform)</div>
+    <h2 class="reveal">Waiting on provisioned services.</h2>
+    <p class="sec-intro reveal">These are designed and specced in the implementation plan, but can't be built-and-verified locally — they need the real Postgres / Redis / Render / OAuth to land safely. They become adapter swaps thanks to the seam already shipped.</p>
+    <div class="plist">
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 1 — Data &amp; secrets platform</h4><p>Postgres + object storage (R2) behind the ports, per-user encrypted credentials, Alembic migrations, full-UUID run ids, the audit log moved off SQLite.</p><span class="need svc">needs: Postgres + R2</span></div></div>
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 2 — Auth, isolation &amp; durable worker</h4><p>Google sign-in, row-level <code>user_id</code> isolation, per-user credential injection, and the Arq worker + Redis queue that replaces the in-process background task and process-global state.</p><span class="need svc">needs: Redis + OAuth</span></div></div>
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 4 — Deploy &amp; observability</h4><p>The four-service <code>render.yaml</code>, the observability rewrite (drop the Argus/OTel fleet for Render logs + Langfuse Cloud), and per-user cost tracking.</p><span class="need svc">needs: Render</span></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
+    Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
+    Updated 2026-06-13 · branch elevation/wave-0 · 167 tests green
+  </footer>
+
+</div>
+<script>
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.08,rootMargin:'0px 0px -6% 0px'});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

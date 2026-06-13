@@ -470,3 +470,20 @@ These need a human call before BL-2 / BL-7 / BL-10 land:
 > 5. **`APP_ENC_KEY` and the provider-key env-group are attached to different services and never co-located.** Langfuse masking is ON (or metadata-only) for confidential SOWs, and no secret ever enters a trace's body/metadata/tags.
 >
 > With these five in place, an app-DB or app-log compromise leaks only revocable, budget-capped, model-scoped virtual keys — never a usable provider key. That is the goal, met.
+
+---
+
+## Decisions — Locked (2026-06-13)
+
+| # | Decision | Choice | Implication |
+|---|----------|--------|-------------|
+| 1 | **Key ownership** | **Hybrid** | Shared org key (in the `s2j-bifrost` env-group) is the **default** — users pick a model + get a virtual key. **Per-user BYOK is opt-in.** Both paths are maintained, so **INV-B3 (BYOK raw key delete-after-provision in one transaction) is in scope and mandatory.** |
+| 5 (region) | **Langfuse region + bodies** | **US region, masking ON** | Traces → `https://us.cloud.langfuse.com/api/public/otel`. **Prompt/response bodies MASKED** — only metadata, tokens, cost, model, latency, `user_id`/`run_id` leave the system. No confidential SOW text is ever sent to Langfuse. |
+| 2 | Render no-KMS posture | **Accepted** | Two env-groups: `sow-bifrost-secrets`→`s2j-bifrost` only; `sow-app-secrets`(`APP_ENC_KEY`)→web/worker only. Never co-located (INV-B5). |
+| 3 | Cutover style | **`BIFROST_ENABLED` toggle, default true** | Direct-provider break-glass retained behind the toggle. |
+| 5/7 | Virtual-key granularity | **One per user** | Each user → one virtual key (model allowlist + budget). |
+| 6 | Primary trace path | **app-level `langfuse_otel`** | Bifrost gateway OTel exporter stays OFF by default. |
+| 8 | Provisioning trigger | **best-effort + pending state** | vkey provisioned on settings-save; non-blocking. |
+| 10 | Migrate existing `settings.json` keys | **Re-register as BYOK, then discard** | Existing encrypted keys move into the BYOK opt-in path (transactional), not a legacy pass-through. |
+
+Smoke-gate items (verify against live Bifrost/litellm versions): app→Bifrost auth header form (`Authorization: Bearer <vkey>` vs `x-bf-vk`) and the exact litellm `langfuse_otel` callback name.

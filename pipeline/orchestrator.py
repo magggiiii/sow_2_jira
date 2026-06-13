@@ -24,6 +24,7 @@ from pipeline.agents.classifier import SectionClassifier
 from pipeline.agents.critic import TaskCritic
 from pipeline.agents.coverage_check import CoverageChecker, should_flag_section_incomplete
 from audit.logger import AuditLogger
+from core.health import RunHealthReport, build_health_report
 from pipeline.observability import logger, tracer, trace_span, sync_telemetry
 from pipeline.telemetry import TelemetryEmitter
 import os
@@ -91,6 +92,11 @@ class PipelineOrchestrator:
             if os.getenv("SOW_SEMANTIC_COVERAGE", "1") != "0" else None
         )
         self.section_coverage_reports: dict[str, dict] = {}
+
+        # GUARDRAIL-3: per-run health summary, assembled at the end of run().
+        # Starts empty (overall SKIPPED) so the attribute always exists even if
+        # run() is never called or exits early.
+        self.health_report: RunHealthReport = RunHealthReport()
 
         # Configure litellm for PageIndex and build indexer
         pageindex_model = configure_litellm_for_mode(config.llm_mode)
@@ -366,6 +372,19 @@ class PipelineOrchestrator:
                     "task_count": len(deduplicated),
                 })
 
+        # ── Assemble run health summary (GUARDRAIL-3) ─────────────────────────
+        # Additive, read-only: distill the signals the stages already produced
+        # (dedup degraded flag, extraction error count, coverage availability)
+        # into a RunHealthReport. This does not alter any stage's behavior or the
+        # value returned by run(); it only adds the `health` key to the saved
+        # checkpoint and exposes self.health_report.
+        self.health_report = build_health_report({
+            "dedup_degraded": getattr(self.dedup_agent, "last_degraded", False),
+            "dedup_degraded_reason": getattr(self.dedup_agent, "last_degraded_reason", None),
+            "extraction_error_count": getattr(self.extraction_agent, "error_count", 0),
+            "coverage_pct": report.get("coverage_pct"),
+        })
+
         # ── Step 5: Save Checkpoint ───────────────────────────────────────────
         with tracer.start_as_current_span("STEP_5_SAVE"):
             step_start = time.time()
@@ -381,6 +400,8 @@ class PipelineOrchestrator:
                         "config": self.config.model_dump(mode="json"),
                         "tasks": [t.model_dump(mode="json") for t in deduplicated],
                         "coverage_report": report,
+                        # Additive key — existing consumers ignore it.
+                        "health": self.health_report.to_dict(),
                     },
                     f,
                     indent=2,

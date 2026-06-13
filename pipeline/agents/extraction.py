@@ -222,6 +222,11 @@ class TaskExtractionAgent:
         self.run_id = run_id
         self.confidence_threshold = confidence_threshold
         self.max_section_chars = max_section_chars
+        # GUARDRAIL-3: additive, read-only counter of recoverable extraction
+        # errors across this run. Incremented on the existing error paths only;
+        # it never changes control flow or return values. The orchestrator reads
+        # it to derive an extraction StageHealth for the RunHealthReport.
+        self.error_count = 0
 
     def extract(self, node: dict, section_text: str, hierarchy: str = "epic_task", status_callback=None) -> list[RawTask]:
         """
@@ -269,6 +274,7 @@ class TaskExtractionAgent:
                 node_id=node["node_id"],
             )
         except (ValueError, RuntimeError) as e:
+            self.error_count += 1
             self.audit.log(
                 run_id=self.run_id,
                 agent="ExtractionAgent",
@@ -285,6 +291,7 @@ class TaskExtractionAgent:
             scratchpad = str(raw_response.get("scratchpad", "") or "")
             raw_list = raw_response.get("tasks", [])
             if not isinstance(raw_list, list):
+                self.error_count += 1
                 self.audit.log(
                     run_id=self.run_id,
                     agent="ExtractionAgent",
@@ -296,6 +303,7 @@ class TaskExtractionAgent:
         elif isinstance(raw_response, list):
             raw_list = raw_response
         else:
+            self.error_count += 1
             self.audit.log(
                 run_id=self.run_id,
                 agent="ExtractionAgent",
@@ -331,6 +339,7 @@ class TaskExtractionAgent:
                 )
                 tasks.append(task)
             except Exception as e:
+                self.error_count += 1
                 self.audit.log(
                     run_id=self.run_id,
                     agent="ExtractionAgent",

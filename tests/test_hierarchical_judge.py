@@ -1,5 +1,8 @@
 import pytest
 from unittest.mock import MagicMock
+
+pytest.importorskip("langchain_openai")
+
 from pipeline.evals.judges import HierarchicalJudge, EvaluationScores
 
 class MockResponse:

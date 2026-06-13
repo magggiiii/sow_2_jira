@@ -34,6 +34,7 @@ from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskS
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
 from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
+from integrations.jira_client import JiraClient
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pipeline.observability import trace_span, sync_telemetry, logger

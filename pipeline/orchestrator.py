@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.ports import LLMProvider
 
 from models.schemas import (
     RunConfig, ManagedTask, TaskStatus, TaskFlag, SourceRef, JiraHierarchy, current_provider_config
@@ -34,15 +38,16 @@ console = Console()
 
 class PipelineOrchestrator:
 
-    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None):
+    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None):
         self.config = config
         self.app_config = app_config
         self.audit = audit
         self.status_callback = status_callback
         self.stop_event = stop_event or threading.Event()
 
-        # Build LLM client
-        self.llm = LLMClient(
+        # LLM seam (HARNESS-4): use the injected provider when supplied,
+        # otherwise construct today's default LLMClient with identical args.
+        self.llm: "LLMProvider" = llm if llm is not None else LLMClient(
             mode=config.llm_mode,
             audit_logger=audit,
             run_id=config.run_id,

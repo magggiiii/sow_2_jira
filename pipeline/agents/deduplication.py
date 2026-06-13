@@ -12,9 +12,41 @@ from models.schemas import ManagedTask, TaskStatus, TaskFlag, DedupDecision
 from pipeline.agents.state import _merge_acceptance_criteria, _merge_dependencies
 from pipeline.agents.cross_run_index import ProjectEmbeddingIndex
 from pipeline.llm_client import LLMClient
+from pipeline.observability import logger
 from audit.logger import AuditLogger
 
 DEDUP_SYSTEM_PROMPT = "You are a precise task deduplication agent. Return ONLY valid JSON."
+
+
+def _dedup_preserve_order(items: list) -> list:
+    """De-dup a list while preserving first-seen order (unlike list(set(...)))."""
+    seen: set = set()
+    out: list = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _merge_str_list(
+    existing: Optional[list[str]], incoming: Optional[list[str]]
+) -> Optional[list[str]]:
+    """
+    Combine two string lists, order-preserving and deduped case-insensitively
+    (replaces list(set(...)) which lost order and was case-sensitive).
+    """
+    combined: list[str] = []
+    seen: set[str] = set()
+    for src in (existing or []), (incoming or []):
+        for s in src:
+            key = (s or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            combined.append(s)
+    return combined or None
 
 DEDUP_PROMPT_TEMPLATE = """You are reviewing pairs of extracted tasks from a Statement of Work for duplication.
 
@@ -45,6 +77,12 @@ Pairs to review:
 class DeduplicationAgent:
 
     EMBED_MODEL = "all-MiniLM-L6-v2"  # Small, fast, runs on CPU
+
+    # W3-D: when a dedup pass is fed more than this many tasks/candidate-pairs
+    # but produces ZERO merges, that's the fingerprint of a truncated/failed
+    # LLM response that still "succeeded". We surface a DEGRADED signal so the
+    # caller can tell that work-was-meant-to-happen but didn't.
+    DEGRADED_INPUT_THRESHOLD = 100
 
     def __init__(
         self,
@@ -81,6 +119,13 @@ class DeduplicationAgent:
         self.sessions_dir = Path(sessions_dir)
         self.project_indices_dir = Path(project_indices_dir)
         self._embedder = None  # Lazy load
+
+        # W3-D degraded signal — reset on every deduplicate() call. The least
+        # invasive carrier: callers keep reading the list return value and can
+        # additionally read these attributes after the call. last_degraded is
+        # True only when a large input produced 0 merges.
+        self.last_degraded: bool = False
+        self.last_degraded_reason: Optional[str] = None
 
     def _get_embedder(self) -> SentenceTransformer:
         if self._embedder is None:
@@ -281,6 +326,11 @@ class DeduplicationAgent:
         6. If project_key set: cross-run search + flag + add_run to project index
         Returns cleaned task list.
         """
+        # W3-D: reset the degraded signal for this pass; set below only if a
+        # large input yields 0 merges.
+        self.last_degraded = False
+        self.last_degraded_reason = None
+
         if len(tasks) < 2:
             # Still persist embeddings if we have at least one task — useful
             # for evals and resumption. Skipped if zero tasks.
@@ -359,32 +409,58 @@ class DeduplicationAgent:
                 detail=f"{decision.task_id_a} vs {decision.task_id_b}: {decision.reason}",
             )
 
-            if decision.decision == "merge":
-                # Merge B into A
-                task_a = task_map.get(decision.task_id_a)
-                task_b = task_map.get(decision.task_id_b)
-                if task_a and task_b:
-                    task_a = self._merge_tasks(task_a, task_b)
-                    task_a.flags = list(set(task_a.flags))
-                    if TaskFlag.POTENTIAL_DUPLICATE not in task_a.flags:
-                        pass  # merged successfully, no flag needed
+            # "merge" and "keep_first" both keep A and drop B; "keep_second"
+            # keeps B and drops A. In every case the dropped task's content is
+            # absorbed into the survivor via _merge_tasks BEFORE it is dropped,
+            # so acceptance criteria / deliverables / source_refs are never lost.
+            if decision.decision in ("merge", "keep_first"):
+                survivor = task_map.get(decision.task_id_a)
+                absorbed = task_map.get(decision.task_id_b)
+                if survivor and absorbed:
+                    self._merge_tasks(survivor, absorbed)  # records absorbed in survivor.merged_from
+                    survivor.flags = _dedup_preserve_order(survivor.flags)
+                    absorbed.status = TaskStatus.MERGED
                     drop_ids.add(decision.task_id_b)
-                    task_b.status = TaskStatus.MERGED
-                    task_b.merged_from = [task_a.id]
-
-            elif decision.decision == "keep_first":
-                drop_ids.add(decision.task_id_b)
-                if decision.task_id_b in task_map:
-                    task_map[decision.task_id_b].status = TaskStatus.MERGED
 
             elif decision.decision == "keep_second":
-                drop_ids.add(decision.task_id_a)
-                if decision.task_id_a in task_map:
-                    task_map[decision.task_id_a].status = TaskStatus.MERGED
+                survivor = task_map.get(decision.task_id_b)
+                absorbed = task_map.get(decision.task_id_a)
+                if survivor and absorbed:
+                    self._merge_tasks(survivor, absorbed)  # records absorbed in survivor.merged_from
+                    survivor.flags = _dedup_preserve_order(survivor.flags)
+                    absorbed.status = TaskStatus.MERGED
+                    drop_ids.add(decision.task_id_a)
 
             # "keep_both" → no action
 
         result = [t for t in tasks if str(t.id) not in drop_ids]
+
+        # W3-D: a "work-was-done" degraded signal. If we were handed a large
+        # input (many tasks OR many candidate pairs) but ended up with ZERO
+        # merges, that's the fingerprint of a truncated/failed LLM response
+        # that still parsed cleanly. Flag it (don't raise) so the caller knows
+        # the pass likely didn't actually do its job.
+        merges = len(drop_ids)
+        large_input = (
+            len(tasks) > self.DEGRADED_INPUT_THRESHOLD
+            or len(candidate_pairs) > self.DEGRADED_INPUT_THRESHOLD
+        )
+        if large_input and merges == 0:
+            self.last_degraded = True
+            self.last_degraded_reason = (
+                f"0 merges from {len(tasks)} tasks / {len(candidate_pairs)} "
+                f"candidate pairs (threshold {self.DEGRADED_INPUT_THRESHOLD}); "
+                "possible truncated or failed LLM dedup response"
+            )
+            logger.warning(
+                "Dedup degraded: {reason}", reason=self.last_degraded_reason
+            )
+            self.audit.log(
+                run_id=self.run_id,
+                agent="DeduplicationAgent",
+                action="DEDUP_DEGRADED",
+                detail=self.last_degraded_reason,
+            )
 
         # Step 5: persist embeddings (full set, ordering matches `tasks`).
         # We keep ALL rows here — replay tooling can re-derive the kept set
@@ -425,14 +501,12 @@ class DeduplicationAgent:
             a.mockup_prototype = b.mockup_prototype
 
         if b.considerations_constraints:
-            a.considerations_constraints = list(set(
-                (a.considerations_constraints or []) + b.considerations_constraints
-            ))
+            a.considerations_constraints = _merge_str_list(
+                a.considerations_constraints, b.considerations_constraints
+            )
 
         if b.deliverables:
-            a.deliverables = list(set(
-                (a.deliverables or []) + b.deliverables
-            ))
+            a.deliverables = _merge_str_list(a.deliverables, b.deliverables)
 
         # Combine dependencies (dedup by target_ref + kind)
         if b.dependencies:

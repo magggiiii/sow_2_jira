@@ -31,6 +31,26 @@ class RetryHint:
     reason: str
 
 
+class LLMTruncationError(RuntimeError):
+    """Raised when a provider cut a response short at its token limit.
+
+    finish_reason='length' means the model stopped because max_tokens was hit,
+    so the body is partial (often invalid/partial JSON). We surface this as an
+    explicit, non-retryable failure rather than silently returning truncated
+    content. A MISSING finish_reason is treated as acceptable.
+    """
+
+
+# finish_reason values that indicate the response was cut short by a token cap.
+_TRUNCATION_FINISH_REASONS = {"length", "max_tokens", "max_output_tokens"}
+
+
+def _is_truncated_finish_reason(finish_reason) -> bool:
+    if finish_reason is None:
+        return False
+    return str(finish_reason).strip().lower() in _TRUNCATION_FINISH_REASONS
+
+
 def _is_non_retryable_llm_error(err: Exception) -> bool:
     text = str(err).lower()
     markers = [
@@ -355,6 +375,7 @@ class LLMClient:
             logger.info(f"✓ System: Response received from {self.model} in {req_duration:.2f} seconds")
 
             content = response.choices[0].message.content or ""
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
             tokens = response.usage.total_tokens if response.usage else 0
             prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
             completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
@@ -391,6 +412,22 @@ class LLMClient:
                 llm_tokens_used=tokens,
                 llm_model=self.model,
             )
+
+            # A length/truncation finish_reason means the provider cut the
+            # response short at its token cap, so the body is partial. Surface
+            # this as an explicit failure instead of returning silently-
+            # truncated content that downstream JSON parsing would mangle.
+            if _is_truncated_finish_reason(finish_reason):
+                logger.error(
+                    f"✗ LLM response truncated by token limit (finish_reason={finish_reason}, "
+                    f"max_tokens={max_tokens}) for agent {agent_name}"
+                )
+                raise LLMTruncationError(
+                    f"LLM response truncated at token limit "
+                    f"(finish_reason={finish_reason}, max_tokens={max_tokens}). "
+                    f"Increase max_tokens for agent {agent_name}."
+                )
+
             return content
 
         try:
@@ -405,6 +442,8 @@ class LLMClient:
                     start_time = time.time()
                     try:
                         return _perform_one_call(attempt=attempt, start_time=start_time, local_wait=True)
+                    except LLMTruncationError:
+                        raise
                     except Exception as e:
                         if _is_non_retryable_llm_error(e):
                             logger.error(f"✗ Non-retryable LLM error: {e}")
@@ -429,6 +468,8 @@ class LLMClient:
                 start_time = time.time()
                 try:
                     return _perform_one_call(attempt=attempt, start_time=start_time, local_wait=False)
+                except LLMTruncationError:
+                    raise
                 except Exception as e:
                     if _is_non_retryable_llm_error(e):
                         logger.error(f"✗ Non-retryable LLM error: {e}")
@@ -481,6 +522,10 @@ class LLMClient:
                 "latency_ms": 0,
                 "success": False,
             })
+            # Preserve the typed truncation error so callers can distinguish a
+            # token-cap cutoff from a generic call failure.
+            if isinstance(e, LLMTruncationError):
+                raise
             raise RuntimeError(f"LLM call failed: {e}") from e
 
     def complete_json(
@@ -489,16 +534,22 @@ class LLMClient:
         system: str = "You are a precise JSON extraction assistant.",
         agent_name: str = "unknown",
         node_id: str = "",
+        max_tokens: int = 8192,
     ) -> list | dict:
         """
         Like complete() but parses and returns JSON.
         Raises ValueError if response is not valid JSON.
+        Raises LLMTruncationError (via complete) if the provider cut the
+        response short at its token limit, instead of returning partial JSON.
+
+        ``max_tokens`` defaults higher than the prior hard-coded 4096 to reduce
+        token-cap truncation; callers extracting large structures may raise it.
         """
         raw = self.complete(
             prompt=prompt,
             system=system,
             temperature=0.0,
-            max_tokens=4096,
+            max_tokens=max_tokens,
             agent_name=agent_name,
             node_id=node_id,
         )

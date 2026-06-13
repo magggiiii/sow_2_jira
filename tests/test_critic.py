@@ -252,6 +252,59 @@ def test_missing_ac_added_at_any_confidence():
     assert report.auto_fixed_count == 1
 
 
+def test_zero_confidence_critique_yields_no_flags_or_mutations():
+    # Audit H-3: a critique below the confidence floor (incl. 0.0) must produce
+    # NO flag and NO mutation. The conf=0.00 mass-flag bug.
+    original_title = "User Authentication"
+    task = _make_task(title=original_title)
+    original_flags = list(task.flags)
+
+    critic = _make_critic(llm_response=[
+        {
+            "task_id": str(task.id),
+            "issues": ["non_verb_title", "too_broad"],
+            "suggested_title": "Implement user authentication API",
+            "suggested_acceptance_criteria": None,
+            "confidence": 0.0,  # below the floor — must not mutate or flag
+            "reason": "Mass-flag at zero confidence.",
+        }
+    ])
+
+    fixed, report = critic.critique([task], section_text="...", node=_node())
+
+    # Title unchanged, no flags added.
+    assert fixed[0].title == original_title
+    assert fixed[0].flags == original_flags
+    assert TaskFlag.LOW_CONFIDENCE not in task.flags
+    assert TaskFlag.AMBIGUOUS_SCOPE not in task.flags
+    assert report.auto_fixed_count == 0
+    assert report.flagged_count == 0
+
+
+def test_likely_duplicate_does_not_add_flag():
+    # Dedup owns duplicate detection — the critic must not flag LIKELY_DUPLICATE.
+    task = _make_task(title="Implement user authentication API")
+    original_flags = list(task.flags)
+
+    critic = _make_critic(llm_response=[
+        {
+            "task_id": str(task.id),
+            "issues": ["likely_duplicate"],
+            "suggested_title": None,
+            "suggested_acceptance_criteria": None,
+            "confidence": 0.95,  # high confidence, but still must not flag
+            "reason": "Overlaps another task.",
+        }
+    ])
+
+    fixed, report = critic.critique([task], section_text="...", node=_node())
+
+    # No duplicate flag added by the critic.
+    assert fixed[0].flags == original_flags
+    assert TaskFlag.LOW_CONFIDENCE not in task.flags
+    assert report.auto_fixed_count == 0
+
+
 def test_llm_error_returns_unmodified_tasks():
     task = _make_task(title="User Authentication")
     original_title = task.title

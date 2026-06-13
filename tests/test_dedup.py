@@ -56,14 +56,22 @@ def _src(node_id: str = "n1") -> SourceRef:
     )
 
 
-def _task(title: str, desc: str = "") -> ManagedTask:
+def _task(
+    title: str,
+    desc: str = "",
+    acceptance_criteria: list[AcceptanceCriterion] | None = None,
+    source_refs: list[SourceRef] | None = None,
+    deliverables: list[str] | None = None,
+) -> ManagedTask:
     return ManagedTask(
         id=uuid4(),
         title=title,
         short_description=desc,
         confidence=0.9,
         status=TaskStatus.CLOSED,
-        source_refs=[_src()],
+        acceptance_criteria=acceptance_criteria,
+        source_refs=source_refs if source_refs is not None else [_src()],
+        deliverables=deliverables,
     )
 
 
@@ -220,6 +228,147 @@ def test_dedup_with_llm_error_returns_unmodified(tmp_path):
 
     npz_path = tmp_path / "sessions" / "run-test-2d" / "embeddings.npz"
     assert npz_path.exists()
+
+
+def test_dedup_keep_first_absorbs_dropped_task_content(tmp_path):
+    """
+    W3-C: a keep_first decision must NOT silently discard the dropped task's
+    content. The survivor (task_id_a) must absorb the dropped task's extra
+    acceptance criteria, deliverables, and source_refs via _merge_tasks, and
+    record the dropped task in merged_from. Output order is preserved.
+    """
+    # Survivor (first) has one AC + one source ref + one deliverable.
+    survivor = _task(
+        "Build login screen",
+        "User logs in with email and password",
+        acceptance_criteria=[AcceptanceCriterion(condition="User can log in")],
+        source_refs=[_src("n1")],
+        deliverables=["Login page"],
+    )
+    # Dropped (second) is a subset, but carries an EXTRA AC, source ref, and
+    # deliverable that must survive the merge.
+    dropped = _task(
+        "Build login page",
+        "User logs in with email and password",
+        acceptance_criteria=[AcceptanceCriterion(condition="Password is masked")],
+        source_refs=[_src("n2")],
+        deliverables=["Password masking"],
+    )
+    # An unrelated third task to verify ordering is preserved around the merge.
+    other = _task("Configure observability stack", "Wire OTel collector to Tempo")
+    tasks = [survivor, dropped, other]
+
+    llm = MagicMock()
+    llm.complete_json.return_value = [
+        {
+            "task_id_a": str(survivor.id),
+            "task_id_b": str(dropped.id),
+            "decision": "keep_first",
+            "reason": "second is a subset of the first",
+        }
+    ]
+
+    agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+    out = agent.deduplicate(tasks)
+
+    # The dropped task is gone; survivor + other remain, in original order.
+    assert [str(t.id) for t in out] == [str(survivor.id), str(other.id)]
+
+    merged = next(t for t in out if str(t.id) == str(survivor.id))
+
+    # Acceptance criteria: survivor retains both its own AC and the dropped
+    # task's extra AC.
+    ac_conditions = {ac.condition for ac in (merged.acceptance_criteria or [])}
+    assert "User can log in" in ac_conditions
+    assert "Password is masked" in ac_conditions
+
+    # Deliverables from the dropped task survive.
+    assert "Login page" in (merged.deliverables or [])
+    assert "Password masking" in (merged.deliverables or [])
+
+    # Source refs from the dropped task survive (node n2 must be present).
+    node_ids = {ref.node_id for ref in merged.source_refs}
+    assert {"n1", "n2"} <= node_ids
+
+    # merged_from on the SURVIVOR references the absorbed (dropped) task.
+    assert dropped.id in merged.merged_from
+
+
+def test_dedup_large_input_zero_merges_sets_degraded(tmp_path, monkeypatch):
+    """
+    W3-D: when dedup is handed a large input (> degraded threshold) and a pass
+    produces ZERO merges — the symptom of a truncated/failed LLM response that
+    still "succeeds" — the agent records a structured DEGRADED signal:
+    last_degraded is True with a non-empty last_degraded_reason, and a warning
+    is audit-logged. It must NOT raise.
+
+    We bypass the embedder by feeding a high-similarity candidate set directly
+    so the LLM path is exercised, then return an empty decision list (0 merges).
+    """
+    # Build > threshold tasks so the input is "large".
+    tasks = [_task(f"Task number {i}", f"Description for task {i}") for i in range(120)]
+    assert len(tasks) > DeduplicationAgent.DEGRADED_INPUT_THRESHOLD
+
+    llm = MagicMock()
+    # Simulate a truncated/empty LLM response: no decisions -> 0 merges.
+    llm.complete_json.return_value = []
+
+    agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+
+    # Force a large candidate-pair set without invoking the real embedder.
+    fake_pairs = [(tasks[i], tasks[i + 1], 0.95) for i in range(0, len(tasks) - 1)]
+    monkeypatch.setattr(agent, "_find_candidate_pairs", lambda t, e: fake_pairs)
+    # Avoid loading the sentence-transformers model in CI/offline.
+    monkeypatch.setattr(
+        agent,
+        "_get_embedder",
+        lambda: SimpleNamespace(
+            encode=lambda texts, normalize_embeddings=True: np.zeros(
+                (len(texts), 384), dtype=np.float32
+            )
+        ),
+    )
+
+    out = agent.deduplicate(tasks)
+
+    # No merges happened -> identity preserved, no raise.
+    assert len(out) == len(tasks)
+    # Degraded signal is set with a reason.
+    assert agent.last_degraded is True
+    assert agent.last_degraded_reason
+    assert isinstance(agent.last_degraded_reason, str)
+    # A warning-level degraded signal is audit-logged.
+    assert "DEDUP_DEGRADED" in audit.actions()
+
+
+def test_dedup_normal_merge_run_not_degraded(tmp_path):
+    """
+    W3-D: a normal run that produces at least one merge (and/or a small input)
+    must NOT be flagged degraded.
+    """
+    survivor = _task("Build login screen", "User logs in with email and password")
+    dropped = _task("Build login page", "User logs in with email and password")
+    other = _task("Configure observability stack", "Wire OTel collector to Tempo")
+    tasks = [survivor, dropped, other]
+
+    llm = MagicMock()
+    llm.complete_json.return_value = [
+        {
+            "task_id_a": str(survivor.id),
+            "task_id_b": str(dropped.id),
+            "decision": "merge",
+            "reason": "same login work",
+        }
+    ]
+
+    agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+    out = agent.deduplicate(tasks)
+
+    # A merge occurred (one fewer task).
+    assert len(out) == 2
+    assert agent.last_degraded is False
+    assert agent.last_degraded_reason is None
+    assert "DEDUP_DEGRADED" not in audit.actions()
 
 
 def test_dedup_no_project_key_skips_cross_run_index(tmp_path):

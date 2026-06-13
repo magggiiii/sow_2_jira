@@ -145,6 +145,8 @@ class TaskCritic:
 
     AGENT_NAME = "TaskCritic"
     MAX_SECTION_CHARS = 4000
+    # Audit H-3: critiques below this confidence produce NO flag and NO mutation.
+    FLAG_CONFIDENCE_FLOOR = 0.5
 
     def __init__(
         self,
@@ -152,11 +154,13 @@ class TaskCritic:
         audit_logger: AuditLogger,
         run_id: str,
         auto_fix_threshold: float = 0.8,
+        flag_confidence_floor: float = FLAG_CONFIDENCE_FLOOR,
     ):
         self.llm = llm_client
         self.audit = audit_logger
         self.run_id = run_id
         self.auto_fix_threshold = auto_fix_threshold
+        self.flag_confidence_floor = flag_confidence_floor
 
     # ─── Public API ──────────────────────────────────────────────────────────
 
@@ -242,7 +246,13 @@ class TaskCritic:
             applied_fix = self._apply(target, critique, node_id)
             if applied_fix:
                 report.auto_fixed_count += 1
-            elif critique.issues and not _only_nothing_to_fix(critique.issues):
+            elif (
+                critique.issues
+                and not _only_nothing_to_fix(critique.issues)
+                and critique.confidence >= self.flag_confidence_floor
+            ):
+                # Audit H-3: only count as flagged when the critique cleared the
+                # confidence floor (below-floor critiques are no-ops).
                 report.flagged_count += 1
 
         self.audit.log(
@@ -336,7 +346,11 @@ class TaskCritic:
         - UNTESTABLE_AC + suggested_acceptance_criteria + confidence >= threshold -> replace ACs
         - MISSING_AC + suggested_acceptance_criteria -> add ACs (any confidence)
         - TOO_BROAD -> never auto-fix; flag AMBIGUOUS_SCOPE
-        - LIKELY_DUPLICATE / VAGUE_TITLE -> never auto-fix; flag LOW_CONFIDENCE
+        - VAGUE_TITLE -> never auto-fix; flag LOW_CONFIDENCE
+
+        Audit H-3: all flag mutations are gated on confidence >= flag_confidence_floor.
+        A critique below the floor (incl. 0.0) produces NO flag and NO mutation.
+        LIKELY_DUPLICATE is intentionally NOT handled — dedup owns duplicate detection.
         """
         issues = set(critique.issues)
         applied = False
@@ -344,6 +358,10 @@ class TaskCritic:
 
         # Treat nothing_to_fix as a no-op (still counted as reviewed).
         if not issues or issues == {CritiqueIssue.NOTHING_TO_FIX}:
+            return False
+
+        # Audit H-3: below the confidence floor we neither mutate nor flag.
+        if critique.confidence < self.flag_confidence_floor:
             return False
 
         # 1. Missing AC — any confidence, only if the task currently has none.
@@ -385,8 +403,8 @@ class TaskCritic:
         if CritiqueIssue.TOO_BROAD in issues:
             _add_flag(task, TaskFlag.AMBIGUOUS_SCOPE)
 
-        # 5. Vague title / likely duplicate — always flag.
-        if CritiqueIssue.VAGUE_TITLE in issues or CritiqueIssue.LIKELY_DUPLICATE in issues:
+        # 5. Vague title — flag. (LIKELY_DUPLICATE is owned by dedup, not the critic.)
+        if CritiqueIssue.VAGUE_TITLE in issues:
             _add_flag(task, TaskFlag.LOW_CONFIDENCE)
 
         if applied:

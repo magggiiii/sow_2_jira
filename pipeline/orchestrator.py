@@ -18,7 +18,7 @@ from pipeline.agents.deduplication import DeduplicationAgent
 from pipeline.agents.gap_recovery import GapRecoveryAgent
 from pipeline.agents.classifier import SectionClassifier
 from pipeline.agents.critic import TaskCritic
-from pipeline.agents.coverage_check import CoverageChecker
+from pipeline.agents.coverage_check import CoverageChecker, should_flag_section_incomplete
 from audit.logger import AuditLogger
 from pipeline.observability import logger, tracer, trace_span, sync_telemetry
 from pipeline.telemetry import TelemetryEmitter
@@ -281,8 +281,15 @@ class PipelineOrchestrator:
                             report = self.coverage_checker.check_section(
                                 node, section_text, section_tasks
                             )
+                            # Confidence-gate the INCOMPLETE flag (Wave 3-F, audit C-4):
+                            # only flag when the checker is confident AND has genuine misses.
+                            # NOTE: the full post-dedup, run-wide INCOMPLETE restructure is a
+                            # later step gated by INV-4 (eval cassette asserting INCOMPLETE-rate).
                             if report.missed_items:
                                 self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
+                            if should_flag_section_incomplete(
+                                report, self.coverage_checker.min_confidence
+                            ):
                                 for t in section_tasks:
                                     if TaskFlag.INCOMPLETE not in t.flags:
                                         t.flags.append(TaskFlag.INCOMPLETE)

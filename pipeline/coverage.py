@@ -35,10 +35,11 @@ class CoverageTracker:
         for node_id, entry in self._coverage.items():
             node = entry["node"]
             if not entry["covered"]:
-                # If no tasks extracted, check if the node has enough summary/content to qualify as a gap
-                # Here we will just use min_text_length as a rough filter 
-                # (Actual content length checks happen in orchestrator/agent)
-                gaps.append(node)
+                # Only treat uncovered nodes with meaningful content as gaps.
+                # Prefer the node's full text, fall back to summary, then title.
+                content = node.get("text") or node.get("summary") or node.get("title") or ""
+                if len(content) >= min_text_length:
+                    gaps.append(node)
         return gaps
 
     def coverage_report(self) -> dict:

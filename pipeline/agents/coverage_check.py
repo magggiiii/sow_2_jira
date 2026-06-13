@@ -54,6 +54,34 @@ class SectionCoverageReport(BaseModel):
     checked_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 
 
+# ─── Confidence gate (Wave 3-F, audit C-4) ────────────────────────────────────
+
+def should_flag_section_incomplete(
+    report: SectionCoverageReport,
+    min_confidence: float = 0.6,
+) -> bool:
+    """
+    Decide whether a section's tasks should be flagged INCOMPLETE.
+
+    Pure + side-effect-free so the gate is unit-testable without running the
+    orchestrator. Returns True only when BOTH hold:
+      - the checker is confident enough (report.checker_confidence >= min_confidence), and
+      - the report has genuine missed_items.
+
+    Audit C-4 ("the 100% INCOMPLETE bomb"): the orchestrator used to flag every
+    task in a section the instant report.missed_items was non-empty, ignoring the
+    checker's own confidence. Gating on checker_confidence stops low-confidence
+    misses from poisoning an otherwise-complete run.
+
+    NOTE: This only gates the per-section flag on confidence. The full post-dedup,
+    run-wide INCOMPLETE restructure is a separate later step, gated by INV-4 (the
+    eval cassette asserting INCOMPLETE-rate) before the runner flip.
+    """
+    if not report.missed_items:
+        return False
+    return report.checker_confidence >= min_confidence
+
+
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
 COVERAGE_SYSTEM_PROMPT = """You are a meticulous Jira project auditor reviewing whether a

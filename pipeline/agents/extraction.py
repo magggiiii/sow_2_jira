@@ -4,6 +4,7 @@ import json
 from models.schemas import RawTask, TaskFlag, normalize_acceptance_criteria
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
+from core.agent_runner import AgentRunner
 
 EXTRACTION_SYSTEM_PROMPT = """You are a senior Jira project manager extracting actionable work items from a Statement of Work (SOW).
 You think in terms of real Jira boards: Epics, Stories, Tasks, and Sub-tasks.
@@ -213,6 +214,10 @@ class TaskExtractionAgent:
     def __init__(self, llm_client: LLMClient, audit_logger: AuditLogger,
                  run_id: str, confidence_threshold: float = 0.6, max_section_chars: int = 16000):
         self.llm = llm_client
+        # Route the single LLM call through the AgentRunner seam. The runner's
+        # complete_json is a thin passthrough over the same LLMProvider, so the
+        # request, return value, and propagated exceptions are unchanged.
+        self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
         self.confidence_threshold = confidence_threshold
@@ -257,7 +262,7 @@ class TaskExtractionAgent:
         )
 
         try:
-            raw_response = self.llm.complete_json(
+            raw_response = self.runner.complete_json(
                 prompt=prompt,
                 system=EXTRACTION_SYSTEM_PROMPT,
                 agent_name="ExtractionAgent",

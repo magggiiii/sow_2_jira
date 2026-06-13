@@ -1,5 +1,6 @@
 # pipeline/agents/gap_recovery.py
 
+from core.agent_runner import AgentRunner
 from models.schemas import RawTask, TaskFlag
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
@@ -56,6 +57,11 @@ class GapRecoveryAgent:
         max_iterations: int = 2,
     ):
         self.llm = llm_client
+        # Route this agent's single complete_json call through the AgentRunner
+        # seam. The runner's complete_json is a thin passthrough over the same
+        # LLMProvider, so the request, return value, and propagated exceptions
+        # are unchanged — the broad error swallow below behaves identically.
+        self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
         self.max_iterations = max_iterations
@@ -84,7 +90,7 @@ class GapRecoveryAgent:
                 continue
                 
             try:
-                raw_tasks = self.llm.complete_json(
+                raw_tasks = self.runner.complete_json(
                     prompt=self._build_prompt(node, section_text),
                     system=GAP_SYSTEM_PROMPT,
                     agent_name="GapRecoveryAgent",

@@ -31,6 +31,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, ValidationError
 
 from audit.logger import AuditLogger
+from core.agent_runner import AgentRunner
 from models.schemas import (
     AcceptanceCriterion,
     ManagedTask,
@@ -157,6 +158,10 @@ class TaskCritic:
         flag_confidence_floor: float = FLAG_CONFIDENCE_FLOOR,
     ):
         self.llm = llm_client
+        # Route the agent's single LLM call through the shared AgentRunner.
+        # The runner is a verbatim passthrough over self.llm.complete_json, so
+        # the underlying request (and observable behavior) is unchanged.
+        self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
         self.auto_fix_threshold = auto_fix_threshold
@@ -195,7 +200,7 @@ class TaskCritic:
         prompt = self._build_prompt(tasks, section_text, node)
 
         try:
-            raw = self.llm.complete_json(
+            raw = self.runner.complete_json(
                 prompt=prompt,
                 system=CRITIC_SYSTEM_PROMPT,
                 agent_name=self.AGENT_NAME,

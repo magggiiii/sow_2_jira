@@ -28,6 +28,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
+from core.agent_runner import AgentRunner
 from models.schemas import (
     AcceptanceCriterion,
     ManagedTask,
@@ -151,6 +152,9 @@ class CoverageChecker:
         max_section_chars: int = 16000,
     ):
         self.llm = llm_client
+        # Route the single coverage-check LLM call through the AgentRunner seam
+        # (behavior-preserving passthrough over the same LLMProvider).
+        self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
         self.min_confidence = min_confidence
@@ -199,7 +203,7 @@ class CoverageChecker:
         prompt = self._build_prompt(node, section_text, extracted_tasks)
 
         try:
-            raw = self.llm.complete_json(
+            raw = self.runner.complete_json(
                 prompt=prompt,
                 system=COVERAGE_SYSTEM_PROMPT,
                 agent_name="CoverageChecker",

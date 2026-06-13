@@ -14,6 +14,7 @@ from pipeline.agents.cross_run_index import ProjectEmbeddingIndex
 from pipeline.llm_client import LLMClient
 from pipeline.observability import logger
 from audit.logger import AuditLogger
+from core.agent_runner import AgentRunner
 
 DEDUP_SYSTEM_PROMPT = "You are a precise task deduplication agent. Return ONLY valid JSON."
 
@@ -109,6 +110,13 @@ class DeduplicationAgent:
                 so tests don't write into the real data/ tree.
         """
         self.llm = llm_client
+        # Route this agent's single complete_json call through the AgentRunner
+        # passthrough. The runner forwards every kwarg unchanged and returns the
+        # provider's result verbatim, so this is behavior-preserving. We keep the
+        # dedup-specific pairwise prompt build + DedupDecision parsing here (the
+        # runner's typed run() doesn't fit the bespoke parse), and use the thin
+        # complete_json seam so the call is centralized without changing it.
+        self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
         self.threshold = similarity_threshold
@@ -378,7 +386,7 @@ class DeduplicationAgent:
         ], indent=2)
 
         try:
-            raw_decisions = self.llm.complete_json(
+            raw_decisions = self.runner.complete_json(
                 prompt=DEDUP_PROMPT_TEMPLATE.format(pairs_json=pairs_json),
                 system=DEDUP_SYSTEM_PROMPT,
                 agent_name="DeduplicationAgent",

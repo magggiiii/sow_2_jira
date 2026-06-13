@@ -25,6 +25,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
+from core.agent_runner import AgentRunner
 from pipeline.llm_client import LLMClient
 
 
@@ -97,6 +98,9 @@ class SectionClassifier:
         max_section_chars: int = 4000,
     ):
         self.llm = llm_client
+        # Route the single classifier LLM call through the AgentRunner seam
+        # (behavior-preserving passthrough over the same LLMProvider).
+        self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
         self.min_confidence = min_confidence
@@ -121,7 +125,7 @@ class SectionClassifier:
         )
 
         try:
-            raw = self.llm.complete_json(
+            raw = self.runner.complete_json(
                 prompt=prompt,
                 system=CLASSIFIER_SYSTEM_PROMPT,
                 agent_name="SectionClassifier",

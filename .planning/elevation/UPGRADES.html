@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-14 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">21</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;299</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">14</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">22</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;323</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">16</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -148,7 +148,7 @@
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.62)"></i></div><div class="wpct">62%</div></div>
-      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
+      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.80)"></i></div><div class="wpct">80%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -296,6 +296,17 @@
         <p class="why"><span class="wl">Better</span>The contract is self-defending: dirty-but-known input is absorbed, unknown input errors visibly instead of slipping through.</p>
       </div>
     </div>
+    <!-- CONFIDENCE GUARDRAILS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — confidence invariants + live guardrails</h3><span class="sha">af9f334</span></div>
+      <div class="inc-sub reveal">Confidence values bounded, and the guardrail module wired into production. +24 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Confidence can't go out of range, and gate logic lives in one place</h4><span class="tag">core/guardrails</span></div>
+        <p class="what">Bounded every confidence/score to [0,1] and routed the critic + coverage gates through the shared <code>ConfidenceGate</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Confidence fields were unbounded floats (a model returning <code>1.5</code> was accepted verbatim), and each agent re-implemented its own inline floor check — the guardrail module existed but nothing used it.</div><div class="cell after"><span class="lbl">After</span>A clamp coerces out-of-range values into [0,1] (dirty-but-numeric absorbed, like the enums), and the critic + coverage gates both decide through the one <code>ConfidenceGate</code> — the guardrail band is now real production code.</div></div>
+        <p class="why"><span class="wl">Better</span>One audited place decides "is this verdict trustworthy?", and bad confidence values can't silently propagate.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -326,7 +337,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-14 · branch elevation/wave-0 · 299 tests green
+    Updated 2026-06-14 · branch elevation/wave-0 · 323 tests green
   </footer>
 
 </div>

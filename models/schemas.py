@@ -25,6 +25,52 @@ current_provider_config: contextvars.ContextVar[Optional[ProviderConfig]] = cont
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
 
+class _NormalizedStrEnum(str, Enum):
+    """
+    Base for closed-set string fields (H-23 domain-model hardening).
+
+    A `(str, Enum)` member already compares equal to its raw value, so existing
+    `x == "merge"` style comparisons across the codebase keep working unchanged.
+    On top of that this base adds two things:
+
+    1. `__str__` returns the *value*, so text rendered into Jira descriptions /
+       audit logs stays `"merge"` rather than regressing to `"DedupDecisionType.MERGE"`.
+    2. `_missing_` coerces dirty-but-known inputs (case, surrounding whitespace,
+       and separator drift — spaces/hyphens -> underscore) plus an optional
+       per-enum `_aliases()` map of normalized-string -> member. Genuinely
+       unknown values return None so Pydantic raises a clear validation error
+       (fail loudly on unknown, coerce on dirty-but-known).
+
+    Dependency-free: stdlib `enum` + `str` only.
+    """
+
+    def __str__(self) -> str:  # pragma: no cover - exercised via f-strings
+        return str(self.value)
+
+    @classmethod
+    def _aliases(cls) -> dict:
+        """Override per-enum to map normalized aliases -> member. Default: none.
+
+        Implemented as a classmethod (not a class attribute) so it does not
+        accidentally become an enum member.
+        """
+        return {}
+
+    @classmethod
+    def _missing_(cls, value):
+        if not isinstance(value, str):
+            return None
+        norm = value.strip().lower().replace("-", "_").replace(" ", "_")
+        while "__" in norm:
+            norm = norm.replace("__", "_")
+        if not norm:
+            return None
+        for member in cls:
+            if member.value == norm:
+                return member
+        return cls._aliases().get(norm)
+
+
 class TaskStatus(str, Enum):
     OPEN = "OPEN"            # Newly extracted, may span into next section
     CLOSED = "CLOSED"        # Fully extracted, ready for dedup/review
@@ -70,19 +116,66 @@ class AcceptanceCriterionType(str, Enum):
     USABILITY = "usability"
 
 
+class VerifiedBy(_NormalizedStrEnum):
+    """How an acceptance criterion is verified. Coerces dirty LLM casing."""
+    TEST = "test"
+    REVIEW = "review"
+    DEMO = "demo"
+    INSPECTION = "inspection"
+
+
+class DependencyKind(_NormalizedStrEnum):
+    """Relationship a TaskDependency expresses to its target_ref."""
+    BLOCKS = "blocks"
+    RELATES_TO = "relates_to"
+    DUPLICATES = "duplicates"
+
+
+class DedupDecisionType(_NormalizedStrEnum):
+    """Verdict the dedup LLM returns for a candidate task pair.
+
+    Member values are the EXACT lowercase strings the dedup agent compares
+    against in pipeline/agents/deduplication.py (`decision in ("merge",
+    "keep_first")`, `== "keep_second"`, `DEDUP_{decision.upper()}`), so
+    str-enum equality keeps every existing comparison working.
+    """
+    MERGE = "merge"
+    KEEP_BOTH = "keep_both"
+    KEEP_FIRST = "keep_first"
+    KEEP_SECOND = "keep_second"
+
+    @classmethod
+    def _aliases(cls) -> dict:
+        # Dirty-but-known forms the base normalizer can't reach on its own.
+        # `_missing_` already collapses case, whitespace, and hyphen/space ->
+        # underscore (so "KEEP_BOTH", "keep both", "keep-both" coerce), but a
+        # no-separator blob like "keepboth" or a verbose "keepallboth" does not.
+        # These map the post-normalization string -> member.
+        return {
+            "keepboth": cls.KEEP_BOTH,
+            "keep_all_both": cls.KEEP_BOTH,
+            "both": cls.KEEP_BOTH,
+            "keepfirst": cls.KEEP_FIRST,
+            "first": cls.KEEP_FIRST,
+            "keepsecond": cls.KEEP_SECOND,
+            "second": cls.KEEP_SECOND,
+            "duplicate": cls.MERGE,
+        }
+
+
 # ─── Acceptance Criterion & Dependency ────────────────────────────────────────
 
 class AcceptanceCriterion(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4())[:8])
     condition: str                                   # The testable statement
     type: AcceptanceCriterionType = AcceptanceCriterionType.FUNCTIONAL
-    verified_by: str = "test"                        # test | review | demo | inspection
+    verified_by: VerifiedBy = VerifiedBy.TEST        # test | review | demo | inspection
 
 
 class TaskDependency(BaseModel):
     target_ref: str                                  # Sibling task title or external ref
     reason: str                                      # One-line why
-    kind: str = "blocks"                             # blocks | relates_to | duplicates
+    kind: DependencyKind = DependencyKind.BLOCKS     # blocks | relates_to | duplicates
 
 
 def normalize_acceptance_criteria(
@@ -227,7 +320,7 @@ class AuditEntry(BaseModel):
 class DedupDecision(BaseModel):
     task_id_a: str
     task_id_b: str
-    decision: str   # "merge" | "keep_both" | "keep_first" | "keep_second"
+    decision: DedupDecisionType   # "merge" | "keep_both" | "keep_first" | "keep_second"
     reason: str
 
 

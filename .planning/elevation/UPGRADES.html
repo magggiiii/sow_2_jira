@@ -133,10 +133,10 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-14 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">20</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;232</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">12</div><div class="lab">Clean commits on the branch</div></div>
-      <div class="metric"><div class="num">4<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
+      <div class="metric"><div class="num">21</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;299</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">14</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
 
@@ -149,7 +149,7 @@
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.62)"></i></div><div class="wpct">62%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="plan" style="transform:scaleX(.04)"></i></div><div class="wpct">Planned</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.35)"></i></div><div class="wpct">35%</div></div>
@@ -285,6 +285,17 @@
         <p class="why"><span class="wl">Better</span>Pushing hundreds of tickets is now safe to retry and honest about partial failures — and the headline feature finally has real tests.</p>
       </div>
     </div>
+    <!-- DOMAIN ENUMS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Domain model — normalizing enums</h3><span class="sha">3c13cc8</span></div>
+      <div class="inc-sub reveal">Closed-set fields hardened against dirty LLM output. +23 test functions (67 cases).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Dirty model output coerces instead of silently mis-routing</h4><span class="tag">H-23 · INV-1</span></div>
+        <p class="what">Turned three free-text decision fields into typed enums that normalize messy LLM values.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Fields like the dedup decision were plain strings, so a model emitting <code>KEEP_BOTH</code> vs <code>keep_both</code> vs <code>keep both</code> could silently mis-route a comparison — the same class of bug behind dedup oddities.</div><div class="cell after"><span class="lbl">After</span>They're <code>str</code>-enums with a normalizer that coerces case/whitespace/alias drift to the right member and <em>fails loudly</em> on genuinely-unknown values — every existing string comparison still works unchanged.</div></div>
+        <p class="why"><span class="wl">Better</span>The contract is self-defending: dirty-but-known input is absorbed, unknown input errors visibly instead of slipping through.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -315,7 +326,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-14 · branch elevation/wave-0 · 232 tests green
+    Updated 2026-06-14 · branch elevation/wave-0 · 299 tests green
   </footer>
 
 </div>

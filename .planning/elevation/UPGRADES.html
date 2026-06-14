@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-14 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">22</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;323</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">16</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">23</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;331</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">18</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -307,6 +307,17 @@
         <p class="why"><span class="wl">Better</span>One audited place decides "is this verdict trustworthy?", and bad confidence values can't silently propagate.</p>
       </div>
     </div>
+    <!-- INSTRUCTOR -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — Instructor structured-output path</h3><span class="sha">93030df</span></div>
+      <div class="inc-sub reveal">The dependency + mechanism for guaranteed-valid LLM output, on the AgentRunner seam. +8 tests. Additive.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A validated structured-output method, ready for agents to adopt</h4><span class="tag">instructor 1.15.1</span></div>
+        <p class="what">Installed Instructor and added <code>AgentRunner.complete_structured</code> — returns a validated Pydantic object instead of scraped text.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The only model path was <code>complete_json</code> — prompt-asks-for-JSON then regex/parse, with no schema enforcement at the provider.</div><div class="cell after"><span class="lbl">After</span><code>complete_structured(response_model=…)</code> uses Instructor over LiteLLM to return a guaranteed-valid model (or a typed error) — the mechanism behind the full C-5 fix. Agents migrate onto it next, one call site each.</div></div>
+        <p class="why"><span class="wl">Better</span>The structured-output engine is in place and tested; adopting it per agent changes one call, not the parsing.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -337,7 +348,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-14 · branch elevation/wave-0 · 323 tests green
+    Updated 2026-06-14 · branch elevation/wave-0 · 331 tests green
   </footer>
 
 </div>

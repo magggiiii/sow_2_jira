@@ -23,20 +23,44 @@ today (``prompt``, ``system``, ``agent_name``, ``node_id``, and ``max_tokens``
 only when the spec sets it). It does not invent temperature or other kwargs, so
 routing an agent through it cannot change the underlying request.
 
-Additive module — importing it pulls in only ``core.*`` and ``pydantic`` (for
-the ``ValidationError`` type). No litellm/jira/network imports.
+A third, OPTIONAL entrypoint :meth:`complete_structured` uses the ``instructor``
+library over ``litellm`` to return a *validated* Pydantic instance directly
+(instructor handles the JSON-mode request and the ``model_validate`` round-trip,
+retrying the model on its own when validation fails). It is purely additive and
+is NOT wired into any agent — agents keep calling ``complete_json``. It exists
+so future agents can opt into provider-native structured output without
+re-implementing the strip/parse/validate dance in ``complete_json``.
+
+Additive module — ``complete_json`` / ``run`` pull in only ``core.*`` and
+``pydantic``. ``complete_structured`` lazily imports ``instructor``/``litellm``
+*inside the method* so that importing this module (and the seam the agents use)
+never drags in litellm/network unless structured output is actually requested.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Optional, Union
+from typing import Any, Optional, Type, TypeVar, Union
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from core.agent_spec import AgentSpec
 from core.ports import LLMProvider
 from core.results import StageResult
+
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class InstructorError(RuntimeError):
+    """Raised when instructor-backed structured output cannot be produced.
+
+    Wraps any failure of :meth:`AgentRunner.complete_structured` — an
+    instructor/litellm call error, a validation failure that instructor could
+    not satisfy, or an unresolvable model — so callers get one explicit, typed
+    failure instead of a silent ``None``. The original cause is chained via
+    ``raise ... from`` so the underlying provider/validation error is preserved.
+    """
 
 
 class AgentRunner:
@@ -79,6 +103,124 @@ class AgentRunner:
             node_id=node_id,
             max_tokens=max_tokens,
         )
+
+    # ─── Instructor-backed structured output (validated Pydantic) ─────────────
+
+    def _resolve_model(self) -> str:
+        """
+        Resolve the litellm model string the same way ``LLMClient`` does.
+
+        ``LLMClient.__init__`` sets ``self.model = self.provider_config.model``
+        (from :func:`pipeline.llm_router.configure_litellm_for_mode`). We read
+        the provider's ``model`` attribute first (the value an ``LLMClient``
+        instance actually uses), falling back to ``provider_config.model`` if a
+        provider only exposes the config. Raises if neither yields a usable
+        model string so we never silently call litellm with an empty model.
+        """
+        model = getattr(self.llm, "model", None)
+        if not model:
+            provider_config = getattr(self.llm, "provider_config", None)
+            model = getattr(provider_config, "model", None)
+        if not model:
+            raise InstructorError(
+                "complete_structured: could not resolve a model from the LLM "
+                "provider (no .model or .provider_config.model). The provider "
+                "must expose the resolved litellm model string."
+            )
+        return str(model)
+
+    def complete_structured(
+        self,
+        *,
+        prompt: str,
+        response_model: Type[T],
+        system: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        agent_name: Optional[str] = None,
+        node_id: Optional[str] = None,
+    ) -> T:
+        """
+        Return a VALIDATED ``response_model`` instance via instructor + litellm.
+
+        Unlike ``complete_json`` (which returns a bare list/dict the caller then
+        validates itself), this asks the provider for structured output and lets
+        ``instructor`` enforce the schema: it builds a client over
+        ``litellm.completion`` — inheriting the SAME global litellm config the
+        ``LLMClient`` already configures (api_key/api_base/etc. resolved via
+        ``configure_litellm_for_mode``) — and calls
+        ``client.chat.completions.create(..., response_model=response_model)``.
+        The returned object is an already-``model_validate``-d instance of
+        ``response_model``.
+
+        Parameters
+        ----------
+        prompt:
+            The user-turn content.
+        response_model:
+            A Pydantic v2 model class to validate the model output into.
+        system:
+            Optional system-turn content. Omitted from the messages when None.
+        max_tokens:
+            Output token cap. Defaults to 8192 (payload-sized, matching
+            ``complete_json``'s default) when None.
+        agent_name / node_id:
+            Carried for parity with the other entrypoints; unused by the call
+            itself but accepted so a future agent's call site matches
+            ``complete_json``.
+
+        Returns
+        -------
+        An instance of ``response_model`` (validated).
+
+        Raises
+        ------
+        InstructorError
+            On any instructor/litellm call failure, on a validation failure
+            instructor could not satisfy, or if the model cannot be resolved.
+            Never returns ``None``.
+        """
+        model = self._resolve_model()
+
+        # Lazy imports: keep litellm/instructor out of module import time so the
+        # complete_json seam the agents use stays free of network deps.
+        try:
+            import instructor
+            import litellm
+        except Exception as e:  # pragma: no cover - import wiring guard
+            raise InstructorError(
+                f"complete_structured: instructor/litellm unavailable: {e}"
+            ) from e
+
+        messages: list[dict[str, str]] = []
+        if system is not None:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            client = instructor.from_litellm(litellm.completion)
+            result = client.chat.completions.create(
+                model=model,
+                response_model=response_model,
+                max_tokens=max_tokens if max_tokens is not None else 8192,
+                messages=messages,
+            )
+        except Exception as e:
+            # instructor raises its own ValidationError-wrapping/InstructorRetry
+            # error on unsatisfiable schemas, and litellm raises on call
+            # failures. Collapse both into one typed, non-silent error.
+            raise InstructorError(
+                f"complete_structured failed for agent "
+                f"{agent_name or 'unknown'} (model={model}): {e}"
+            ) from e
+
+        # Defensive: instructor should always hand back a validated instance,
+        # but never let a None / wrong-type slip through silently.
+        if not isinstance(result, response_model):
+            raise InstructorError(
+                "complete_structured: instructor returned "
+                f"{type(result).__name__}, expected {response_model.__name__}"
+            )
+        return result
 
     # ─── Spec-driven run (typed StageResult contract) ─────────────────────────
 
@@ -206,4 +348,4 @@ def _split_result(raw: Any) -> tuple[Any, dict[str, Any]]:
     return raw, {}
 
 
-__all__ = ["AgentRunner"]
+__all__ = ["AgentRunner", "InstructorError"]

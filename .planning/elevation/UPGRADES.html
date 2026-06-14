@@ -130,13 +130,13 @@
     <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
     <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
     <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
-    <p class="updated reveal"><b>Last updated:</b> 2026-06-13 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-06-14 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">19</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;218</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">7</div><div class="lab">Clean commits on the branch</div></div>
-      <div class="metric"><div class="num">3<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
+      <div class="metric"><div class="num">20</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;232</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">12</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">4<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
 
@@ -152,7 +152,7 @@
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="plan" style="transform:scaleX(.04)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="plan" style="transform:scaleX(0)"></i></div><div class="wpct">Planned</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.35)"></i></div><div class="wpct">35%</div></div>
     </div>
   </section>
 
@@ -274,6 +274,17 @@
         <p class="why"><span class="wl">Better</span>One deterministic, auditable place for "is this output trustworthy?" — and every run now carries an OK / DEGRADED / FAILED verdict plus cost.</p>
       </div>
     </div>
+    <!-- WAVE 5 JIRA -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 5 — Jira robustness</h3><span class="sha">cae9c6a</span></div>
+      <div class="inc-sub reveal">Make the Jira push production-grade. Mocked-transport TDD, +14 tests (jira_client.py had none).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Idempotent, rate-limit-aware, honest Jira push</h4><span class="tag">C-11 · H-11 · H-12</span></div>
+        <p class="what">Three real push bugs fixed so a large push survives retries and never lies about success.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A failed/retried push re-created duplicate issues; a single rate-limit (429) became a permanent half-push; and if an Epic/Story failed, its children were silently scattered as top-level issues while the push still reported success.</div><div class="cell after"><span class="lbl">After</span>Tasks remember their <code>jira_issue_key</code> and skip on re-push (no duplicates); 429/5xx are retried with backoff honoring <code>Retry-After</code>; a failed container marks affected children <code>hierarchy_degraded</code> so the UI can surface it.</div></div>
+        <p class="why"><span class="wl">Better</span>Pushing hundreds of tickets is now safe to retry and honest about partial failures — and the headline feature finally has real tests.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -304,7 +315,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-13 · branch elevation/wave-0 · 218 tests green
+    Updated 2026-06-14 · branch elevation/wave-0 · 232 tests green
   </footer>
 
 </div>

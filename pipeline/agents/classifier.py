@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner
+from models.schemas import UnitInterval
 from pipeline.llm_client import LLMClient
 
 
@@ -41,7 +42,8 @@ class SectionType(str, Enum):
 class ClassificationResult(BaseModel):
     node_id: str
     type: SectionType
-    confidence: float = Field(ge=0.0, le=1.0)
+    # CONF-1: clamped into [0,1] before ge/le, so an out-of-range value coerces.
+    confidence: UnitInterval = Field(ge=0.0, le=1.0)
     reason: str
 
 

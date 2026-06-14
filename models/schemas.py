@@ -3,10 +3,46 @@
 from __future__ import annotations
 import contextvars
 from enum import Enum
-from typing import Optional, Union
+from typing import Annotated, Optional, Union
 from uuid import UUID, uuid4
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
 import datetime
+
+
+# ─── Confidence / score bounding (CONF-1, audit data_model "bound confidence") ─
+
+def clamp_unit_interval(value):
+    """
+    Coerce a numeric confidence/score into the closed unit interval [0.0, 1.0].
+
+    LLM output regularly emits an out-of-range confidence (e.g. 1.5 or -0.3).
+    Rather than reject the whole record (losing otherwise-usable data) or store
+    the raw value (which poisons every downstream ``>= floor`` comparison and
+    ``:.2f`` render), we clamp: ``>1 -> 1.0``, ``<0 -> 0.0``, in-range unchanged.
+
+    This mirrors the ``_NormalizedStrEnum`` philosophy of absorbing
+    dirty-but-numeric LLM output. ``None`` passes through untouched so it can be
+    composed with Optional fields. Genuinely non-numeric input is handed back
+    unchanged for Pydantic's normal coercion/validation to reject.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        # Let Pydantic's normal float coercion/validation handle non-numerics.
+        return value
+    if f < 0.0:
+        return 0.0
+    if f > 1.0:
+        return 1.0
+    return f
+
+
+# Reusable Annotated type for confidence/score fields. The BeforeValidator runs
+# *before* any ``Field(ge=..., le=...)`` constraint, so an out-of-range LLM value
+# is clamped into range and therefore stays valid instead of being rejected.
+UnitInterval = Annotated[float, BeforeValidator(clamp_unit_interval)]
 
 
 # ─── LLM Config ────────────────────────────────────────────────────────────────
@@ -242,7 +278,9 @@ class RawTask(BaseModel):
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
     mockup_prototype: Optional[str] = None
-    confidence: float = Field(ge=0.0, le=1.0)
+    # CONF-1: clamped into [0,1]; the BeforeValidator runs before ge/le so an
+    # out-of-range LLM value is coerced rather than rejected.
+    confidence: UnitInterval = Field(ge=0.0, le=1.0)
     flags: list[str] = Field(default_factory=list)
     continues_to_next: bool = False
     dependencies: list[TaskDependency] = Field(default_factory=list)
@@ -262,7 +300,7 @@ class ManagedTask(BaseModel):
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
     mockup_prototype: Optional[str] = None
-    confidence: float
+    confidence: UnitInterval  # CONF-1: clamped into [0,1]
     flags: list[TaskFlag] = Field(default_factory=list)
     continues_to_next: bool = False
     status: TaskStatus = TaskStatus.OPEN

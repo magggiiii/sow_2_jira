@@ -66,3 +66,22 @@ def test_confidence_exactly_at_threshold_flags():
     """Boundary: checker_confidence == min_confidence counts as confident enough."""
     report = _report(checker_confidence=0.6, missed=True)
     assert should_flag_section_incomplete(report, min_confidence=0.6) is True
+
+
+def test_gate_decides_via_confidence_gate(monkeypatch):
+    """CONF-2: the confidence comparison routes through core.guardrails.ConfidenceGate."""
+    import core.guardrails as guardrails
+
+    calls: list[tuple[float, float]] = []
+    real_admit_value = guardrails.ConfidenceGate.admit_value
+
+    def _spy(self, value):
+        calls.append((self.floor, float(value)))
+        return real_admit_value(self, value)
+
+    monkeypatch.setattr(guardrails.ConfidenceGate, "admit_value", _spy)
+
+    report = _report(checker_confidence=0.6, missed=True)
+    assert should_flag_section_incomplete(report, min_confidence=0.6) is True
+    # The gate (floor==min_confidence) was consulted with the checker_confidence.
+    assert (0.6, 0.6) in calls

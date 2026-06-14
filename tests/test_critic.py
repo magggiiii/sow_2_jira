@@ -338,3 +338,55 @@ def test_invalid_json_response_returns_unmodified():
     assert report.auto_fixed_count == 0
     assert report.flagged_count == 0
     assert report.critiques == []
+
+
+# ─── CONF-2: ConfidenceGate is the flag-floor decision path ────────────────────
+
+def test_flag_gate_is_a_confidence_gate_on_the_floor():
+    """The critic's flag floor is wired to core.guardrails.ConfidenceGate."""
+    from core.guardrails import ConfidenceGate
+
+    critic = _make_critic(llm_response=[])
+    assert isinstance(critic._flag_gate, ConfidenceGate)
+    assert critic._flag_gate.field == "confidence"
+    assert critic._flag_gate.floor == critic.flag_confidence_floor
+
+
+def test_critique_just_below_floor_not_flagged_just_at_floor_flagged():
+    """Boundary on the gate: below the floor is a no-op; exactly at the floor flags."""
+    # Just below the 0.5 floor -> no flag, no mutation.
+    below_task = _make_task(title="User Authentication")
+    below_flags = list(below_task.flags)
+    critic_below = _make_critic(llm_response=[
+        {
+            "task_id": str(below_task.id),
+            "issues": ["too_broad"],
+            "suggested_title": None,
+            "suggested_acceptance_criteria": None,
+            "confidence": 0.49,  # below floor
+            "reason": "Just under the floor.",
+        }
+    ])
+    fixed_below, report_below = critic_below.critique(
+        [below_task], section_text="...", node=_node()
+    )
+    assert fixed_below[0].flags == below_flags
+    assert report_below.flagged_count == 0
+
+    # Exactly at the 0.5 floor -> flag applied (inclusive >=).
+    at_task = _make_task(title="User Authentication")
+    critic_at = _make_critic(llm_response=[
+        {
+            "task_id": str(at_task.id),
+            "issues": ["too_broad"],
+            "suggested_title": None,
+            "suggested_acceptance_criteria": None,
+            "confidence": 0.5,  # exactly at floor
+            "reason": "At the floor.",
+        }
+    ])
+    fixed_at, report_at = critic_at.critique(
+        [at_task], section_text="...", node=_node()
+    )
+    assert TaskFlag.AMBIGUOUS_SCOPE in fixed_at[0].flags
+    assert report_at.flagged_count == 1

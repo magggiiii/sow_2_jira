@@ -32,10 +32,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner
+from core.guardrails import ConfidenceGate
 from models.schemas import (
     AcceptanceCriterion,
     ManagedTask,
     TaskFlag,
+    UnitInterval,
     normalize_acceptance_criteria,
 )
 from pipeline.llm_client import LLMClient
@@ -58,7 +60,7 @@ class TaskCritique(BaseModel):
     issues: list[CritiqueIssue] = Field(default_factory=list)
     suggested_title: Optional[str] = None
     suggested_acceptance_criteria: Optional[list[AcceptanceCriterion]] = None
-    confidence: float = 0.0
+    confidence: UnitInterval = 0.0  # CONF-1: clamped into [0,1]
     reason: str = ""
 
 
@@ -166,6 +168,14 @@ class TaskCritic:
         self.run_id = run_id
         self.auto_fix_threshold = auto_fix_threshold
         self.flag_confidence_floor = flag_confidence_floor
+        # CONF-2: the flag-floor decision is delegated to the shared, pure
+        # ConfidenceGate so this and coverage use one consolidated gate. Same
+        # `>=` semantics and same numeric floor as the prior inline comparison.
+        self._flag_gate = ConfidenceGate(
+            field="confidence",
+            floor=flag_confidence_floor,
+            on_reject="flag_low_confidence",
+        )
 
     # ─── Public API ──────────────────────────────────────────────────────────
 
@@ -254,7 +264,7 @@ class TaskCritic:
             elif (
                 critique.issues
                 and not _only_nothing_to_fix(critique.issues)
-                and critique.confidence >= self.flag_confidence_floor
+                and self._flag_gate.admit(critique)
             ):
                 # Audit H-3: only count as flagged when the critique cleared the
                 # confidence floor (below-floor critiques are no-ops).
@@ -366,7 +376,8 @@ class TaskCritic:
             return False
 
         # Audit H-3: below the confidence floor we neither mutate nor flag.
-        if critique.confidence < self.flag_confidence_floor:
+        # CONF-2: same `>=` floor, now delegated to the shared ConfidenceGate.
+        if not self._flag_gate.admit(critique):
             return False
 
         # 1. Missing AC — any confidence, only if the task currently has none.

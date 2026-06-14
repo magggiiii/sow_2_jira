@@ -29,9 +29,11 @@ from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner
+from core.guardrails import ConfidenceGate
 from models.schemas import (
     AcceptanceCriterion,
     ManagedTask,
+    UnitInterval,
     normalize_acceptance_criteria,
 )
 from pipeline.llm_client import LLMClient
@@ -42,7 +44,8 @@ from pipeline.llm_client import LLMClient
 class MissedItem(BaseModel):
     """A concrete actionable deliverable the LLM thinks was dropped."""
     description: str                              # The missed deliverable, 1-2 sentences
-    confidence: float = Field(ge=0.0, le=1.0)     # Checker confidence this IS a miss
+    # CONF-1: clamped into [0,1] before ge/le, so an out-of-range value coerces.
+    confidence: UnitInterval = Field(ge=0.0, le=1.0)   # Checker confidence this IS a miss
     reason: str                                   # Why it's an actionable miss
 
 
@@ -51,7 +54,7 @@ class SectionCoverageReport(BaseModel):
     node_id: str
     extracted_count: int
     missed_items: list[MissedItem] = Field(default_factory=list)
-    checker_confidence: float = 0.0               # Overall confidence in the report
+    checker_confidence: UnitInterval = 0.0        # CONF-1: clamped into [0,1]
     checked_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 
 
@@ -80,7 +83,10 @@ def should_flag_section_incomplete(
     """
     if not report.missed_items:
         return False
-    return report.checker_confidence >= min_confidence
+    # CONF-2: same inclusive `>=` floor, delegated to the shared ConfidenceGate
+    # so the critic and coverage share one consolidated confidence gate.
+    gate = ConfidenceGate(field="checker_confidence", floor=min_confidence)
+    return gate.admit_value(report.checker_confidence)
 
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────

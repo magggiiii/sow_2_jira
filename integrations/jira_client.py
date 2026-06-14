@@ -2,8 +2,9 @@
 
 import json
 import os
+import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, TypeVar, Union
 from jira import JIRA
 from models.schemas import (
     AcceptanceCriterion,
@@ -15,6 +16,95 @@ from models.schemas import (
 )
 from audit.logger import AuditLogger
 from pipeline.observability import logger, tracer, trace_span
+
+# Module-level sleep hook so tests can patch backoff to be instant
+# (monkeypatch integrations.jira_client._sleep). Production sleeps for real.
+_sleep = time.sleep
+
+# Bounded-retry tuning (audit H-12). Kept small so a flaky push degrades to a
+# short delay, never an unbounded loop.
+_MAX_RETRY_ATTEMPTS = 4  # total attempts including the first
+_BASE_BACKOFF_SECONDS = 1.0
+_MAX_BACKOFF_SECONDS = 30.0
+
+T = TypeVar("T")
+
+
+def _retry_after_seconds(error: Exception) -> Optional[float]:
+    """Extract a Retry-After hint (seconds) from a Jira error if present."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_rate_limited(error: Exception) -> bool:
+    """True for HTTP 429 / textual rate-limit errors."""
+    if getattr(error, "status_code", None) == 429:
+        return True
+    text = (str(error) or "").lower()
+    return "429" in text or "rate limit" in text or "too many requests" in text
+
+
+def _is_server_error(error: Exception) -> bool:
+    """True for transient HTTP 5xx errors."""
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int) and 500 <= status <= 599:
+        return True
+    return False
+
+
+def _with_retry(
+    fn: Callable[[], T],
+    *,
+    description: str,
+    max_attempts: int = _MAX_RETRY_ATTEMPTS,
+) -> T:
+    """
+    Run `fn` with a bounded retry on transient Jira failures.
+
+    Retry policy (audit H-12):
+      - 429 / rate-limit: honor a Retry-After hint when present, otherwise
+        exponential backoff.
+      - 5xx: exponential backoff.
+      - anything else: re-raise immediately (today's behavior is preserved).
+
+    Sleeps go through the module-level `_sleep` hook so tests can patch them.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 — classify, then re-raise or retry
+            rate_limited = _is_rate_limited(e)
+            server_error = _is_server_error(e)
+            if not (rate_limited or server_error):
+                raise  # non-retryable: behave as before
+            if attempt >= max_attempts:
+                logger.warning(
+                    f"{description}: giving up after {attempt} attempts ({e})"
+                )
+                raise
+            if rate_limited:
+                delay = _retry_after_seconds(e)
+                if delay is None:
+                    delay = _BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            else:
+                delay = _BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            delay = min(delay, _MAX_BACKOFF_SECONDS)
+            logger.warning(
+                f"{description}: transient error (attempt {attempt}/{max_attempts}), "
+                f"backing off {delay}s ({e})"
+            )
+            _sleep(delay)
 
 class JiraClient:
 
@@ -153,6 +243,16 @@ class JiraClient:
                 parent_key = epic_cache.get(cache_key)
                 # Next-Gen Fix: Always pass parent_key to _create_task to be used in 'parent' field
                 result = self._create_task(task, parent_key=parent_key, issue_type=task_type)
+                # H-11: a missing parent here means the Epic container create
+                # failed. We still created the child, but flag the lost hierarchy
+                # so the caller/UI doesn't read it as a clean, structured push.
+                if parent_key is None and result.success:
+                    self._mark_hierarchy_degraded(
+                        result,
+                        task,
+                        f"Epic container '{container_title}' could not be created; "
+                        f"task created flat (no parent)",
+                    )
                 results.append(result)
 
         elif self.hierarchy == JiraHierarchy.STORY_SUBTASK:
@@ -172,6 +272,16 @@ class JiraClient:
                 parent_key = story_cache.get(cache_key)
                 # Next-Gen Fix: Works identically for stories and sub-tasks via 'parent' field
                 result = self._create_task(task, parent_key=parent_key, issue_type=subtask_type)
+                # H-11: a missing parent here means the Story container create
+                # failed. We still created the child, but flag the lost hierarchy
+                # so the caller/UI doesn't read it as a clean, structured push.
+                if parent_key is None and result.success:
+                    self._mark_hierarchy_degraded(
+                        result,
+                        task,
+                        f"Story container '{container_title}' could not be created; "
+                        f"sub-task created flat (no parent)",
+                    )
                 results.append(result)
 
         # Second pass: resolve task-to-task dependencies into Jira issue links.
@@ -248,12 +358,19 @@ class JiraClient:
                     continue  # don't self-link
                 link_type = link_type_map.get((dep.kind or "blocks").lower(), "Relates")
                 try:
-                    # inwardIssue=source (this task is blocked by target),
-                    # outwardIssue=target. The jira SDK accepts both kwargs.
-                    self.jira.create_issue_link(
-                        type=link_type,
-                        inwardIssue=source_key,
-                        outwardIssue=target_key,
+                    # The source task DEPENDS ON target_ref. For a "Blocks"
+                    # link the dependency means the TARGET is the blocker (the
+                    # source cannot proceed until the target is done): the
+                    # target is the OUTWARD ("blocks") side and the dependent
+                    # source is the INWARD ("is blocked by") side.
+                    # The jira SDK accepts both kwargs.
+                    _with_retry(
+                        lambda: self.jira.create_issue_link(
+                            type=link_type,
+                            outwardIssue=target_key,
+                            inwardIssue=source_key,
+                        ),
+                        description=f"create_issue_link({target_key}->{source_key})",
                     )
                     linked += 1
                     self.audit.log(
@@ -385,10 +502,53 @@ class JiraClient:
     # REMOVED _link_to_epic: Standard Agile API is incompatible with Next-Gen projects.
     # All linking is now handled via the 'parent' field in _create_task.
 
+    def _mark_hierarchy_degraded(
+        self, result: JiraPushResult, task: ManagedTask, reason: str
+    ) -> None:
+        """
+        Flag a successfully-created-but-parentless child (audit H-11).
+
+        When an Epic/Story container create fails (or a parent link is
+        rejected), the child is still created flat. We surface that on the
+        result so the caller/UI can see the requested hierarchy was not honored,
+        instead of silently reporting a clean success.
+        """
+        result.hierarchy_degraded = True
+        result.hierarchy_degraded_reason = reason
+        logger.warning(f"Hierarchy degraded for task {task.id}: {reason}")
+        self.audit.log(
+            run_id=self.run_id,
+            agent="JiraClient",
+            action="HIERARCHY_DEGRADED",
+            task_id=str(task.id),
+            detail=reason,
+        )
+
     @trace_span("JIRA_CREATE_ISSUE", agent="JiraClient")
     def _create_task(
         self, task: ManagedTask, parent_key: str | None, issue_type: str
     ) -> JiraPushResult:
+        # Idempotency (audit C-11): a task that already carries a Jira issue key
+        # was pushed before. Skip create_issue and report it as already-pushed
+        # so a re-push doesn't duplicate the issue.
+        if task.jira_issue_key:
+            logger.info(
+                f"Task {task.id} already pushed as {task.jira_issue_key}; skipping create"
+            )
+            self.audit.log(
+                run_id=self.run_id,
+                agent="JiraClient",
+                action="PUSH_SKIPPED",
+                task_id=str(task.id),
+                detail=f"Already pushed as {task.jira_issue_key}; skipping create",
+            )
+            return JiraPushResult(
+                task_id=task.id,
+                success=True,
+                jira_issue_key=task.jira_issue_key,
+                jira_issue_url=f"{self.server}/browse/{task.jira_issue_key}",
+            )
+
         fields = self._build_fields(task, issue_type)
 
         with tracer.start_as_current_span(f"PUSH_{task.title[:30]}") as span:
@@ -401,9 +561,15 @@ class JiraClient:
                 fields["parent"] = {"key": parent_key}
 
             try:
-                issue = self.jira.create_issue(fields=fields)
+                issue = _with_retry(
+                    lambda: self.jira.create_issue(fields=fields),
+                    description=f"create_issue({issue_type})",
+                )
                 logger.info(f"Created Jira {issue_type}: {issue.key}")
-                
+                # Record the key on the task so a re-push of this in-memory
+                # batch skips it (idempotency, audit C-11).
+                task.jira_issue_key = issue.key
+
                 self.audit.log(
                     run_id=self.run_id,
                     agent="JiraClient",
@@ -415,7 +581,7 @@ class JiraClient:
                     task_id=task.id,
                     success=True,
                     jira_issue_key=issue.key,
-                    jira_issue_url=f"{self.server}/browse/{issue.key}"
+                    jira_issue_url=f"{self.server}/browse/{issue.key}",
                 )
             except Exception as e:
                 error_str = str(e)
@@ -433,15 +599,29 @@ class JiraClient:
                     )
                     fields.pop("parent", None)
                     try:
-                        issue = self.jira.create_issue(fields=fields)
+                        issue = _with_retry(
+                            lambda: self.jira.create_issue(fields=fields),
+                            description=f"create_issue({issue_type}, flat-fallback)",
+                        )
                         logger.success(f"Fallback created Jira {issue.key}")
-                        return JiraPushResult(
+                        # Record the key so a re-push skips it (idempotency).
+                        task.jira_issue_key = issue.key
+                        # H-11: the parent link was requested but rejected, so the
+                        # child landed flat — that is a degraded hierarchy too.
+                        fallback_result = JiraPushResult(
                             task_id=task.id,
                             success=True,
                             jira_issue_key=issue.key,
                             jira_issue_url=f"{self.server}/browse/{issue.key}",
-                            warning="Created without parent (flat fallback)"
+                            warning="Created without parent (flat fallback)",
                         )
+                        self._mark_hierarchy_degraded(
+                            fallback_result,
+                            task,
+                            f"Parent link to '{parent_key}' rejected; "
+                            f"task created flat (no parent)",
+                        )
+                        return fallback_result
                     except Exception as e2:
                         logger.error(f"Fallback failed too: {e2}")
                         return JiraPushResult(
@@ -468,7 +648,10 @@ class JiraClient:
                 "summary": f"[SOW] {section_title[:240]}",
                 "issuetype": {"name": issue_type},
             }
-            issue = self.jira.create_issue(fields=fields)
+            issue = _with_retry(
+                lambda: self.jira.create_issue(fields=fields),
+                description=f"create_container({issue_type})",
+            )
             logger.success(f"Created {issue_type}: {issue.key}")
             return issue.key
         except Exception as e:

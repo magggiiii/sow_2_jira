@@ -173,6 +173,7 @@ class ManagedTask(BaseModel):
     flags: list[TaskFlag] = Field(default_factory=list)
     continues_to_next: bool = False
     status: TaskStatus = TaskStatus.OPEN
+    jira_issue_key: Optional[str] = None  # Set once pushed; presence makes re-push idempotent (skip create)
     source_refs: list[SourceRef] = Field(default_factory=list)  # Can span multiple nodes
     merged_from: list[UUID] = Field(default_factory=list)       # IDs merged into this task
     dependencies: list[TaskDependency] = Field(default_factory=list)
@@ -239,3 +240,10 @@ class JiraPushResult(BaseModel):
     jira_issue_url: Optional[str] = None
     error: Optional[str] = None
     warning: Optional[str] = None
+    # JIRA-4 (audit H-11): set True when an Epic/Story container create failed
+    # and this child was created flat (parentless) instead of under its intended
+    # container. The push still succeeds, but the requested hierarchy was not
+    # honored, so the caller/UI can surface it. `hierarchy_degraded_reason`
+    # carries a short human-readable explanation when degraded.
+    hierarchy_degraded: bool = False
+    hierarchy_degraded_reason: Optional[str] = None

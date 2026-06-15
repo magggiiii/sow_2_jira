@@ -130,6 +130,17 @@ class SectionClassifier:
 
         snippet = (section_text or "").strip()
         if len(snippet) > self.max_section_chars:
+            # A4: surface truncation rather than silently clipping the snippet.
+            self.audit.log(
+                run_id=self.run_id,
+                agent="SectionClassifier",
+                node_id=node_id,
+                action="SECTION_TRUNCATED",
+                detail=(
+                    f"Section '{title}' snippet truncated {len(snippet)} → "
+                    f"{self.max_section_chars} chars for classification"
+                ),
+            )
             snippet = snippet[: self.max_section_chars]
 
         # Empty / trivially short sections get a deterministic MIXED so the

@@ -200,6 +200,41 @@ def test_extraction_low_confidence_flag_unchanged():
     assert "LOW_CONFIDENCE" not in solid.flags
 
 
+# ─── A4: surface section truncation (warn + flag, not silent drop) ───────────
+
+
+def test_extraction_flags_truncation_on_oversize_section():
+    """A section longer than max_section_chars is truncated — the tasks extracted
+    from it carry a TRUNCATION flag and the run records a SECTION_TRUNCATED audit
+    row, so dense pages don't silently lose tasks."""
+    audit = _DummyAudit()
+    agent = TaskExtractionAgent(
+        llm_client=MagicMock(), audit_logger=audit, run_id="r1", max_section_chars=100
+    )
+    _stub_structured(agent, returns=ExtractionResult(tasks=[_raw_task("Big task")]))
+
+    long_section = "This section is densely packed with requirements. " * 20  # > 100 chars
+    tasks = agent.extract(_node(), long_section)
+
+    assert len(tasks) == 1
+    assert TaskFlag.TRUNCATION.value in tasks[0].flags
+    assert any(r.get("action") == "SECTION_TRUNCATED" for r in audit.records)
+
+
+def test_extraction_no_truncation_flag_when_within_limit():
+    """A section within max_section_chars is NOT flagged and logs no truncation."""
+    audit = _DummyAudit()
+    agent = TaskExtractionAgent(
+        llm_client=MagicMock(), audit_logger=audit, run_id="r1", max_section_chars=16000
+    )
+    _stub_structured(agent, returns=ExtractionResult(tasks=[_raw_task("Normal task")]))
+
+    tasks = agent.extract(_node(), _section_text())
+
+    assert TaskFlag.TRUNCATION.value not in tasks[0].flags
+    assert not any(r.get("action") == "SECTION_TRUNCATED" for r in audit.records)
+
+
 def test_extraction_short_section_skipped():
     """Existing < 50 char guard still short-circuits before the LLM call."""
     audit = _DummyAudit()

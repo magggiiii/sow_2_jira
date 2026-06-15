@@ -234,3 +234,25 @@ def test_classifier_confidence_outside_range_is_clamped():
     result = clf.classify(_node(), _section_text())
     assert result.confidence == 1.0
     assert result.type == SectionType.ACTIONABLE
+
+
+# ─── A4: surface section truncation ───────────────────────────────────────────
+
+
+def test_classifier_logs_section_truncated_on_oversize_section():
+    """When the classifier truncates an oversize snippet it records a
+    SECTION_TRUNCATED audit row instead of silently clipping."""
+    audit = _DummyAudit()
+    clf = SectionClassifier(
+        llm_client=MagicMock(), audit_logger=audit, run_id="r1", max_section_chars=100
+    )
+    _with_structured(
+        clf,
+        returns=RawClassification(
+            type=SectionType.ACTIONABLE, confidence=0.9, reason="dense"
+        ),
+    )
+
+    clf.classify(_node(), "x" * 500)  # 500 > 100 → truncated
+
+    assert any(r.get("action") == "SECTION_TRUNCATED" for r in audit.records)

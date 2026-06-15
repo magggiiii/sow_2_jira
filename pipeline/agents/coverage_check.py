@@ -283,6 +283,17 @@ class CoverageChecker:
     ) -> str:
         text = section_text
         if len(text) > self.max_section_chars:
+            # A4: surface truncation rather than silently clipping.
+            self.audit.log(
+                run_id=self.run_id,
+                agent="CoverageChecker",
+                node_id=node.get("node_id", ""),
+                action="SECTION_TRUNCATED",
+                detail=(
+                    f"Section '{node.get('title', '')}' truncated {len(text)} → "
+                    f"{self.max_section_chars} chars for coverage check"
+                ),
+            )
             text = text[: self.max_section_chars] + "\n\n[NOTE: section truncated for audit]"
 
         extracted_summary = self._summarize_extracted(extracted_tasks)

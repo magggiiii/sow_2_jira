@@ -202,3 +202,29 @@ def test_invalid_json_response_returns_empty_report():
     actions = [call.kwargs.get("action") for call in audit.log.call_args_list]
     assert "COVERAGE_CHECK_ERROR" in actions
     assert "COVERAGE_CHECK" not in actions
+
+
+# ─── A4: surface section truncation ───────────────────────────────────────────
+
+
+class _RecordingAudit:
+    def __init__(self):
+        self.records = []
+
+    def log(self, **kwargs):
+        self.records.append(kwargs)
+
+
+def test_coverage_logs_section_truncated_on_oversize_section():
+    """When the coverage checker truncates an oversize section it records a
+    SECTION_TRUNCATED audit row."""
+    audit = _RecordingAudit()
+    checker = CoverageChecker(
+        llm_client=MagicMock(), audit_logger=audit, run_id="r1",
+        min_confidence=0.6, max_section_chars=100,
+    )
+    _stub_structured(checker, returns=CoverageAudit(missed_items=[]))
+
+    checker.check_section(_node(), "x" * 500, [_managed_task()])  # 500 > 100
+
+    assert any(r.get("action") == "SECTION_TRUNCATED" for r in audit.records)

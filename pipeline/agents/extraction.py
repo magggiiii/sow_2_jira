@@ -264,7 +264,14 @@ class TaskExtractionAgent:
             )
             return []
 
-        if len(section_text) > self.max_section_chars:
+        # A4: surface truncation instead of silently dropping tasks on dense
+        # pages. We record a SECTION_TRUNCATED audit row here and flag every task
+        # extracted from this section with TRUNCATION below, so a reviewer knows
+        # the section was clipped and may have lost work. Raise max_section_chars
+        # (config) for big docs to avoid clipping at all.
+        section_truncated = len(section_text) > self.max_section_chars
+        if section_truncated:
+            original_len = len(section_text)
             section_text = section_text[:self.max_section_chars]
             truncation_notice = (
                 f"\n\n[NOTE: This section was truncated at {self.max_section_chars} characters. "
@@ -272,6 +279,16 @@ class TaskExtractionAgent:
                 f"{node['page_start']}-{node['page_end']} for any tasks not captured here.]"
             )
             section_text += truncation_notice
+            self.audit.log(
+                run_id=self.run_id,
+                agent="ExtractionAgent",
+                node_id=node["node_id"],
+                action="SECTION_TRUNCATED",
+                detail=(
+                    f"Section '{node['title']}' truncated {original_len} → "
+                    f"{self.max_section_chars} chars; extracted tasks flagged TRUNCATION"
+                ),
+            )
 
         prompt = EXTRACTION_PROMPT_TEMPLATE.format(
             section_title=node["title"],
@@ -329,6 +346,9 @@ class TaskExtractionAgent:
             if task.confidence < self.confidence_threshold:
                 if "LOW_CONFIDENCE" not in task.flags:
                     task.flags.append("LOW_CONFIDENCE")
+            # A4: mark tasks from a clipped section so the loss is visible.
+            if section_truncated and "TRUNCATION" not in task.flags:
+                task.flags.append("TRUNCATION")
             task.acceptance_criteria = normalize_acceptance_criteria(
                 task.acceptance_criteria
             )

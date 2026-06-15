@@ -127,6 +127,7 @@ class TaskFlag(str, Enum):
     NO_MOCKUP = "NO_MOCKUP"            # Informational — mockup field is absent
     POTENTIAL_DUPLICATE = "POTENTIAL_DUPLICATE"
     GAP_RECOVERED = "GAP_RECOVERED"   # Was found by Gap Recovery Agent
+    TRUNCATION = "TRUNCATION"         # A4: section was truncated at max_section_chars — tasks may be missing
 
 
 class LLMMode(str, Enum):

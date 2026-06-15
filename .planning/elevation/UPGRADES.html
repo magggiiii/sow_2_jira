@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">31</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;383</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">34</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">32</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;387</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">35</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -144,12 +144,12 @@
   <section>
     <div class="sec-no reveal" style="color:var(--ship)">00 — Progress at a glance</div>
     <h2 class="reveal">The roadmap, and where we are on it.</h2>
-    <p class="sec-intro reveal">Eight tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is newly planned — see <code>SCALE-HARDENING.md</code>.</p>
+    <p class="sec-intro reveal">Eight tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is largely shipped — A1-C2 (resilience, integrity, parallelism, resumability) are done offline; only C3 (durable worker) waits on Wave-2 services. See <code>SCALE-HARDENING.md</code>.</p>
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
-      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.75)"></i></div><div class="wpct">75%</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.88)"></i></div><div class="wpct">88%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -407,6 +407,17 @@
         <p class="why"><span class="wl">Better</span>A long SOW run is now restart-survivable in-process — the durability fix that doesn't yet need the Wave-2 worker.</p>
       </div>
     </div>
+    <!-- C2 CANCEL SEAM + STATUS MIRROR -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — cancel seam + filesystem status (C2) · A1→C2 complete</h3><span class="sha">e57a641</span></div>
+      <div class="inc-sub reveal">A run can be cancelled cleanly mid-loop and its live status survives a restart. Test-first — 4 new tests, suite 383 → 387 green. Completes the offline scale-hardening arc (A1-C2); only C3 (durable worker) waits on Wave-2 services.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A clean cancellation seam — the one the durable worker will bind to</h4><span class="tag">scale · C2</span></div>
+        <p class="what">Added an injectable <code>cancel_check</code> (defaulting to the local stop_event) consulted between nodes, and mirrored live run status to a filesystem JSON.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Cancellation was hard-wired to the in-process <code>stop_event</code>, and live run status lived only in memory — neither survives the move to a durable background worker, and partial status was lost on a restart.</div><div class="cell after"><span class="lbl">After</span><code>_cancelled()</code> consults an injectable <code>cancel_check</code> between nodes/stages (default = <code>stop_event.is_set</code>, zero behavior change; a worker can inject a Redis <code>cancel:{run_id}</code> probe), and <code>_update_status</code> mirrors <code>{step, message, progress}</code> to <code>status.json</code> (atomic) so progress is observable across a restart.</div></div>
+        <p class="why"><span class="wl">Better</span>The cancellation + status surfaces are now seams the Wave-2 durable worker (C3) binds to — closing the offline scale-hardening arc.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -415,7 +426,6 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Cancellable runs <span class="tag">scale · C2</span></h4><p><s>Per-node checkpoint + resume (C1) — shipped.</s> Remaining: a <code>cancel_check</code> seam (so a run can be cancelled cleanly between nodes/stages) — the seam the Wave-2 durable worker binds to (Redis <code>cancel:{run_id}</code>).</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
     </div>

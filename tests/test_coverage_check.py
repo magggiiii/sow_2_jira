@@ -2,13 +2,19 @@
 """
 Wave 2A coverage: semantic per-section coverage check.
 
+C-5 Instructor migration: the coverage call now routes through
+``runner.complete_structured(response_model=CoverageAudit)`` (Instructor-
+validated) instead of ``complete_json``. The mock-point moved to
+``checker.runner.complete_structured`` — returning a validated ``CoverageAudit``
+or raising ``InstructorError``. Every behavioral assertion is preserved.
+
 Six things under test:
 1. Short section -> empty report, no LLM call.
 2. No extracted tasks -> empty report, no LLM call (gap_recovery owns that path).
-3. LLM returns two missed items -> both parse into MissedItem and surface.
+3. LLM returns two missed items -> both surface as MissedItem.
 4. Low-confidence items are filtered when below the checker's min_confidence.
-5. LLM raises -> empty report, COVERAGE_CHECK_ERROR audit row, no crash.
-6. LLM returns non-list JSON -> empty report, error audit row.
+5. Structured output raises -> empty report, COVERAGE_CHECK_ERROR audit row, no crash.
+6. Structured output unparseable -> empty report, error audit row.
 """
 
 from __future__ import annotations
@@ -21,8 +27,10 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from core.agent_runner import InstructorError
 from models.schemas import AcceptanceCriterion, ManagedTask
 from pipeline.agents.coverage_check import (
+    CoverageAudit,
     CoverageChecker,
     MissedItem,
     SectionCoverageReport,
@@ -62,13 +70,29 @@ def _make_checker(llm: MagicMock | None = None, audit: MagicMock | None = None, 
     )
 
 
+def _stub_structured(checker, *, returns=None, raises=None) -> MagicMock:
+    """Stub the C-5 Instructor seam on the checker's runner.
+
+    ``returns`` is the validated ``CoverageAudit`` the runner would hand back;
+    ``raises`` simulates a structured-output failure. Returns the mock so tests
+    can assert call/no-call.
+    """
+    mock = MagicMock()
+    if raises is not None:
+        mock.side_effect = raises
+    else:
+        mock.return_value = returns
+    checker.runner.complete_structured = mock
+    return mock
+
+
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
 def test_short_section_returns_empty():
     """Section under 100 chars -> empty report, LLM is never called."""
-    llm = MagicMock()
     audit = MagicMock()
-    checker = _make_checker(llm=llm, audit=audit)
+    checker = _make_checker(audit=audit)
+    structured = _stub_structured(checker, returns=CoverageAudit())
 
     short_text = "Too short to audit."
     report = checker.check_section(_node(), short_text, [_managed_task()])
@@ -77,7 +101,7 @@ def test_short_section_returns_empty():
     assert report.node_id == "n1"
     assert report.missed_items == []
     assert report.extracted_count == 1
-    llm.complete_json.assert_not_called()
+    structured.assert_not_called()
     # And we logged the skip.
     actions = [call.kwargs.get("action") for call in audit.log.call_args_list]
     assert "COVERAGE_CHECK_SKIPPED" in actions
@@ -85,42 +109,41 @@ def test_short_section_returns_empty():
 
 def test_no_extracted_tasks_returns_empty():
     """Zero extracted tasks -> empty report, LLM not called (gap_recovery owns this)."""
-    llm = MagicMock()
     audit = MagicMock()
-    checker = _make_checker(llm=llm, audit=audit)
+    checker = _make_checker(audit=audit)
+    structured = _stub_structured(checker, returns=CoverageAudit())
 
     long_text = "x" * 500  # >100 chars
     report = checker.check_section(_node(), long_text, [])
 
     assert report.missed_items == []
     assert report.extracted_count == 0
-    llm.complete_json.assert_not_called()
+    structured.assert_not_called()
     actions = [call.kwargs.get("action") for call in audit.log.call_args_list]
     assert "COVERAGE_CHECK_SKIPPED" in actions
 
 
 def test_missed_items_parsed_from_llm():
-    """LLM returns two valid misses -> both surface in the report as MissedItem."""
-    llm = MagicMock()
-    llm.complete_json.return_value = [
-        {
-            "description": "Daily CSV export of approved orders",
-            "confidence": 0.85,
-            "reason": "Section calls out export but no task covers it",
-        },
-        {
-            "description": "Weekly PDF summary email to managers",
-            "confidence": 0.75,
-            "reason": "Email distribution mentioned, not represented in tasks",
-        },
-    ]
+    """Structured output returns two valid misses -> both surface as MissedItem."""
     audit = MagicMock()
-    checker = _make_checker(llm=llm, audit=audit)
+    checker = _make_checker(audit=audit)
+    structured = _stub_structured(checker, returns=CoverageAudit(missed_items=[
+        MissedItem(
+            description="Daily CSV export of approved orders",
+            confidence=0.85,
+            reason="Section calls out export but no task covers it",
+        ),
+        MissedItem(
+            description="Weekly PDF summary email to managers",
+            confidence=0.75,
+            reason="Email distribution mentioned, not represented in tasks",
+        ),
+    ]))
 
     long_text = "Reporting requirements section. " * 50
     report = checker.check_section(_node(), long_text, [_managed_task()])
 
-    assert llm.complete_json.called
+    assert structured.called
     assert report.extracted_count == 1
     assert len(report.missed_items) == 2
     assert all(isinstance(m, MissedItem) for m in report.missed_items)
@@ -134,13 +157,12 @@ def test_missed_items_parsed_from_llm():
 
 def test_low_confidence_items_filtered_when_below_threshold():
     """min_confidence=0.7 with items at 0.5 and 0.9 -> only the 0.9 survives."""
-    llm = MagicMock()
-    llm.complete_json.return_value = [
-        {"description": "low conf miss", "confidence": 0.5, "reason": "weak signal"},
-        {"description": "strong miss", "confidence": 0.9, "reason": "clearly dropped"},
-    ]
     audit = MagicMock()
-    checker = _make_checker(llm=llm, audit=audit, min_confidence=0.7)
+    checker = _make_checker(audit=audit, min_confidence=0.7)
+    _stub_structured(checker, returns=CoverageAudit(missed_items=[
+        MissedItem(description="low conf miss", confidence=0.5, reason="weak signal"),
+        MissedItem(description="strong miss", confidence=0.9, reason="clearly dropped"),
+    ]))
 
     long_text = "Section body. " * 100
     report = checker.check_section(_node(), long_text, [_managed_task()])
@@ -151,11 +173,10 @@ def test_low_confidence_items_filtered_when_below_threshold():
 
 
 def test_llm_error_returns_empty_report_not_crash():
-    """LLM raises -> empty report and an error audit row, no exception bubbles up."""
-    llm = MagicMock()
-    llm.complete_json.side_effect = RuntimeError("provider blew up")
+    """Structured output raises -> empty report + error audit row, no exception bubbles up."""
     audit = MagicMock()
-    checker = _make_checker(llm=llm, audit=audit)
+    checker = _make_checker(audit=audit)
+    _stub_structured(checker, raises=InstructorError("provider blew up"))
 
     long_text = "Real content. " * 100
     report = checker.check_section(_node(), long_text, [_managed_task()])
@@ -169,11 +190,10 @@ def test_llm_error_returns_empty_report_not_crash():
 
 
 def test_invalid_json_response_returns_empty_report():
-    """LLM returns a non-list (dict) -> empty report and an error audit row."""
-    llm = MagicMock()
-    llm.complete_json.return_value = {"oops": "not a list"}
+    """Instructor could not produce a valid CoverageAudit -> empty report + error audit row."""
     audit = MagicMock()
-    checker = _make_checker(llm=llm, audit=audit)
+    checker = _make_checker(audit=audit)
+    _stub_structured(checker, raises=InstructorError("unparseable structured output"))
 
     long_text = "Body. " * 100
     report = checker.check_section(_node(), long_text, [_managed_task()])

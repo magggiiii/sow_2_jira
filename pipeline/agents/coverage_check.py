@@ -28,7 +28,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
-from core.agent_runner import AgentRunner
+from core.agent_runner import AgentRunner, InstructorError
 from core.guardrails import ConfidenceGate
 from models.schemas import (
     AcceptanceCriterion,
@@ -56,6 +56,18 @@ class SectionCoverageReport(BaseModel):
     missed_items: list[MissedItem] = Field(default_factory=list)
     checker_confidence: UnitInterval = 0.0        # CONF-1: clamped into [0,1]
     checked_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+
+class CoverageAudit(BaseModel):
+    """Top-level Instructor ``response_model`` (C-5).
+
+    The coverage check emits a JSON array of misses, so the validated payload is
+    wrapped in a single object with one ``missed_items`` list of MissedItem.
+    Each MissedItem is schema-validated (description/reason present, confidence
+    clamped into [0,1]); the agent then applies its own min_confidence filter —
+    that's domain gating, not validation, so it stays in the agent.
+    """
+    missed_items: list[MissedItem] = Field(default_factory=list)
 
 
 # ─── Confidence gate (Wave 3-F, audit C-4) ────────────────────────────────────
@@ -208,14 +220,23 @@ class CoverageChecker:
 
         prompt = self._build_prompt(node, section_text, extracted_tasks)
 
+        # C-5: route through the Instructor-validated structured-output seam.
+        # The checker emits a JSON array of misses, so the response_model is a
+        # CoverageAudit wrapper. Each MissedItem arrives schema-validated
+        # (description/reason present, confidence clamped) so the per-item
+        # dict-parsing dance is gone; the agent's min_confidence filter still
+        # applies below. Any structured-output failure surfaces as one
+        # InstructorError, recorded as COVERAGE_CHECK_ERROR and degraded to an
+        # empty report — never a crash.
         try:
-            raw = self.runner.complete_json(
+            audit_result = self.runner.complete_structured(
                 prompt=prompt,
+                response_model=CoverageAudit,
                 system=COVERAGE_SYSTEM_PROMPT,
                 agent_name="CoverageChecker",
                 node_id=node_id,
             )
-        except (ValueError, RuntimeError) as e:
+        except InstructorError as e:
             self.audit.log(
                 run_id=self.run_id,
                 agent="CoverageChecker",
@@ -225,17 +246,7 @@ class CoverageChecker:
             )
             return empty
 
-        if not isinstance(raw, list):
-            self.audit.log(
-                run_id=self.run_id,
-                agent="CoverageChecker",
-                node_id=node_id,
-                action="COVERAGE_CHECK_ERROR",
-                detail=f"node={node_id} reason=non_list_response type={type(raw).__name__}",
-            )
-            return empty
-
-        parsed = self._parse_missed_items(raw, node_id)
+        parsed = self._filter_missed_items(audit_result.missed_items)
         report = SectionCoverageReport(
             node_id=node_id,
             extracted_count=len(extracted_tasks),
@@ -310,26 +321,14 @@ class CoverageChecker:
                 ensure_ascii=False,
             )
 
-    def _parse_missed_items(self, raw_list: list, node_id: str) -> list[MissedItem]:
-        items: list[MissedItem] = []
-        for entry in raw_list:
-            if not isinstance(entry, dict):
-                continue
-            try:
-                miss = MissedItem(**entry)
-            except Exception as e:
-                self.audit.log(
-                    run_id=self.run_id,
-                    agent="CoverageChecker",
-                    node_id=node_id,
-                    action="COVERAGE_MISS_PARSE_ERROR",
-                    detail=f"node={node_id} error={e} raw={str(entry)[:160]}",
-                )
-                continue
-            if miss.confidence < self.min_confidence:
-                continue
-            items.append(miss)
-        return items
+    def _filter_missed_items(self, items: list[MissedItem]) -> list[MissedItem]:
+        """Apply the checker's confidence gate to Instructor-validated misses.
+
+        Items are already schema-valid MissedItem instances (C-5), so the only
+        domain step left is dropping misses below ``min_confidence`` — the same
+        ``confidence < min_confidence`` cut the regex path applied per item.
+        """
+        return [m for m in items if m.confidence >= self.min_confidence]
 
     @staticmethod
     def _overall_confidence(items: list[MissedItem]) -> float:

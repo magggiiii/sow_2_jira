@@ -416,6 +416,9 @@ class PipelineOrchestrator:
                 "all_closed_tasks": [t.model_dump(mode="json") for t in all_closed_tasks],
                 "open_tasks": [t.model_dump(mode="json") for t in open_tasks],
                 "coverage": coverage.to_dict(),
+                # C-4: the run-wide post-dedup coverage gate reads these, so they
+                # must survive a resume — else pre-crash sections are under-flagged.
+                "section_coverage_reports": dict(self.section_coverage_reports),
                 "ts": time.time(),
             }
             tmp = path.with_suffix(".tmp")
@@ -473,6 +476,9 @@ class PipelineOrchestrator:
             return 0, [], []
 
         coverage.restore_from(data.get("coverage", {}))
+        # C-4: restore the per-section coverage reports so the post-dedup gate sees
+        # the sections processed before the crash, not only the post-resume ones.
+        self.section_coverage_reports = dict(data.get("section_coverage_reports") or {})
         start_index = int(data.get("last_index", -1)) + 1
         logger.info(
             f"› Resuming run: {start_index}/{len(nodes)} nodes already processed "

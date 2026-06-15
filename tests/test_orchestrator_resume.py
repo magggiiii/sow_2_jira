@@ -160,6 +160,34 @@ def test_resume_skips_done_nodes_no_duplicate_tasks(tmp_path):
     assert cov2.coverage_report()["covered_nodes"] == 6
 
 
+def test_resume_restores_section_coverage_reports(tmp_path):
+    """C-4: coverage flagging is now post-dedup off ``section_coverage_reports``,
+    so a resumed run must restore the reports for already-processed nodes — else
+    the run-wide gate would under-flag the pre-crash sections (a regression vs the
+    old inline path, where INCOMPLETE rode along on the persisted tasks)."""
+    nodes = _nodes(4)
+    orch1 = _make_orchestrator(tmp_path)
+    reports = {
+        "n0": {
+            "node_id": "n0",
+            "extracted_count": 1,
+            "checker_confidence": 0.9,
+            "missed_items": [{"description": "m", "confidence": 0.9, "reason": "r"}],
+        }
+    }
+    orch1.section_coverage_reports = dict(reports)
+    cov1 = CoverageTracker(nodes)
+    cov1.mark_covered("n0", "t")
+    task = ManagedTask(title="n0", short_description="x", confidence=0.9, status=TaskStatus.CLOSED)
+    orch1._write_extraction_checkpoint(nodes, 0, [task], [], cov1)
+
+    orch2 = _make_orchestrator(tmp_path)
+    assert orch2.section_coverage_reports == {}  # fresh instance starts empty
+    orch2._maybe_resume(nodes, CoverageTracker(nodes))
+
+    assert orch2.section_coverage_reports == reports
+
+
 def test_resume_ignored_when_node_set_changed(tmp_path):
     """A checkpoint whose node-set no longer matches the document is discarded
     (fresh run from index 0) rather than corrupting the resume."""

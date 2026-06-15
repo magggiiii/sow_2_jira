@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from core.ports import LLMProvider
 
 from models.schemas import (
-    RunConfig, ManagedTask, TaskStatus, TaskFlag, SourceRef, JiraHierarchy, current_provider_config
+    RunConfig, ManagedTask, TaskStatus, SourceRef, JiraHierarchy, current_provider_config
 )
 from pipeline.indexer import DocumentIndexer
 from pipeline.coverage import CoverageTracker
@@ -23,9 +23,10 @@ from pipeline.agents.deduplication import DeduplicationAgent
 from pipeline.agents.gap_recovery import GapRecoveryAgent
 from pipeline.agents.classifier import SectionClassifier
 from pipeline.agents.critic import TaskCritic
-from pipeline.agents.coverage_check import CoverageChecker, should_flag_section_incomplete
+from pipeline.agents.coverage_check import CoverageChecker
 from audit.logger import AuditLogger
 from core.health import RunHealthReport, build_health_report
+from core.guardrails import CoverageGate
 from pipeline.observability import logger, tracer, trace_span, sync_telemetry
 from pipeline.telemetry import TelemetryEmitter
 import os
@@ -125,6 +126,10 @@ class PipelineOrchestrator:
             if os.getenv("SOW_SEMANTIC_COVERAGE", "1") != "0" else None
         )
         self.section_coverage_reports: dict[str, dict] = {}
+        # C-4 / STEP 3.3: result of the run-wide post-dedup coverage gate (set in
+        # run() after dedup + gap recovery). Always present so consumers can read
+        # it even before run() executes.
+        self.coverage_gate_result = None
 
         # A2: per-node error isolation + graceful capacity capping. These are run
         # signals fed into the health report at the end of run().
@@ -275,25 +280,80 @@ class PipelineOrchestrator:
                     self.critic.critique(emitted, section_text, node)
 
             # Semantic coverage check (Improvement #2): what did we miss?
+            # C-4 / STEP 3.3: the per-node loop only PRODUCES + stores the section
+            # coverage report. INCOMPLETE flagging is deferred to the run-wide,
+            # post-dedup CoverageGate (_run_coverage_verify) so a single confident
+            # miss can no longer blanket-flag a section pre-dedup (the ~100%
+            # INCOMPLETE bomb) and tasks are never double-flagged.
             section_tasks = open_tasks + newly_closed
             if self.coverage_checker is not None:
                 report = self.coverage_checker.check_section(
                     node, section_text, section_tasks
                 )
-                # Confidence-gate the INCOMPLETE flag (Wave 3-F, audit C-4):
-                # only flag when the checker is confident AND has genuine misses.
-                # NOTE: the full post-dedup, run-wide INCOMPLETE restructure is a
-                # later step gated by INV-4 (eval cassette asserting INCOMPLETE-rate).
                 if report.missed_items:
                     self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
-                if should_flag_section_incomplete(
-                    report, self.coverage_checker.min_confidence
-                ):
-                    for t in section_tasks:
-                        if TaskFlag.INCOMPLETE not in t.flags:
-                            t.flags.append(TaskFlag.INCOMPLETE)
 
             return open_tasks, newly_closed, section_tasks
+
+    # ─── C-4 / STEP 3.3: run-wide, post-dedup coverage gate ─────────────────
+
+    def _coverage_floor(self) -> float:
+        """Confidence floor for the run-wide coverage gate.
+
+        Defaults to the coverage checker's per-item ``min_confidence`` (0.6) so the
+        run-wide gate and the legacy per-section predicate share one definition of
+        "confident enough"; override with ``SOW_COVERAGE_MIN_CONFIDENCE``.
+        """
+        default = (
+            self.coverage_checker.min_confidence
+            if self.coverage_checker is not None
+            else CoverageGate.DEFAULT_FLOOR
+        )
+        try:
+            return float(os.getenv("SOW_COVERAGE_MIN_CONFIDENCE", str(default)))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _run_coverage_verify(self, tasks):
+        """
+        Apply INCOMPLETE to the FINAL (deduped + gap-recovered) task set,
+        run-wide and report-level (audit C-4, STEP 3.3).
+
+        A task is flagged only when one of its ``source_refs`` belongs to a section
+        whose coverage report is confident (``checker_confidence >= floor``) AND has
+        genuine ``missed_items``. This replaces the per-section, pre-dedup blanket
+        flag that produced the ~100% INCOMPLETE bomb. Run-level advisory metadata is
+        recorded on ``self.coverage_gate_result``.
+        """
+        gate = CoverageGate(floor=self._coverage_floor())
+        result = gate.apply(tasks, self.section_coverage_reports)
+        self.coverage_gate_result = result
+
+        if result.flagged_task_count:
+            logger.info(
+                f"› Coverage gate: flagged {result.flagged_task_count}/"
+                f"{result.total_task_count} tasks INCOMPLETE across "
+                f"{len(result.flagged_node_ids)} section(s) "
+                f"(rate {result.incomplete_rate:.2f})"
+            )
+        try:
+            self.audit.log(
+                run_id=self.config.run_id,
+                agent="CoverageGate",
+                node_id=None,
+                action="COVERAGE_GATE_APPLIED",
+                task_id=None,
+                detail=(
+                    f"flagged={result.flagged_task_count} "
+                    f"total={result.total_task_count} "
+                    f"sections={len(result.flagged_node_ids)} "
+                    f"rate={result.incomplete_rate:.3f} floor={gate.floor}"
+                ),
+            )
+        except Exception:
+            pass  # advisory metadata must never abort the run
+
+        return result
 
     def _process_node(self, node, open_tasks, node_index, total_nodes):
         """
@@ -701,6 +761,13 @@ class PipelineOrchestrator:
                     "duration_ms": int((time.time() - step_start) * 1000),
                     "task_count": len(deduplicated),
                 })
+
+        # ── Step 4c: run-wide coverage gate (C-4 / STEP 3.3) ──────────────────
+        # Confidence-gated, report-level INCOMPLETE on the FINAL (deduped +
+        # gap-recovered) task set. Moved out of the per-node loop so a single
+        # confident miss can't blanket-flag pre-dedup (the ~100% INCOMPLETE bomb)
+        # and tasks are never double-flagged. Mutates `deduplicated` in place.
+        self._run_coverage_verify(deduplicated)
 
         # ── Assemble run health summary (GUARDRAIL-3) ─────────────────────────
         # Additive, read-only: distill the signals the stages already produced

@@ -449,7 +449,7 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding and the C-4 coverage restructure (post-dedup, run-wide, confidence-gated INCOMPLETE) shipped.</s> Remaining: swap the hand-authored cassette for a recorded 103-node golden run (capture per-call <code>(agent, node_id, output)</code> at the <code>complete_structured</code> seam), then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, and the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested) shipped.</s> Remaining: run the recorder against a real 103-node SOW (live gemini), remap dedup decisions' run-fresh task UUIDs at replay time, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run + UUID remap</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
     </div>
   </section>
@@ -470,7 +470,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-15 · branch elevation/wave-0 · 421 tests green
+    Updated 2026-06-15 · branch elevation/wave-0 · 426 tests green
   </footer>
 
 </div>

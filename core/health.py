@@ -171,6 +171,12 @@ def build_health_report(signals: Mapping[str, Any]) -> RunHealthReport:
       stage is OK (a value being available means coverage was computed). The
       raw value is not used to downgrade status here; that policy is left to a
       later increment.
+    - ``capacity_degraded`` (bool) [+ ``capacity_degraded_reason``]: when truthy,
+      the ``capacity`` stage is DEGRADED (the run capped its node list rather than
+      raising); present-and-false records an OK capacity stage.
+    - ``node_total`` (int) [+ ``node_error_count``]: when present (>0), the
+      ``node_processing`` stage is DEGRADED if more than 5% of nodes failed to
+      process, else OK. Absent ``node_total`` adds no node_processing stage.
     """
     report = RunHealthReport()
 
@@ -213,5 +219,40 @@ def build_health_report(signals: Mapping[str, Any]) -> RunHealthReport:
     # ── Coverage ──────────────────────────────────────────────────────────────
     if signals.get("coverage_pct") is not None:
         report.add(StageHealth(name="coverage", status=StageStatus.OK))
+
+    # ── Capacity (A2: graceful max_nodes) ───────────────────────────────────────
+    # When the run capped the node list instead of raising, the capacity stage is
+    # DEGRADED and carries the "Processed N of M" reason; an explicit non-degraded
+    # signal records an OK capacity stage.
+    if "capacity_degraded" in signals:
+        if signals.get("capacity_degraded"):
+            reason = signals.get("capacity_degraded_reason") or "node capacity cap applied"
+            report.add(
+                StageHealth(
+                    name="capacity",
+                    status=StageStatus.DEGRADED,
+                    reason=str(reason),
+                )
+            )
+        else:
+            report.add(StageHealth(name="capacity", status=StageStatus.OK))
+
+    # ── Node processing (A2: per-node error isolation) ──────────────────────────
+    # ``node_total`` present means the extraction loop ran; if more than 5% of
+    # nodes failed to process, node_processing is DEGRADED (a few isolated
+    # failures are tolerated and only audited, not flagged).
+    if signals.get("node_total"):
+        total = int(signals["node_total"])
+        errs = int(signals.get("node_error_count") or 0)
+        if total > 0 and (errs / total) > 0.05:
+            report.add(
+                StageHealth(
+                    name="node_processing",
+                    status=StageStatus.DEGRADED,
+                    reason=f"{errs} of {total} nodes failed to process (> 5%)",
+                )
+            )
+        else:
+            report.add(StageHealth(name="node_processing", status=StageStatus.OK))
 
     return report

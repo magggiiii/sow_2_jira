@@ -3,7 +3,7 @@
 from __future__ import annotations
 import contextvars
 from enum import Enum
-from typing import Annotated, Optional, Union
+from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 import datetime
@@ -340,6 +340,10 @@ class RunConfig(BaseModel):
     jira_project_key: str
     skip_indexing: bool = False
     max_nodes: int = 200
+    # A2: how to handle a node count over ``max_nodes``. "degraded" (default) caps
+    # the node list, keeps partial output, and flags the run DEGRADED_CAPACITY;
+    # "strict" preserves the legacy hard Denial-of-Wallet RuntimeError.
+    node_processing_strategy: Literal["strict", "degraded"] = "degraded"
     run_id: str = Field(default_factory=lambda: str(uuid4())[:8])
     provider_config: Optional[ProviderConfig] = None
 

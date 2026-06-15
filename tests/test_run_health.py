@@ -91,6 +91,55 @@ def test_missing_signals_are_omitted_not_failed():
     assert all(s.name != "coverage" for s in report2.stages)
 
 
+# ─── A2: capacity (graceful max_nodes) signal ─────────────────────────────────
+
+
+def test_capacity_degraded_signal_yields_degraded_capacity_stage():
+    """When the run capped the node count (graceful max_nodes), the capacity
+    stage is DEGRADED and carries the 'Processed N of M' reason."""
+    report = build_health_report({
+        "capacity_degraded": True,
+        "capacity_degraded_reason": "Processed 200 of 250 nodes (capacity cap)",
+    })
+    names = {s.name: s.status for s in report.stages}
+    assert names["capacity"] is StageStatus.DEGRADED
+    assert report.overall_status is StageStatus.DEGRADED
+    assert "Processed 200 of 250 nodes (capacity cap)" in report.degraded_reasons
+
+
+def test_capacity_not_degraded_signal_yields_ok_capacity_stage():
+    report = build_health_report({"capacity_degraded": False})
+    names = {s.name: s.status for s in report.stages}
+    assert names["capacity"] is StageStatus.OK
+    assert report.overall_status is StageStatus.OK
+
+
+# ─── A2: per-node error-isolation signal ──────────────────────────────────────
+
+
+def test_node_errors_over_threshold_yield_degraded_node_processing():
+    """More than 5% of nodes failing to process flags node_processing DEGRADED."""
+    report = build_health_report({"node_error_count": 4, "node_total": 50})  # 8% > 5%
+    names = {s.name: s.status for s in report.stages}
+    assert names["node_processing"] is StageStatus.DEGRADED
+    assert report.is_degraded is True
+    assert any("4 of 50" in r for r in report.degraded_reasons)
+
+
+def test_node_errors_under_threshold_stay_ok():
+    """A couple of isolated node failures (≤5%) are tolerated, not flagged."""
+    report = build_health_report({"node_error_count": 2, "node_total": 50})  # 4% ≤ 5%
+    names = {s.name: s.status for s in report.stages}
+    assert names["node_processing"] is StageStatus.OK
+    assert report.overall_status is StageStatus.OK
+
+
+def test_node_processing_signal_absent_adds_no_stage():
+    """No node_total → no node_processing stage (tolerant, like other signals)."""
+    report = build_health_report({"node_error_count": 9})  # no node_total
+    assert all(s.name != "node_processing" for s in report.stages)
+
+
 def test_report_round_trips_via_model_validate():
     report = build_health_report({
         "dedup_degraded": True,

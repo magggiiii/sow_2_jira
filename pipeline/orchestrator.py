@@ -37,6 +37,34 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 console = Console()
 
+
+def cap_nodes(nodes: list[dict], max_nodes: int, strategy: str = "degraded") -> tuple[list[dict], bool, str]:
+    """
+    Apply the ``max_nodes`` Denial-of-Wallet cap to the node list.
+
+    Returns ``(capped_nodes, capacity_degraded, reason)``. When the node count is
+    within the cap, returns the list unchanged, ``False``, ``""``. When it exceeds
+    the cap:
+
+    - ``"strict"`` raises ``RuntimeError`` (legacy hard-stop, no partial output).
+    - ``"degraded"`` (default) returns ``nodes[:max_nodes]`` with ``True`` and a
+      ``"Processed N of M nodes"`` reason so the run keeps partial output and
+      flags itself DEGRADED_CAPACITY instead of crashing.
+    """
+    total = len(nodes)
+    if total <= max_nodes:
+        return nodes, False, ""
+
+    if strategy == "strict":
+        raise RuntimeError(
+            f"Denial of Wallet Protection: PDF generated {total} sections, "
+            f"max allowed is {max_nodes}."
+        )
+
+    reason = f"Processed {max_nodes} of {total} nodes (capacity cap)"
+    return nodes[:max_nodes], True, reason
+
+
 class PipelineOrchestrator:
 
     def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None):
@@ -93,6 +121,12 @@ class PipelineOrchestrator:
         )
         self.section_coverage_reports: dict[str, dict] = {}
 
+        # A2: per-node error isolation + graceful capacity capping. These are run
+        # signals fed into the health report at the end of run().
+        self.node_error_count: int = 0
+        self.capacity_degraded: bool = False
+        self.capacity_degraded_reason: str = ""
+
         # GUARDRAIL-3: per-run health summary, assembled at the end of run().
         # Starts empty (overall SKIPPED) so the attribute always exists even if
         # run() is never called or exits early.
@@ -138,6 +172,140 @@ class PipelineOrchestrator:
 
         return nodes
 
+    def _process_node(self, node, open_tasks, node_index, total_nodes):
+        """
+        Process ONE node: classify → extract → state-merge → critic → coverage.
+
+        Returns ``(open_tasks, newly_closed, section_tasks)``, or ``None`` when the
+        classifier gates the section out. Performs NO ``CoverageTracker`` mutation
+        and never touches ``all_closed_tasks`` — the caller applies coverage
+        marking + accumulation in node order. Keeping the order-sensitive merge
+        out of here is also what makes a future thread pool over nodes safe (B1).
+        """
+        total = max(total_nodes, 1)
+        current_node_progress = 0.40 + (0.40 * (node_index / total))
+        node_title = node.get("title", f"Node {node_index}")
+
+        with tracer.start_as_current_span(f"PROCESS_NODE_{node.get('node_id', 'none')}"):
+            # Get text for this node (PageIndex provides it directly)
+            section_text = self.indexer.get_node_text(node)
+
+            # Classifier gate (Improvement #3): skip non-actionable sections
+            if self.classifier is not None:
+                classification = self.classifier.classify(node, section_text)
+                if not self.classifier.should_extract(classification):
+                    logger.info(
+                        f"› Skipping non-actionable section: {node.get('title')} "
+                        f"({classification.type.value}, conf={classification.confidence:.2f})"
+                    )
+                    return None
+
+            # Extract (hierarchy-aware)
+            raw_tasks = self.extraction_agent.extract(
+                node, section_text,
+                hierarchy=self.config.jira_hierarchy.value,
+                status_callback=lambda msg: self._update_status(3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress)
+            )
+
+            # State management
+            open_tasks, newly_closed = self.state_agent.process(
+                raw_tasks, open_tasks, node
+            )
+
+            # Critic pass (Improvement #4): auto-fix or flag emitted tasks
+            if self.critic is not None:
+                emitted = open_tasks + newly_closed
+                if emitted:
+                    self.critic.critique(emitted, section_text, node)
+
+            # Semantic coverage check (Improvement #2): what did we miss?
+            section_tasks = open_tasks + newly_closed
+            if self.coverage_checker is not None:
+                report = self.coverage_checker.check_section(
+                    node, section_text, section_tasks
+                )
+                # Confidence-gate the INCOMPLETE flag (Wave 3-F, audit C-4):
+                # only flag when the checker is confident AND has genuine misses.
+                # NOTE: the full post-dedup, run-wide INCOMPLETE restructure is a
+                # later step gated by INV-4 (eval cassette asserting INCOMPLETE-rate).
+                if report.missed_items:
+                    self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
+                if should_flag_section_incomplete(
+                    report, self.coverage_checker.min_confidence
+                ):
+                    for t in section_tasks:
+                        if TaskFlag.INCOMPLETE not in t.flags:
+                            t.flags.append(TaskFlag.INCOMPLETE)
+
+            return open_tasks, newly_closed, section_tasks
+
+    def _extract_all(self, nodes, coverage):
+        """
+        Run :meth:`_process_node` over all nodes with per-node error isolation.
+
+        Returns ``(all_closed_tasks, open_tasks, cancelled)``. A node that raises
+        is logged (``EXTRACTION_FAILED`` audit row), counted in
+        ``self.node_error_count``, and skipped — so a single bad node never aborts
+        the whole run (the legacy loop had no guard: one error lost every task).
+        ``cancelled`` is ``True`` when the user stop_event fired mid-loop, in which
+        case the partial ``all_closed_tasks`` is returned for the caller to honor.
+        """
+        all_closed_tasks: list[ManagedTask] = []
+        open_tasks: list[ManagedTask] = []
+        total = len(nodes)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console
+        ) as progress:
+            task_bar = progress.add_task("[cyan]Extracting nodes...", total=total)
+
+            for i, node in enumerate(nodes):
+                current_node_progress = 0.40 + (0.40 * (i / total)) if total else 0.40
+
+                if self.stop_event.is_set():
+                    logger.warning(f"› Pipeline cancelled by user at node {i}")
+                    self._update_status(3, "Cancelled by user", current_node_progress)
+                    return all_closed_tasks, open_tasks, True
+
+                node_title = node.get('title', f"Node {i}")
+                progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
+                self._update_status(3, f"Processing: {node_title[:50]}", current_node_progress)
+
+                try:
+                    result = self._process_node(node, open_tasks, i, total)
+                    if result is None:
+                        continue  # classifier gated this section out
+                    open_tasks, newly_closed, section_tasks = result
+
+                    # Mark coverage (order-sensitive shared mutation — kept here)
+                    for task in section_tasks:
+                        coverage.mark_covered(node["node_id"], str(task.id))
+                    all_closed_tasks.extend(newly_closed)
+                except Exception as e:
+                    # A2: isolate the failure — log + count + continue, never abort.
+                    self.node_error_count += 1
+                    logger.error(f"✗ Node {node.get('node_id', i)} failed to process: {e}")
+                    try:
+                        self.audit.log(
+                            run_id=self.config.run_id,
+                            agent="Orchestrator",
+                            node_id=node.get("node_id", ""),
+                            action="EXTRACTION_FAILED",
+                            task_id=None,
+                            detail=f"Node processing failed, isolated and skipped: {e}",
+                        )
+                    except Exception:
+                        pass  # audit must never mask the isolation it is recording
+                finally:
+                    progress.advance(task_bar)
+
+        return all_closed_tasks, open_tasks, False
+
     @trace_span("PIPELINE_RUN", agent="Orchestrator")
     def run(self) -> list[ManagedTask]:
         """
@@ -181,11 +349,15 @@ class PipelineOrchestrator:
             })
 
         # ── Step 2: Initialize Coverage Tracker & Safety Check ───────────────
-        MAX_NODES = self.config.max_nodes
-        if len(nodes) > MAX_NODES:
-            error_msg = f"Denial of Wallet Protection: PDF generated {len(nodes)} sections, max allowed is {MAX_NODES}."
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+        # A2: graceful capacity capping. In the default "degraded" strategy an
+        # over-cap document is processed up to max_nodes (partial output kept,
+        # run flagged DEGRADED_CAPACITY) instead of crashing the whole run; the
+        # "strict" strategy still raises the legacy Denial-of-Wallet RuntimeError.
+        nodes, self.capacity_degraded, self.capacity_degraded_reason = cap_nodes(
+            nodes, self.config.max_nodes, self.config.node_processing_strategy
+        )
+        if self.capacity_degraded:
+            logger.warning(f"› {self.capacity_degraded_reason}")
 
         # Persist node hierarchy lookup so downstream consumers (JiraClient,
         # Wave-2 agents) can resolve parent titles without re-walking the tree.
@@ -226,91 +398,13 @@ class PipelineOrchestrator:
             step_start = time.time()
             span.set_attribute("node_count", len(nodes))
             self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
-            
-            all_closed_tasks: list[ManagedTask] = []
-            open_tasks: list[ManagedTask] = []
 
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                TimeElapsedColumn(),
-                console=console
-            ) as progress:
-                task_bar = progress.add_task("[cyan]Extracting nodes...", total=len(nodes))
-
-                for i, node in enumerate(nodes):
-                    # Granular progress: 0.40 + (0.40 * (i / total))
-                    current_node_progress = 0.40 + (0.40 * (i / len(nodes)))
-                    
-                    if self.stop_event.is_set():
-                        logger.warning(f"› Pipeline cancelled by user at node {i}")
-                        self._update_status(3, "Cancelled by user", current_node_progress)
-                        return all_closed_tasks
-
-                    node_title = node.get('title', f"Node {i}")
-                    progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
-                    self._update_status(3, f"Processing: {node_title[:50]}", current_node_progress)
-
-                    with tracer.start_as_current_span(f"PROCESS_NODE_{node.get('node_id', 'none')}"):
-                        # Get text for this node (PageIndex provides it directly)
-                        section_text = self.indexer.get_node_text(node)
-
-                        # Classifier gate (Improvement #3): skip non-actionable sections
-                        if self.classifier is not None:
-                            classification = self.classifier.classify(node, section_text)
-                            if not self.classifier.should_extract(classification):
-                                logger.info(
-                                    f"› Skipping non-actionable section: {node['title']} "
-                                    f"({classification.type.value}, conf={classification.confidence:.2f})"
-                                )
-                                progress.advance(task_bar)
-                                continue
-
-                        # Extract (hierarchy-aware)
-                        raw_tasks = self.extraction_agent.extract(
-                            node, section_text,
-                            hierarchy=self.config.jira_hierarchy.value,
-                            status_callback=lambda msg: self._update_status(3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress)
-                        )
-
-                        # State management
-                        open_tasks, newly_closed = self.state_agent.process(
-                            raw_tasks, open_tasks, node
-                        )
-
-                        # Critic pass (Improvement #4): auto-fix or flag emitted tasks
-                        if self.critic is not None:
-                            emitted = open_tasks + newly_closed
-                            if emitted:
-                                self.critic.critique(emitted, section_text, node)
-
-                        # Semantic coverage check (Improvement #2): what did we miss?
-                        if self.coverage_checker is not None:
-                            section_tasks = open_tasks + newly_closed
-                            report = self.coverage_checker.check_section(
-                                node, section_text, section_tasks
-                            )
-                            # Confidence-gate the INCOMPLETE flag (Wave 3-F, audit C-4):
-                            # only flag when the checker is confident AND has genuine misses.
-                            # NOTE: the full post-dedup, run-wide INCOMPLETE restructure is a
-                            # later step gated by INV-4 (eval cassette asserting INCOMPLETE-rate).
-                            if report.missed_items:
-                                self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
-                            if should_flag_section_incomplete(
-                                report, self.coverage_checker.min_confidence
-                            ):
-                                for t in section_tasks:
-                                    if TaskFlag.INCOMPLETE not in t.flags:
-                                        t.flags.append(TaskFlag.INCOMPLETE)
-
-                        # Mark coverage
-                        for task in open_tasks + newly_closed:
-                            coverage.mark_covered(node["node_id"], str(task.id))
-
-                        all_closed_tasks.extend(newly_closed)
-                        progress.advance(task_bar)
+            # A2: per-node error isolation lives in _extract_all — one node's
+            # failure is logged + counted and the loop continues. Cancellation
+            # returns whatever was extracted so far.
+            all_closed_tasks, open_tasks, cancelled = self._extract_all(nodes, coverage)
+            if cancelled:
+                return all_closed_tasks
 
             # Force-close remaining open tasks
             forced_closed = self.state_agent.close_all_remaining(open_tasks)
@@ -383,6 +477,11 @@ class PipelineOrchestrator:
             "dedup_degraded_reason": getattr(self.dedup_agent, "last_degraded_reason", None),
             "extraction_error_count": getattr(self.extraction_agent, "error_count", 0),
             "coverage_pct": report.get("coverage_pct"),
+            # A2: capacity capping + per-node error isolation signals.
+            "capacity_degraded": self.capacity_degraded,
+            "capacity_degraded_reason": self.capacity_degraded_reason,
+            "node_error_count": self.node_error_count,
+            "node_total": len(nodes),
         })
 
         # ── Step 5: Save Checkpoint ───────────────────────────────────────────

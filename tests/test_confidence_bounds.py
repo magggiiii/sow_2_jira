@@ -113,3 +113,49 @@ def test_classification_result_confidence_clamps_instead_of_rejecting():
     assert res.confidence == 1.0
     res2 = ClassificationResult(node_id="n1", type=SectionType.CONTEXT, confidence=-0.3, reason="r")
     assert res2.confidence == 0.0
+
+
+# ─── Structured-output schema compatibility (no minimum/maximum) ──────────────
+# Anthropic's strict json_schema structured-output mode (Instructor's
+# OPENROUTER_STRUCTURED_OUTPUTS) REJECTS `minimum`/`maximum` on number fields:
+#   "For 'number' type, properties maximum, minimum are not supported"
+# The UnitInterval BeforeValidator already clamps every confidence into [0,1]
+# BEFORE validation, so a Field(ge=0, le=1) never rejected anything — it only
+# emitted those two schema keys, which broke the native structured-output mode
+# on Anthropic. The clamp tests above prove bounds are still enforced; these
+# assert the Instructor response models carry no number bounds in their schema.
+
+import json
+
+
+def _instructor_response_models():
+    from pipeline.agents.classifier import RawClassification
+    from pipeline.agents.coverage_check import CoverageAudit
+    from pipeline.agents.critic import CritiqueBatch
+    from pipeline.agents.deduplication import DedupDecisionList
+    from pipeline.agents.extraction import ExtractionResult
+    from pipeline.agents.gap_recovery import GapRecoveryResult
+
+    return [
+        RawClassification,
+        CoverageAudit,
+        CritiqueBatch,
+        DedupDecisionList,
+        ExtractionResult,
+        GapRecoveryResult,
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_cls", _instructor_response_models(), ids=lambda m: m.__name__
+)
+def test_response_model_schema_has_no_number_bounds(model_cls):
+    """No minimum/maximum anywhere in the emitted JSON schema (incl. $defs), so
+    the model can be used with Anthropic's strict structured-output mode."""
+    schema_text = json.dumps(model_cls.model_json_schema())
+    assert "minimum" not in schema_text, (
+        f"{model_cls.__name__} emits 'minimum' — breaks Anthropic structured output"
+    )
+    assert "maximum" not in schema_text, (
+        f"{model_cls.__name__} emits 'maximum' — breaks Anthropic structured output"
+    )

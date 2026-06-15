@@ -22,7 +22,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
@@ -49,15 +49,17 @@ class RawClassification(BaseModel):
     validation, matching ClassificationResult's CONF-1 invariant.
     """
     type: SectionType
-    confidence: UnitInterval = Field(ge=0.0, le=1.0)
+    # CONF-1: clamped by the UnitInterval BeforeValidator; no Field ge/le so the
+    # emitted schema has no minimum/maximum (Anthropic strict structured output).
+    confidence: UnitInterval
     reason: str = ""
 
 
 class ClassificationResult(BaseModel):
     node_id: str
     type: SectionType
-    # CONF-1: clamped into [0,1] before ge/le, so an out-of-range value coerces.
-    confidence: UnitInterval = Field(ge=0.0, le=1.0)
+    # CONF-1: clamped into [0,1] by the UnitInterval BeforeValidator (no ge/le).
+    confidence: UnitInterval
     reason: str
 
 

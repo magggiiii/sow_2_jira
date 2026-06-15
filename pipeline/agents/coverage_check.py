@@ -44,8 +44,9 @@ from pipeline.llm_client import LLMClient
 class MissedItem(BaseModel):
     """A concrete actionable deliverable the LLM thinks was dropped."""
     description: str                              # The missed deliverable, 1-2 sentences
-    # CONF-1: clamped into [0,1] before ge/le, so an out-of-range value coerces.
-    confidence: UnitInterval = Field(ge=0.0, le=1.0)   # Checker confidence this IS a miss
+    # CONF-1: clamped into [0,1] by the UnitInterval BeforeValidator; no Field
+    # ge/le (emitting minimum/maximum breaks Anthropic strict structured output).
+    confidence: UnitInterval                       # Checker confidence this IS a miss
     reason: str                                   # Why it's an actionable miss
 
 

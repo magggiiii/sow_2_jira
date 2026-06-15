@@ -39,9 +39,12 @@ def clamp_unit_interval(value):
     return f
 
 
-# Reusable Annotated type for confidence/score fields. The BeforeValidator runs
-# *before* any ``Field(ge=..., le=...)`` constraint, so an out-of-range LLM value
-# is clamped into range and therefore stays valid instead of being rejected.
+# Reusable Annotated type for confidence/score fields. The BeforeValidator
+# clamps an out-of-range LLM value into [0,1] so it stays valid instead of being
+# rejected. Bounds are enforced by this clamp ALONE — fields deliberately do NOT
+# add ``Field(ge=..., le=...)``: the clamp already guarantees the range, and
+# emitting ``minimum``/``maximum`` into the JSON schema breaks providers' strict
+# structured-output modes (Anthropic via OpenRouter rejects number bounds).
 UnitInterval = Annotated[float, BeforeValidator(clamp_unit_interval)]
 
 
@@ -278,9 +281,11 @@ class RawTask(BaseModel):
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
     mockup_prototype: Optional[str] = None
-    # CONF-1: clamped into [0,1]; the BeforeValidator runs before ge/le so an
-    # out-of-range LLM value is coerced rather than rejected.
-    confidence: UnitInterval = Field(ge=0.0, le=1.0)
+    # CONF-1: clamped into [0,1] by the UnitInterval BeforeValidator — an
+    # out-of-range LLM value is coerced, not rejected. No Field(ge/le): the
+    # clamp already bounds it, and emitting minimum/maximum into the JSON schema
+    # breaks Anthropic's strict structured-output mode.
+    confidence: UnitInterval
     flags: list[str] = Field(default_factory=list)
     continues_to_next: bool = False
     dependencies: list[TaskDependency] = Field(default_factory=list)

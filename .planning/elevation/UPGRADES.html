@@ -144,11 +144,12 @@
   <section>
     <div class="sec-no reveal" style="color:var(--ship)">00 — Progress at a glance</div>
     <h2 class="reveal">The roadmap, and where we are on it.</h2>
-    <p class="sec-intro reveal">Seven tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth).</p>
+    <p class="sec-intro reveal">Eight tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is newly planned — see <code>SCALE-HARDENING.md</code>.</p>
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="plan" style="transform:scaleX(.04)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -346,8 +347,12 @@
   <section class="sec-next">
     <div class="sec-no reveal">02 — Next up</div>
     <h2 class="reveal">Buildable now — on deck.</h2>
-    <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work.</p>
+    <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Resilient structured-output calls <span class="tag">scale · A1</span></h4><p>Restore on <code>complete_structured</code> what C-5 dropped vs <code>complete_json</code>: a per-call timeout + retry/backoff (429/Retry-After), reusing the existing <code>llm_client</code> helpers. Over a 300-600-call big-SOW run, a transient 429/timeout currently loses tasks (or hangs) silently. Do this <em>before</em> parallelizing.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Parallel per-node extraction (~4-5× faster) <span class="tag">scale · B1</span></h4><p>Today the per-node agent loop is strictly sequential (~25 min-2 h for a 55pg SOW). Nodes are independent — <code>StateAgent</code> continuation is rule-based and applied <em>after</em> extraction — so a thread pool over nodes is safe, keeping only state-merge + dedup sequential. ~150-node run: ~30 min → ~6-10 min.</p><span class="need">buildable now (config-gated)</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Big-doc integrity <span class="tag">scale · A2-A4</span></h4><p>Per-node error isolation (one bad node never crashes the run), graceful <code>max_nodes</code> (process the cap + emit partial output, not a hard <code>RuntimeError</code>), batch the dedup candidate pairs (no single-call truncation), and surface section truncation as a warning+flag instead of silently dropping tasks on dense pages.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Resumable &amp; cancellable runs <span class="tag">scale · C1-C2</span></h4><p>Per-node checkpoint + resume (a crash at node 45/60 no longer loses 40 min of work — reuses the <code>skip_indexing</code>/tree-cache precedent), plus a <code>cancel_check</code> seam and a filesystem status fallback so partial progress survives a restart even before the durable worker lands.</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
     </div>
@@ -360,7 +365,7 @@
     <p class="sec-intro reveal">These are designed and specced in the implementation plan, but can't be built-and-verified locally — they need the real Postgres / Redis / Render / OAuth to land safely. They become adapter swaps thanks to the seam already shipped.</p>
     <div class="plist">
       <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 1 — Data &amp; secrets platform</h4><p>Postgres + object storage (R2) behind the ports, per-user encrypted credentials, Alembic migrations, full-UUID run ids, the audit log moved off SQLite.</p><span class="need svc">needs: Postgres + R2</span></div></div>
-      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 2 — Auth, isolation &amp; durable worker</h4><p>Google sign-in, row-level <code>user_id</code> isolation, per-user credential injection, and the Arq worker + Redis queue that replaces the in-process background task and process-global state.</p><span class="need svc">needs: Redis + OAuth</span></div></div>
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 2 — Auth, isolation &amp; durable worker</h4><p>Google sign-in, row-level <code>user_id</code> isolation, per-user credential injection, and the Arq worker + Redis queue that replaces the in-process background task and process-global state. This is also the <strong>scale-hardening C3</strong> fix — long SOW runs move off the web process into a durable, restart-survivable worker (job timeout sized for a 2-h run).</p><span class="need svc">needs: Redis + OAuth</span></div></div>
       <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>LLM control plane — Bifrost gateway + Langfuse Cloud</h4><p>Route every model call through a self-hosted <b>Bifrost</b> gateway and trace it in <b>Langfuse Cloud</b>. Real provider keys live only inside Bifrost; our DB stores only an encrypted, budget-capped <b>virtual key</b> per user — so a DB leak never exposes a usable provider key. The user's model selection propagates to both. Design + security review in <code>BIFROST-LANGFUSE.md</code>.</p><span class="need svc">needs: Bifrost service + Langfuse account; folds into Wave 4</span></div></div>
       <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 4 — Deploy &amp; observability</h4><p>The four-service <code>render.yaml</code>, the observability rewrite (drop the Argus/OTel fleet for Render logs + Langfuse Cloud), and per-user cost tracking.</p><span class="need svc">needs: Render</span></div></div>
     </div>
@@ -368,7 +373,7 @@
 
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
-    Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
+    Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
     Updated 2026-06-15 · branch elevation/wave-0 · 336 tests green
   </footer>
 

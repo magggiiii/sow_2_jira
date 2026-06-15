@@ -68,12 +68,16 @@ def cap_nodes(nodes: list[dict], max_nodes: int, strategy: str = "degraded") -> 
 
 class PipelineOrchestrator:
 
-    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None):
+    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None, cancel_check=None):
         self.config = config
         self.app_config = app_config
         self.audit = audit
         self.status_callback = status_callback
         self.stop_event = stop_event or threading.Event()
+        # C2: cancellation seam. Defaults to the local stop_event (no behavior
+        # change); a durable worker can inject e.g. a Redis ``cancel:{run_id}``
+        # probe. Consulted between nodes so a run cancels cleanly mid-loop.
+        self.cancel_check = cancel_check or self.stop_event.is_set
 
         # LLM seam (HARNESS-4): use the injected provider when supplied,
         # otherwise construct today's default LLMClient with identical args.
@@ -149,9 +153,40 @@ class PipelineOrchestrator:
         )
         console.print(Panel(summary_text, title="[bold green]═══ SOW-to-Jira Pipeline ═══", border_style="green"))
 
+    def _cancelled(self) -> bool:
+        """C2: consult the cancellation seam (defaults to the local stop_event).
+        Tolerant — a misbehaving probe must not crash the run; treat an error as
+        'not cancelled' so the run continues rather than dying on a flaky check."""
+        try:
+            return bool(self.cancel_check())
+        except Exception:
+            return False
+
+    def _status_path(self) -> Path:
+        return Path(f"data/sessions/{self.config.run_id}/status.json")
+
+    def _mirror_status(self, step: int, message: str, progress: float) -> None:
+        """C2: mirror live run status to a filesystem JSON so partial progress is
+        observable across a process restart even before the durable worker (C3).
+        Best-effort — a write failure never affects the run."""
+        try:
+            path = self._status_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                json.dump(
+                    {"run_id": self.config.run_id, "step": step,
+                     "message": message, "progress": progress, "ts": time.time()},
+                    f,
+                )
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
     def _update_status(self, step: int, message: str, progress: float = 0.0):
         if self.status_callback:
             self.status_callback(step, message, progress)
+        self._mirror_status(step, message, progress)
 
     def _build_or_load_tree(self, pdf_path: str) -> list[dict]:
         cache_path = Path(f"data/sessions/{self.config.run_id}/document_tree.json")
@@ -308,7 +343,10 @@ class PipelineOrchestrator:
         the node-id list (for node-set validation on resume), the closed/open task
         sets, and coverage state. Best-effort: a checkpoint write failure must
         never abort the run — durability is a safety net, not a hard dependency.
+        No-op when resumption is disabled (legacy single end-of-run checkpoint).
         """
+        if not getattr(self.config, "enable_resumption", True):
+            return
         try:
             path = self._extraction_checkpoint_path()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -419,7 +457,7 @@ class PipelineOrchestrator:
                 for i in range(start_index, total):
                     node = nodes[i]
                     current_node_progress = 0.40 + (0.40 * (i / total)) if total else 0.40
-                    if self.stop_event.is_set():
+                    if self._cancelled():
                         logger.warning(f"› Pipeline cancelled by user at node {i}")
                         self._update_status(3, "Cancelled by user", current_node_progress)
                         return all_closed_tasks, open_tasks, True
@@ -445,7 +483,7 @@ class PipelineOrchestrator:
                 return all_closed_tasks, open_tasks, False
 
             # ── Parallel path (SOW_NODE_CONCURRENCY>1) ────────────────────────
-            if self.stop_event.is_set():
+            if self._cancelled():
                 return all_closed_tasks, open_tasks, True
 
             self._update_status(3, f"Extracting {total} nodes (concurrency={concurrency})...", 0.40)
@@ -474,7 +512,7 @@ class PipelineOrchestrator:
             # critic, coverage, coverage-marking), checkpointing after each node.
             for i in range(start_index, total):
                 node = nodes[i]
-                if self.stop_event.is_set():
+                if self._cancelled():
                     logger.warning(f"› Pipeline cancelled by user at node {i}")
                     return all_closed_tasks, open_tasks, True
                 if i not in failed:

@@ -16,9 +16,9 @@ via existing TaskFlag values (AMBIGUOUS_SCOPE, LOW_CONFIDENCE).
 Designed to be called per-section between StateAgent.process and
 coverage.mark_covered in the orchestrator (Wave 3 integration).
 
-LLM seam: uses LLMClient.complete_json only. On any failure (LLM error,
-non-list response, parse error) returns the input tasks unmodified plus an
-empty report. The pipeline must never crash because the critic misbehaves.
+LLM seam: uses runner.complete_structured (Instructor-validated) only. On any
+structured-output failure (InstructorError) returns the input tasks unmodified
+plus an empty report. The pipeline must never crash because the critic misbehaves.
 """
 
 from __future__ import annotations
@@ -187,9 +187,8 @@ class TaskCritic:
         flag_confidence_floor: float = FLAG_CONFIDENCE_FLOOR,
     ):
         self.llm = llm_client
-        # Route the agent's single LLM call through the shared AgentRunner.
-        # The runner is a verbatim passthrough over self.llm.complete_json, so
-        # the underlying request (and observable behavior) is unchanged.
+        # Route the agent's single LLM call through the shared AgentRunner's
+        # Instructor-validated structured-output seam (complete_structured).
         self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id

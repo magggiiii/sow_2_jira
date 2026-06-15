@@ -170,8 +170,8 @@ class CoverageChecker:
         max_section_chars: int = 16000,
     ):
         self.llm = llm_client
-        # Route the single coverage-check LLM call through the AgentRunner seam
-        # (behavior-preserving passthrough over the same LLMProvider).
+        # Route the single coverage-check LLM call through the AgentRunner's
+        # Instructor-validated structured-output seam (complete_structured).
         self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id

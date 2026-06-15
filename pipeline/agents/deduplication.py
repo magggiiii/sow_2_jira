@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 
@@ -14,9 +15,24 @@ from pipeline.agents.cross_run_index import ProjectEmbeddingIndex
 from pipeline.llm_client import LLMClient
 from pipeline.observability import logger
 from audit.logger import AuditLogger
-from core.agent_runner import AgentRunner
+from core.agent_runner import AgentRunner, InstructorError
 
 DEDUP_SYSTEM_PROMPT = "You are a precise task deduplication agent. Return ONLY valid JSON."
+
+
+class DedupDecisionList(BaseModel):
+    """Top-level Instructor ``response_model`` (C-5).
+
+    The dedup LLM emits a JSON array of pairwise verdicts, so the validated
+    payload is wrapped in a single object with one ``decisions`` list. Each
+    :class:`DedupDecision` is schema-validated — notably ``decision`` is coerced
+    into the normalizing :class:`DedupDecisionType` enum — so the
+    ``[DedupDecision(**d) for d in raw if isinstance(d, dict)]` parse the regex
+    path did (which could crash on a malformed verdict) is replaced by a
+    pre-validated list. An unsatisfiable batch surfaces as InstructorError, which
+    deduplicate() degrades to "no merges, tasks unchanged".
+    """
+    decisions: list[DedupDecision] = Field(default_factory=list)
 
 
 def _dedup_preserve_order(items: list) -> list:
@@ -110,12 +126,11 @@ class DeduplicationAgent:
                 so tests don't write into the real data/ tree.
         """
         self.llm = llm_client
-        # Route this agent's single complete_json call through the AgentRunner
-        # passthrough. The runner forwards every kwarg unchanged and returns the
-        # provider's result verbatim, so this is behavior-preserving. We keep the
-        # dedup-specific pairwise prompt build + DedupDecision parsing here (the
-        # runner's typed run() doesn't fit the bespoke parse), and use the thin
-        # complete_json seam so the call is centralized without changing it.
+        # Route this agent's single LLM confirmation call through the
+        # AgentRunner's Instructor-validated structured-output seam
+        # (complete_structured with response_model=DedupDecisionList). The
+        # dedup-specific pairwise prompt build + merge/keep application stay here;
+        # only the model call + verdict parsing move onto the validated seam.
         self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id
@@ -385,13 +400,23 @@ class DeduplicationAgent:
             for a, b, sim in candidate_pairs
         ], indent=2)
 
+        # C-5: route through the Instructor-validated structured-output seam.
+        # The runner returns a validated DedupDecisionList — each DedupDecision
+        # already parsed (decision coerced into DedupDecisionType) — so the bespoke
+        # [DedupDecision(**d) ...] parse is gone. max_tokens stays at the runner
+        # default (8192, the same the complete_json path used); a dedup batch that
+        # outgrows it surfaces via the W3-D degraded signal below, not a crash.
+        # Any structured-output failure surfaces as one InstructorError, recorded
+        # as DEDUP_ERROR and degraded to "tasks unchanged" (embeddings still
+        # persisted so a retry can reuse them).
         try:
-            raw_decisions = self.runner.complete_json(
+            decision_result = self.runner.complete_structured(
                 prompt=DEDUP_PROMPT_TEMPLATE.format(pairs_json=pairs_json),
+                response_model=DedupDecisionList,
                 system=DEDUP_SYSTEM_PROMPT,
                 agent_name="DeduplicationAgent",
             )
-        except (ValueError, RuntimeError) as e:
+        except InstructorError as e:
             self.audit.log(
                 run_id=self.run_id,
                 agent="DeduplicationAgent",
@@ -404,8 +429,8 @@ class DeduplicationAgent:
                 self._apply_cross_run_matches(tasks, embeddings)
             return tasks
 
-        # Step 4: Apply decisions
-        decisions = [DedupDecision(**d) for d in raw_decisions if isinstance(d, dict)]
+        # Step 4: Apply decisions (already-validated DedupDecision objects)
+        decisions = decision_result.decisions
         drop_ids: set[str] = set()
         task_map = {str(t.id): t for t in tasks}
 

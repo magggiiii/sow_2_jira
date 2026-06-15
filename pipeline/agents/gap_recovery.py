@@ -91,10 +91,9 @@ class GapRecoveryAgent:
         max_iterations: int = 2,
     ):
         self.llm = llm_client
-        # Route this agent's single complete_json call through the AgentRunner
-        # seam. The runner's complete_json is a thin passthrough over the same
-        # LLMProvider, so the request, return value, and propagated exceptions
-        # are unchanged — the broad error swallow below behaves identically.
+        # Route this agent's single LLM call through the AgentRunner's
+        # Instructor-validated structured-output seam (complete_structured);
+        # see recover() for the per-node failure/degrade handling.
         self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id

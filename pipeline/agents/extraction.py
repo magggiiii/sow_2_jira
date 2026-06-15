@@ -230,9 +230,8 @@ class TaskExtractionAgent:
     def __init__(self, llm_client: LLMClient, audit_logger: AuditLogger,
                  run_id: str, confidence_threshold: float = 0.6, max_section_chars: int = 16000):
         self.llm = llm_client
-        # Route the single LLM call through the AgentRunner seam. The runner's
-        # complete_json is a thin passthrough over the same LLMProvider, so the
-        # request, return value, and propagated exceptions are unchanged.
+        # Route the single LLM call through the AgentRunner's Instructor-validated
+        # structured-output seam (complete_structured); see extract().
         self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id

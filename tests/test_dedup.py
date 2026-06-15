@@ -2,13 +2,21 @@
 """
 Wave 2D coverage for the DeduplicationAgent rewrite.
 
-Three things under test:
+C-5 Instructor migration: the dedup confirmation call now routes through
+``runner.complete_structured(response_model=DedupDecisionList)`` instead of
+``complete_json``. The mock-point moved to ``agent.runner.complete_structured`` —
+returning a validated ``DedupDecisionList`` or raising ``InstructorError``. The
+deterministic candidate-pair search, merge/keep application, persistence, and
+W3-D degraded signal are all unchanged. Every behavioral assertion is preserved.
+
+Things under test:
 1. sklearn NearestNeighbors candidate-pair search returns the same set of
    pairs as the legacy O(n^2) brute-force loop on identical embeddings.
 2. When no pair clears threshold, no LLM call happens and tasks are returned
    unchanged — but embeddings are still persisted to data/sessions/<run_id>/.
-3. LLM errors during dedup are swallowed (audit-logged) and tasks come back
-   unmodified, again with the embeddings file present.
+3. Structured-output errors during dedup are swallowed (audit-logged) and tasks
+   come back unmodified, again with the embeddings file present.
+4. merge/keep application, the W3-D degraded signal, and cross-run gating.
 """
 
 from __future__ import annotations
@@ -24,13 +32,15 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from core.agent_runner import InstructorError
 from models.schemas import (
     AcceptanceCriterion,
+    DedupDecision,
     ManagedTask,
     SourceRef,
     TaskStatus,
 )
-from pipeline.agents.deduplication import DeduplicationAgent
+from pipeline.agents.deduplication import DedupDecisionList, DeduplicationAgent
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -93,6 +103,22 @@ def _make_agent(
         project_indices_dir=str(tmp_path / "project_indices"),
     )
     return agent, audit, llm
+
+
+def _stub_structured(agent, *, returns=None, raises=None) -> MagicMock:
+    """Stub the C-5 Instructor seam on the agent's runner.
+
+    ``returns`` is the validated ``DedupDecisionList`` the runner would hand
+    back; ``raises`` simulates a structured-output failure. Returns the mock so
+    tests can assert call/no-call.
+    """
+    mock = MagicMock()
+    if raises is not None:
+        mock.side_effect = raises
+    else:
+        mock.return_value = returns
+    agent.runner.complete_structured = mock
+    return mock
 
 
 def _brute_force_pairs(
@@ -163,12 +189,13 @@ def test_dedup_below_threshold_no_pairs(tmp_path):
 
     llm = MagicMock()
     agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.99)
+    structured = _stub_structured(agent, returns=DedupDecisionList(decisions=[]))
     out = agent.deduplicate(tasks)
 
     # Behavior contract: identity preserved, no LLM call, audit recorded
     assert len(out) == 3
     assert {str(x.id) for x in out} == {str(x.id) for x in tasks}
-    llm.complete_json.assert_not_called()
+    structured.assert_not_called()
     assert "NO_DUPLICATES_FOUND" in audit.actions()
 
     # Embeddings file persisted
@@ -216,12 +243,11 @@ def test_dedup_with_llm_error_returns_unmodified(tmp_path):
     tasks = [t1, t2]
 
     llm = MagicMock()
-    llm.complete_json.side_effect = ValueError("simulated parse error")
-
     agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+    structured = _stub_structured(agent, raises=InstructorError("simulated parse error"))
     out = agent.deduplicate(tasks)
 
-    assert llm.complete_json.called
+    assert structured.called
     assert len(out) == 2
     assert {str(x.id) for x in out} == {str(x.id) for x in tasks}
     assert "DEDUP_ERROR" in audit.actions()
@@ -258,17 +284,15 @@ def test_dedup_keep_first_absorbs_dropped_task_content(tmp_path):
     other = _task("Configure observability stack", "Wire OTel collector to Tempo")
     tasks = [survivor, dropped, other]
 
-    llm = MagicMock()
-    llm.complete_json.return_value = [
-        {
-            "task_id_a": str(survivor.id),
-            "task_id_b": str(dropped.id),
-            "decision": "keep_first",
-            "reason": "second is a subset of the first",
-        }
-    ]
-
-    agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+    agent, audit, _ = _make_agent(tmp_path, llm=MagicMock(), threshold=0.6)
+    _stub_structured(agent, returns=DedupDecisionList(decisions=[
+        DedupDecision(
+            task_id_a=str(survivor.id),
+            task_id_b=str(dropped.id),
+            decision="keep_first",
+            reason="second is a subset of the first",
+        )
+    ]))
     out = agent.deduplicate(tasks)
 
     # The dropped task is gone; survivor + other remain, in original order.
@@ -309,11 +333,9 @@ def test_dedup_large_input_zero_merges_sets_degraded(tmp_path, monkeypatch):
     tasks = [_task(f"Task number {i}", f"Description for task {i}") for i in range(120)]
     assert len(tasks) > DeduplicationAgent.DEGRADED_INPUT_THRESHOLD
 
-    llm = MagicMock()
-    # Simulate a truncated/empty LLM response: no decisions -> 0 merges.
-    llm.complete_json.return_value = []
-
-    agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+    agent, audit, _ = _make_agent(tmp_path, llm=MagicMock(), threshold=0.6)
+    # Simulate a truncated/empty structured response: no decisions -> 0 merges.
+    _stub_structured(agent, returns=DedupDecisionList(decisions=[]))
 
     # Force a large candidate-pair set without invoking the real embedder.
     fake_pairs = [(tasks[i], tasks[i + 1], 0.95) for i in range(0, len(tasks) - 1)]
@@ -351,17 +373,15 @@ def test_dedup_normal_merge_run_not_degraded(tmp_path):
     other = _task("Configure observability stack", "Wire OTel collector to Tempo")
     tasks = [survivor, dropped, other]
 
-    llm = MagicMock()
-    llm.complete_json.return_value = [
-        {
-            "task_id_a": str(survivor.id),
-            "task_id_b": str(dropped.id),
-            "decision": "merge",
-            "reason": "same login work",
-        }
-    ]
-
-    agent, audit, _ = _make_agent(tmp_path, llm=llm, threshold=0.6)
+    agent, audit, _ = _make_agent(tmp_path, llm=MagicMock(), threshold=0.6)
+    _stub_structured(agent, returns=DedupDecisionList(decisions=[
+        DedupDecision(
+            task_id_a=str(survivor.id),
+            task_id_b=str(dropped.id),
+            decision="merge",
+            reason="same login work",
+        )
+    ]))
     out = agent.deduplicate(tasks)
 
     # A merge occurred (one fewer task).

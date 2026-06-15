@@ -114,8 +114,8 @@ class SectionClassifier:
         max_section_chars: int = 4000,
     ):
         self.llm = llm_client
-        # Route the single classifier LLM call through the AgentRunner seam
-        # (behavior-preserving passthrough over the same LLMProvider).
+        # Route the single classifier LLM call through the AgentRunner's
+        # Instructor-validated structured-output seam (complete_structured).
         self.runner = AgentRunner(llm_client)
         self.audit = audit_logger
         self.run_id = run_id

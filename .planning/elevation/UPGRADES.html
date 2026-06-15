@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">30</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;377</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">33</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">31</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;383</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">34</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -149,7 +149,7 @@
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
-      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.63)"></i></div><div class="wpct">63%</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.75)"></i></div><div class="wpct">75%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -396,6 +396,17 @@
         <p class="why"><span class="wl">Better</span>The biggest wall-clock cost (extraction) parallelizes across nodes with zero behavior change — correctness held over peak speed (critic+coverage stay sequential by necessity).</p>
       </div>
     </div>
+    <!-- C1 PER-NODE CHECKPOINT + RESUME -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — per-node checkpoint + resume (C1)</h3><span class="sha">0030581</span></div>
+      <div class="inc-sub reveal">A crash 45 nodes into a 60-node run no longer loses the work. Test-first — 6 new tests, suite 377 → 383 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Long runs survive a crash and resume where they left off</h4><span class="tag">scale · C1</span></div>
+        <p class="what">Write an atomic extraction checkpoint after each applied node (tasks + coverage + node-set), and resume from it on the next run — skipping done nodes with no duplicate tasks.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Only a single end-of-run checkpoint existed; a crash partway through a ~25 min-2 h run discarded every extracted task and started from zero.</div><div class="cell after"><span class="lbl">After</span>After each node the run persists <code>extraction_checkpoint.json</code> (atomic temp+replace) with the closed/open tasks + coverage state. On restart <code>_maybe_resume</code> validates the checkpoint's node-id list against the current document (mismatch → fresh run), restores tasks + coverage, and processes only the remaining nodes. Gated by <code>RunConfig.enable_resumption</code> (default on); deleted on successful completion.</div></div>
+        <p class="why"><span class="wl">Better</span>A long SOW run is now restart-survivable in-process — the durability fix that doesn't yet need the Wave-2 worker.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -404,7 +415,7 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Resumable &amp; cancellable runs <span class="tag">scale · C1-C2</span></h4><p>Per-node checkpoint + resume (a crash at node 45/60 no longer loses 40 min of work — reuses the <code>skip_indexing</code>/tree-cache precedent), plus a <code>cancel_check</code> seam and a filesystem status fallback so partial progress survives a restart even before the durable worker lands.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Cancellable runs <span class="tag">scale · C2</span></h4><p><s>Per-node checkpoint + resume (C1) — shipped.</s> Remaining: a <code>cancel_check</code> seam (so a run can be cancelled cleanly between nodes/stages) — the seam the Wave-2 durable worker binds to (Redis <code>cancel:{run_id}</code>).</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
     </div>

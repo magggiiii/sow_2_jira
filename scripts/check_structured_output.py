@@ -291,17 +291,32 @@ def build_client(args, run_id: str):
     audit = SmokeAudit()  # client-level audit (LLM_CALL etc.); separate per agent below
     mode = LLMMode(args.mode)
 
+    explicit_key = args.api_key or os.environ.get("S2J_SMOKE_API_KEY", "")
     provider_config = None
-    if args.model:
-        api_key = args.api_key or os.environ.get("S2J_SMOKE_API_KEY", "")
+
+    if args.model and explicit_key:
+        # Fully explicit: provider/model/key/base from flags + env.
         provider_config = ProviderConfig(
             provider=args.provider or "openai",
             model=args.model,
-            api_key=api_key,
+            api_key=explicit_key,
             api_base=args.api_base or "",
         )
-    # else: provider_config stays None → LLMClient resolves via the router
-    #       (reads UI settings.json / env), no llm_router modification.
+    elif args.model:
+        # Model override: resolve credentials (api_key/api_base) from the
+        # existing settings/env via the router — READ-ONLY, no llm_router change
+        # — then swap ONLY the model string. This keeps the secret out of the
+        # command line while still letting us point the smoke-gate at a different
+        # model than the one configured in settings.
+        from pipeline.llm_router import configure_litellm_for_mode
+        provider_config = configure_litellm_for_mode(mode)
+        provider_config.model = args.model
+        if args.provider:
+            provider_config.provider = args.provider
+        if args.api_base:
+            provider_config.api_base = args.api_base
+    # else: provider_config stays None → LLMClient resolves everything via the
+    #       router (reads UI settings.json / env). No llm_router modification.
 
     return LLMClient(
         mode=mode,

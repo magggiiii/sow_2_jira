@@ -27,6 +27,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from core.agent_runner import InstructorError
 from models.schemas import (
     AcceptanceCriterion,
     AcceptanceCriterionType,
@@ -35,8 +36,10 @@ from models.schemas import (
     TaskFlag,
 )
 from pipeline.agents.critic import (
+    CritiqueBatch,
     CritiqueIssue,
     CritiqueReport,
+    RawCritique,
     TaskCritic,
 )
 
@@ -77,18 +80,30 @@ def _make_task(
 
 
 def _make_critic(llm_response=None, llm_raises: Exception | None = None) -> TaskCritic:
-    llm = MagicMock()
-    if llm_raises is not None:
-        llm.complete_json.side_effect = llm_raises
-    else:
-        llm.complete_json.return_value = llm_response
-    audit = MagicMock()
-    return TaskCritic(
-        llm_client=llm,
-        audit_logger=audit,
+    """Build a TaskCritic with the Instructor seam stubbed.
+
+    C-5: the critic now calls ``runner.complete_structured(response_model=
+    CritiqueBatch)``. ``llm_response`` (a list of critique dicts, exactly as the
+    old regex path returned) is wrapped into a validated ``CritiqueBatch`` so
+    existing call sites are unchanged; ``llm_raises`` simulates an
+    ``InstructorError`` from the structured boundary.
+    """
+    critic = TaskCritic(
+        llm_client=MagicMock(),
+        audit_logger=MagicMock(),
         run_id="r1",
         auto_fix_threshold=0.8,
     )
+    mock = MagicMock()
+    if llm_raises is not None:
+        mock.side_effect = llm_raises
+    else:
+        items = llm_response or []
+        mock.return_value = CritiqueBatch(
+            critiques=[RawCritique(**c) for c in items]
+        )
+    critic.runner.complete_structured = mock
+    return critic
 
 
 # ─── Tests ───────────────────────────────────────────────────────────────────
@@ -103,7 +118,7 @@ def test_empty_tasks_returns_empty_report():
     assert report.auto_fixed_count == 0
     assert report.flagged_count == 0
     # No LLM call when there's nothing to review.
-    critic.llm.complete_json.assert_not_called()
+    critic.runner.complete_structured.assert_not_called()
 
 
 def test_non_verb_title_auto_fix():
@@ -310,7 +325,7 @@ def test_llm_error_returns_unmodified_tasks():
     original_title = task.title
     original_flags = list(task.flags)
 
-    critic = _make_critic(llm_raises=RuntimeError("provider blew up"))
+    critic = _make_critic(llm_raises=InstructorError("provider blew up"))
 
     fixed, report = critic.critique([task], section_text="...", node=_node())
 
@@ -327,8 +342,10 @@ def test_invalid_json_response_returns_unmodified():
     original_title = task.title
     original_flags = list(task.flags)
 
-    # LLM returns a dict instead of a list — must be handled gracefully.
-    critic = _make_critic(llm_response={"oops": "not a list"})
+    # Instructor could not produce a valid CritiqueBatch (unparseable / schema
+    # violation it could not satisfy) → surfaces as InstructorError, handled
+    # gracefully: tasks unmodified, empty report.
+    critic = _make_critic(llm_raises=InstructorError("non-batch structured output"))
 
     fixed, report = critic.critique([task], section_text="...", node=_node())
 

@@ -25,13 +25,13 @@ from __future__ import annotations
 
 import json
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 
 from pydantic import BaseModel, Field, ValidationError
 
 from audit.logger import AuditLogger
-from core.agent_runner import AgentRunner
+from core.agent_runner import AgentRunner, InstructorError
 from core.guardrails import ConfidenceGate
 from models.schemas import (
     AcceptanceCriterion,
@@ -70,6 +70,33 @@ class CritiqueReport(BaseModel):
     auto_fixed_count: int = 0
     flagged_count: int = 0
     critiques: list[TaskCritique] = Field(default_factory=list)
+
+
+# ─── Instructor LLM-output models (C-5) ────────────────────────────────────────
+
+class RawCritique(BaseModel):
+    """One critique exactly as the LLM emits it — the permissive Instructor item.
+
+    Intentionally lenient (``task_id``/``issues`` as plain strings, ACs as the
+    same Union the extractor accepts) so the agent's existing per-entry
+    resilience is preserved: ``_parse_critique`` still coerces ``task_id`` to a
+    UUID (skipping the entry on failure), filters ``issues`` down to known
+    :class:`CritiqueIssue` values, and normalizes ACs. A single dirty entry is
+    dropped rather than failing the whole batch — matching the regex-path
+    behavior this replaces.
+    """
+    task_id: str = ""
+    issues: list[str] = Field(default_factory=list)
+    suggested_title: Optional[str] = None
+    suggested_acceptance_criteria: Optional[list[Union[AcceptanceCriterion, str]]] = None
+    confidence: UnitInterval = 0.0  # CONF-1: clamped into [0,1]
+    reason: str = ""
+
+
+class CritiqueBatch(BaseModel):
+    """Top-level Instructor ``response_model`` — the critic returns a JSON array,
+    so the validated payload is wrapped in a single object with one list field."""
+    critiques: list[RawCritique] = Field(default_factory=list)
 
 
 # ─── Prompts ──────────────────────────────────────────────────────────────────
@@ -209,37 +236,35 @@ class TaskCritic:
 
         prompt = self._build_prompt(tasks, section_text, node)
 
+        # C-5: route through the Instructor-validated structured-output seam.
+        # The critic emits a JSON array, so the response_model is a CritiqueBatch
+        # wrapper whose single `critiques` field is a list of permissive
+        # RawCritique items (validated, but lenient enough that the per-entry
+        # filtering below is preserved). Any structured-output failure surfaces
+        # as one InstructorError, recorded as CRITIQUE_LLM_ERROR and degraded to
+        # "tasks unchanged + empty report" — never a silent crash.
         try:
-            raw = self.runner.complete_json(
+            batch = self.runner.complete_structured(
                 prompt=prompt,
+                response_model=CritiqueBatch,
                 system=CRITIC_SYSTEM_PROMPT,
                 agent_name=self.AGENT_NAME,
                 node_id=node_id,
             )
-        except Exception as e:
+        except InstructorError as e:
             self.audit.log(
                 run_id=self.run_id,
                 agent=self.AGENT_NAME,
                 node_id=node_id,
                 action="CRITIQUE_LLM_ERROR",
-                detail=f"LLM error during critique: {e}",
-            )
-            return tasks, report
-
-        if not isinstance(raw, list):
-            self.audit.log(
-                run_id=self.run_id,
-                agent=self.AGENT_NAME,
-                node_id=node_id,
-                action="CRITIQUE_PARSE_ERROR",
-                detail=f"Critic returned non-list JSON (type={type(raw).__name__})",
+                detail=f"Structured output failed during critique: {e}",
             )
             return tasks, report
 
         # Index tasks by id for application.
         task_by_id: dict[str, ManagedTask] = {str(t.id): t for t in tasks}
 
-        for entry in raw:
+        for entry in batch.critiques:
             critique = self._parse_critique(entry)
             if critique is None:
                 continue
@@ -318,15 +343,16 @@ class TaskCritic:
             tasks_json=tasks_json,
         )
 
-    def _parse_critique(self, entry) -> Optional[TaskCritique]:
-        """Parse one raw critique dict from the LLM. Return None on failure."""
-        if not isinstance(entry, dict):
-            return None
+    def _parse_critique(self, entry: RawCritique) -> Optional[TaskCritique]:
+        """Parse one validated RawCritique into a domain TaskCritique.
+
+        Returns None on an unusable entry (e.g. ``task_id`` is not a valid UUID)
+        so a single bad critique is skipped rather than dropping the whole batch
+        — the same per-entry resilience the regex path had.
+        """
         try:
-            # Issues come in as arbitrary strings; filter to known enum values.
-            raw_issues = entry.get("issues") or []
-            if not isinstance(raw_issues, list):
-                raw_issues = [raw_issues]
+            # Issues come in as permissive strings; filter to known enum values.
+            raw_issues = entry.issues or []
             cleaned_issues: list[CritiqueIssue] = []
             for i in raw_issues:
                 try:
@@ -334,18 +360,19 @@ class TaskCritic:
                 except ValueError:
                     continue
 
-            # Normalize suggested ACs (can be strings or dicts coming from LLM)
-            suggested_acs = entry.get("suggested_acceptance_criteria")
+            # Normalize suggested ACs (already coerced to AcceptanceCriterion by
+            # the model, but normalize handles any legacy string entries too).
+            suggested_acs = entry.suggested_acceptance_criteria
             if suggested_acs is not None:
                 suggested_acs = normalize_acceptance_criteria(suggested_acs)
 
             return TaskCritique(
-                task_id=UUID(str(entry["task_id"])),
+                task_id=UUID(str(entry.task_id)),
                 issues=cleaned_issues,
-                suggested_title=entry.get("suggested_title"),
+                suggested_title=entry.suggested_title,
                 suggested_acceptance_criteria=suggested_acs,
-                confidence=float(entry.get("confidence") or 0.0),
-                reason=str(entry.get("reason") or ""),
+                confidence=entry.confidence,
+                reason=entry.reason or "",
             )
         except (KeyError, ValueError, TypeError, ValidationError):
             return None

@@ -1,5 +1,6 @@
 # pipeline/orchestrator.py
 
+import concurrent.futures
 import json
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -172,21 +173,27 @@ class PipelineOrchestrator:
 
         return nodes
 
-    def _process_node(self, node, open_tasks, node_index, total_nodes):
+    def _node_concurrency(self) -> int:
         """
-        Process ONE node: classify → extract → state-merge → critic → coverage.
-
-        Returns ``(open_tasks, newly_closed, section_tasks)``, or ``None`` when the
-        classifier gates the section out. Performs NO ``CoverageTracker`` mutation
-        and never touches ``all_closed_tasks`` — the caller applies coverage
-        marking + accumulation in node order. Keeping the order-sensitive merge
-        out of here is also what makes a future thread pool over nodes safe (B1).
+        Resolve the per-node extract concurrency from ``SOW_NODE_CONCURRENCY``
+        (default 6). ``1`` reproduces the legacy strictly-sequential path. A
+        malformed value falls back to the default rather than crashing a run.
         """
-        total = max(total_nodes, 1)
-        current_node_progress = 0.40 + (0.40 * (node_index / total))
-        node_title = node.get("title", f"Node {node_index}")
+        try:
+            return max(1, int(os.getenv("SOW_NODE_CONCURRENCY", "6")))
+        except ValueError:
+            return 6
 
-        with tracer.start_as_current_span(f"PROCESS_NODE_{node.get('node_id', 'none')}"):
+    def _extract_node(self, node, node_index, total_nodes, status_callback=None):
+        """
+        Classify-gate + extract for ONE node. PURE per-node work: it depends only
+        on ``node`` and its section text and mutates no shared run state, so it is
+        safe to run concurrently across nodes (B1). Returns the raw task list, or
+        ``None`` when the classifier gates the section out. ``status_callback`` is
+        left ``None`` in the parallel path to avoid mutating the shared provider's
+        ``status_callback`` from worker threads.
+        """
+        with tracer.start_as_current_span(f"EXTRACT_NODE_{node.get('node_id', 'none')}"):
             # Get text for this node (PageIndex provides it directly)
             section_text = self.indexer.get_node_text(node)
 
@@ -201,13 +208,27 @@ class PipelineOrchestrator:
                     return None
 
             # Extract (hierarchy-aware)
-            raw_tasks = self.extraction_agent.extract(
+            return self.extraction_agent.extract(
                 node, section_text,
                 hierarchy=self.config.jira_hierarchy.value,
-                status_callback=lambda msg: self._update_status(3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress)
+                status_callback=status_callback,
             )
 
-            # State management
+    def _apply_node(self, node, raw_tasks, open_tasks):
+        """
+        Apply ONE node's extracted tasks in node order: StateAgent continuation
+        merge → critic → semantic coverage. ORDER-SENSITIVE — the StateAgent
+        continuation and the critic/coverage passes read the cross-node
+        ``open_tasks`` accumulator, so this must run sequentially even when
+        extraction is parallelized. Returns ``(open_tasks, newly_closed,
+        section_tasks)``; performs no ``CoverageTracker`` mutation (the caller
+        marks coverage in node order).
+        """
+        with tracer.start_as_current_span(f"APPLY_NODE_{node.get('node_id', 'none')}"):
+            # Cheap re-read (PageIndex provides text directly) — critic + coverage
+            # need the section text; not worth threading through the parallel phase.
+            section_text = self.indexer.get_node_text(node)
+
             open_tasks, newly_closed = self.state_agent.process(
                 raw_tasks, open_tasks, node
             )
@@ -239,20 +260,61 @@ class PipelineOrchestrator:
 
             return open_tasks, newly_closed, section_tasks
 
+    def _process_node(self, node, open_tasks, node_index, total_nodes):
+        """
+        Process ONE node end-to-end (extract then apply). Composition of
+        :meth:`_extract_node` + :meth:`_apply_node`; returns
+        ``(open_tasks, newly_closed, section_tasks)`` or ``None`` when gated. Used
+        by the sequential path; the parallel path calls the two halves directly.
+        """
+        total = max(total_nodes, 1)
+        current_node_progress = 0.40 + (0.40 * (node_index / total))
+        node_title = node.get("title", f"Node {node_index}")
+        status_cb = (
+            lambda msg: self._update_status(
+                3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress
+            )
+        )
+        raw_tasks = self._extract_node(node, node_index, total_nodes, status_callback=status_cb)
+        if raw_tasks is None:
+            return None
+        return self._apply_node(node, raw_tasks, open_tasks)
+
+    def _record_node_failure(self, node, node_index, exc) -> None:
+        """Isolate a per-node failure: count it and record an audit row. Never
+        re-raises — a single bad node must not abort the whole run (A2)."""
+        self.node_error_count += 1
+        logger.error(f"✗ Node {node.get('node_id', node_index)} failed to process: {exc}")
+        try:
+            self.audit.log(
+                run_id=self.config.run_id,
+                agent="Orchestrator",
+                node_id=node.get("node_id", ""),
+                action="EXTRACTION_FAILED",
+                task_id=None,
+                detail=f"Node processing failed, isolated and skipped: {exc}",
+            )
+        except Exception:
+            pass  # audit must never mask the isolation it is recording
+
     def _extract_all(self, nodes, coverage):
         """
-        Run :meth:`_process_node` over all nodes with per-node error isolation.
+        Run extraction over all nodes with per-node error isolation, returning
+        ``(all_closed_tasks, open_tasks, cancelled)``.
 
-        Returns ``(all_closed_tasks, open_tasks, cancelled)``. A node that raises
-        is logged (``EXTRACTION_FAILED`` audit row), counted in
-        ``self.node_error_count``, and skipped — so a single bad node never aborts
-        the whole run (the legacy loop had no guard: one error lost every task).
-        ``cancelled`` is ``True`` when the user stop_event fired mid-loop, in which
-        case the partial ``all_closed_tasks`` is returned for the caller to honor.
+        B1: when ``SOW_NODE_CONCURRENCY`` > 1, the pure classify+extract work runs
+        concurrently across nodes (a thread pool — the litellm seam is sync +
+        thread-safe), then the order-sensitive apply (StateAgent merge, critic,
+        coverage, coverage-marking) runs sequentially in node order. Output is
+        identical to the sequential path. ``=1`` reproduces the legacy loop
+        exactly. A node that raises (in either phase) is isolated via
+        :meth:`_record_node_failure` and skipped. ``cancelled`` is ``True`` when
+        the user stop_event fired.
         """
+        concurrency = self._node_concurrency()
+        total = len(nodes)
         all_closed_tasks: list[ManagedTask] = []
         open_tasks: list[ManagedTask] = []
-        total = len(nodes)
 
         with Progress(
             SpinnerColumn(),
@@ -264,45 +326,79 @@ class PipelineOrchestrator:
         ) as progress:
             task_bar = progress.add_task("[cyan]Extracting nodes...", total=total)
 
-            for i, node in enumerate(nodes):
-                current_node_progress = 0.40 + (0.40 * (i / total)) if total else 0.40
+            # ── Sequential path (legacy; SOW_NODE_CONCURRENCY=1) ──────────────
+            if concurrency <= 1:
+                for i, node in enumerate(nodes):
+                    current_node_progress = 0.40 + (0.40 * (i / total)) if total else 0.40
+                    if self.stop_event.is_set():
+                        logger.warning(f"› Pipeline cancelled by user at node {i}")
+                        self._update_status(3, "Cancelled by user", current_node_progress)
+                        return all_closed_tasks, open_tasks, True
 
+                    node_title = node.get('title', f"Node {i}")
+                    progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
+                    self._update_status(3, f"Processing: {node_title[:50]}", current_node_progress)
+
+                    try:
+                        result = self._process_node(node, open_tasks, i, total)
+                        if result is None:
+                            continue  # classifier gated this section out
+                        open_tasks, newly_closed, section_tasks = result
+                        for task in section_tasks:
+                            coverage.mark_covered(node["node_id"], str(task.id))
+                        all_closed_tasks.extend(newly_closed)
+                    except Exception as e:
+                        self._record_node_failure(node, i, e)
+                    finally:
+                        progress.advance(task_bar)
+
+                return all_closed_tasks, open_tasks, False
+
+            # ── Parallel path (SOW_NODE_CONCURRENCY>1) ────────────────────────
+            if self.stop_event.is_set():
+                return all_closed_tasks, open_tasks, True
+
+            self._update_status(3, f"Extracting {total} nodes (concurrency={concurrency})...", 0.40)
+
+            # Phase 1: extract concurrently (pure per-node; status_callback=None
+            # so no worker thread mutates the shared provider's callback).
+            raw_by_index: list = [None] * total
+            failed: set[int] = set()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
+                future_to_i = {
+                    ex.submit(self._extract_node, node, i, total, None): i
+                    for i, node in enumerate(nodes)
+                }
+                for fut in concurrent.futures.as_completed(future_to_i):
+                    i = future_to_i[fut]
+                    try:
+                        raw_by_index[i] = fut.result()  # list (success) or None (gated)
+                    except Exception as e:
+                        failed.add(i)
+                        self._record_node_failure(nodes[i], i, e)
+                    finally:
+                        progress.advance(task_bar)
+
+            # Phase 2: apply sequentially in node order (order-sensitive merge,
+            # critic, coverage, coverage-marking).
+            for i, node in enumerate(nodes):
                 if self.stop_event.is_set():
                     logger.warning(f"› Pipeline cancelled by user at node {i}")
-                    self._update_status(3, "Cancelled by user", current_node_progress)
                     return all_closed_tasks, open_tasks, True
-
-                node_title = node.get('title', f"Node {i}")
-                progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
-                self._update_status(3, f"Processing: {node_title[:50]}", current_node_progress)
-
+                if i in failed:
+                    continue
+                raw_tasks = raw_by_index[i]
+                if raw_tasks is None:
+                    continue  # classifier gated this section out
                 try:
-                    result = self._process_node(node, open_tasks, i, total)
-                    if result is None:
-                        continue  # classifier gated this section out
-                    open_tasks, newly_closed, section_tasks = result
-
-                    # Mark coverage (order-sensitive shared mutation — kept here)
+                    open_tasks, newly_closed, section_tasks = self._apply_node(
+                        node, raw_tasks, open_tasks
+                    )
                     for task in section_tasks:
                         coverage.mark_covered(node["node_id"], str(task.id))
                     all_closed_tasks.extend(newly_closed)
                 except Exception as e:
-                    # A2: isolate the failure — log + count + continue, never abort.
-                    self.node_error_count += 1
-                    logger.error(f"✗ Node {node.get('node_id', i)} failed to process: {e}")
-                    try:
-                        self.audit.log(
-                            run_id=self.config.run_id,
-                            agent="Orchestrator",
-                            node_id=node.get("node_id", ""),
-                            action="EXTRACTION_FAILED",
-                            task_id=None,
-                            detail=f"Node processing failed, isolated and skipped: {e}",
-                        )
-                    except Exception:
-                        pass  # audit must never mask the isolation it is recording
-                finally:
-                    progress.advance(task_bar)
+                    self._record_node_failure(node, i, e)
 
         return all_closed_tasks, open_tasks, False
 

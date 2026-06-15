@@ -97,7 +97,10 @@ def _nodes(n):
 # ─── isolation ────────────────────────────────────────────────────────────────
 
 
-def test_one_failing_node_does_not_abort_the_run():
+def test_one_failing_node_does_not_abort_the_run(monkeypatch):
+    # Sequential path: deterministic node order so we can assert isolation +
+    # ordering. Parallel-path isolation is covered in test_orchestrator_parallel.
+    monkeypatch.setenv("SOW_NODE_CONCURRENCY", "1")
     nodes = _nodes(3)
     orch = _make_orchestrator(FakeExtraction(fail_on={"n1"}))
     coverage = CoverageTracker(nodes)
@@ -116,7 +119,8 @@ def test_one_failing_node_does_not_abort_the_run():
     assert any(e.get("action") == "EXTRACTION_FAILED" for e in orch.audit.entries)
 
 
-def test_all_nodes_succeed_no_errors():
+def test_all_nodes_succeed_no_errors(monkeypatch):
+    monkeypatch.setenv("SOW_NODE_CONCURRENCY", "1")
     nodes = _nodes(3)
     orch = _make_orchestrator(FakeExtraction())
     coverage = CoverageTracker(nodes)

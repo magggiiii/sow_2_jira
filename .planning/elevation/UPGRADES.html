@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">25</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;336</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">28</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">26</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;349</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">29</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -149,7 +149,7 @@
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
-      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="plan" style="transform:scaleX(.04)"></i></div><div class="wpct">Planned</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.13)"></i></div><div class="wpct">13%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -341,6 +341,17 @@
         <p class="why"><span class="wl">Better</span>C-5 is closed <em>end-to-end</em>, not just in stubs — and the recorded validated outputs become seed material for the INV-4 eval cassette. The smoke-gate stays as a one-command live regression check.</p>
       </div>
     </div>
+    <!-- A1 STRUCTURED-OUTPUT RESILIENCE -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — resilient structured-output calls (A1)</h3><span class="sha">1b627a1</span></div>
+      <div class="inc-sub reveal">Restored on <code>complete_structured</code> the timeout + retry/backoff the C-5 migration dropped vs <code>complete_json</code>. Test-first — 7 new tests, suite 342 → 349 green, offline smoke-gate 6/6.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A transient 429 or hung call no longer silently loses tasks</h4><span class="tag">scale · A1 · the C-5 regression</span></div>
+        <p class="what">Wrapped the Instructor→LiteLLM call in a per-call timeout and a bounded retry/backoff loop, reusing the existing <code>llm_client</code> retry helpers import-only (no router/credential paths touched).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>complete_structured</code> called the provider with <em>no</em> timeout, retry, or rate-limit backoff — the legacy <code>complete_json</code> path had all four. Across the ~300-600 sequential LLM calls of a 50-60pg SOW run, a single transient 429/timeout dropped that agent to its safe default (lost tasks), and a hung call could block the whole run indefinitely.</div><div class="cell after"><span class="lbl">After</span>Each call carries a timeout (60s remote / 3600s local Ollama, override <code>S2J_STRUCTURED_TIMEOUT</code>) and retries only transient remote errors (429/408/5xx/network) with <code>Retry-After</code>-aware jittered exponential backoff, budgeted by <code>LLM_STRUCTURED_MAX_ATTEMPTS/_ELAPSED_S/_WAIT_S</code>. Auth/4xx and unsatisfiable-schema failures still fail fast; the budget-exhausted case re-raises one typed <code>InstructorError</code> the callers already degrade on — never a silent <code>None</code>.</div></div>
+        <p class="why"><span class="wl">Better</span>Structured output regains the production resilience the regex path had — the prerequisite for parallelizing the per-node loop (B1), where concurrency would otherwise multiply transient-failure task-loss.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -349,7 +360,6 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Resilient structured-output calls <span class="tag">scale · A1</span></h4><p>Restore on <code>complete_structured</code> what C-5 dropped vs <code>complete_json</code>: a per-call timeout + retry/backoff (429/Retry-After), reusing the existing <code>llm_client</code> helpers. Over a 300-600-call big-SOW run, a transient 429/timeout currently loses tasks (or hangs) silently. Do this <em>before</em> parallelizing.</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Parallel per-node extraction (~4-5× faster) <span class="tag">scale · B1</span></h4><p>Today the per-node agent loop is strictly sequential (~25 min-2 h for a 55pg SOW). Nodes are independent — <code>StateAgent</code> continuation is rule-based and applied <em>after</em> extraction — so a thread pool over nodes is safe, keeping only state-merge + dedup sequential. ~150-node run: ~30 min → ~6-10 min.</p><span class="need">buildable now (config-gated)</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Big-doc integrity <span class="tag">scale · A2-A4</span></h4><p>Per-node error isolation (one bad node never crashes the run), graceful <code>max_nodes</code> (process the cap + emit partial output, not a hard <code>RuntimeError</code>), batch the dedup candidate pairs (no single-call truncation), and surface section truncation as a warning+flag instead of silently dropping tasks on dense pages.</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Resumable &amp; cancellable runs <span class="tag">scale · C1-C2</span></h4><p>Per-node checkpoint + resume (a crash at node 45/60 no longer loses 40 min of work — reuses the <code>skip_indexing</code>/tree-cache precedent), plus a <code>cancel_check</code> seam and a filesystem status fallback so partial progress survives a restart even before the durable worker lands.</p><span class="need">buildable now</span></div></div>

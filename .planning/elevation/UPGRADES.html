@@ -130,12 +130,12 @@
     <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
     <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
     <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
-    <p class="updated reveal"><b>Last updated:</b> 2026-06-14 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">23</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">24</div><div class="lab">Upgrades shipped &amp; verified</div></div>
       <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;331</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">18</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">24</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -147,8 +147,8 @@
     <p class="sec-intro reveal">Seven tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth).</p>
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.62)"></i></div><div class="wpct">62%</div></div>
-      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.80)"></i></div><div class="wpct">80%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
+      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.92)"></i></div><div class="wpct">92%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -318,6 +318,17 @@
         <p class="why"><span class="wl">Better</span>The structured-output engine is in place and tested; adopting it per agent changes one call, not the parsing.</p>
       </div>
     </div>
+    <!-- C-5 PER-AGENT INSTRUCTOR MIGRATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — per-agent Instructor migration (C-5 complete)</h3><span class="sha">99b9ab2</span></div>
+      <div class="inc-sub reveal">Routed all six agents off regex-scraped JSON onto Instructor-validated structured output. One agent per commit, test-first, suite green between each — 6 commits, still 331 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>All six agents now get validated objects, not scraped text</h4><span class="tag">C-5 · the root-cause fix, completed</span></div>
+        <p class="what">Swapped every agent's model call from <code>complete_json</code> (prompt-for-JSON + regex/parse + swallow-on-failure) to <code>complete_structured(response_model=…)</code> (Instructor-validated Pydantic).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each agent scraped a list/dict out of free text and hand-parsed it; a malformed or truncated answer was silently coerced to empty/garbage — the mechanism behind the intelligence-layer failures.</div><div class="cell after"><span class="lbl">After</span>Each agent declares a response model (classifier→<code>RawClassification</code>, critic→<code>CritiqueBatch</code>, coverage→<code>CoverageAudit</code>, extraction→<code>ExtractionResult</code>, gap-recovery→<code>GapRecoveryResult</code>, dedup→<code>DedupDecisionList</code>) and receives a validated instance; any structured-output failure surfaces as one typed <code>InstructorError</code>, recorded to the audit trail and degraded to that agent's safe default — never a silent empty.</div></div>
+        <p class="why"><span class="wl">Better</span>The #1 root cause (C-5) is now fully closed at the agent layer: zero <code>complete_json</code> call sites remain. Per-task resilience (critic + gap-recovery skip a dirty entry and keep the rest) is preserved, and failures are visible instead of swallowed.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -326,7 +337,7 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work.</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Guaranteed structured output (Instructor)</h4><p>Swap the <code>AgentRunner</code> call body for provider JSON-mode + a Pydantic <code>response_model</code> per agent — so all six get validated objects instead of regex-scraped text, in one change. Completes the C-5 root-cause fix.</p><span class="need">needs: adding the <code>instructor</code> dependency (your OK)</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Live structured-output smoke-gate</h4><p>The Instructor↔LiteLLM path is exercised only through stubs in the suite. Run all six agents once against a real provider to confirm the validated objects come back end-to-end — the last check before C-5 is closed beyond the code/test layer.</p><span class="need">needs: a live provider key</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
     </div>
@@ -348,7 +359,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-14 · branch elevation/wave-0 · 331 tests green
+    Updated 2026-06-15 · branch elevation/wave-0 · 331 tests green
   </footer>
 
 </div>

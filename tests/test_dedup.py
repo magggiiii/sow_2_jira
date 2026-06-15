@@ -408,3 +408,85 @@ def test_dedup_no_project_key_skips_cross_run_index(tmp_path):
     assert not (tmp_path / "project_indices").exists()
     assert "CROSS_RUN_MATCH" not in audit.actions()
     assert "PROJECT_INDEX_UPDATED" not in audit.actions()
+
+
+# ─── A3: batch dedup candidate pairs (no single-call truncation) ──────────────
+#
+# A run-wide dedup over a big SOW can produce hundreds of candidate pairs. The
+# legacy single complete_structured call (max_tokens=8192) truncates on large
+# inputs and the W3-D signal only fires on *zero* merges, so partial truncation
+# went undetected. A3 chunks candidate_pairs into batches (DEDUP_BATCH_SIZE),
+# calls the runner per batch, and merges the DedupDecisionLists. A >30-pair batch
+# yielding zero merges is flagged DEDUP_DEGRADED_BATCH.
+
+
+def test_dedup_chunks_large_candidate_set_into_batches(tmp_path, monkeypatch):
+    """100 candidate pairs / batch 40 → ceil(100/40) = 3 runner calls."""
+    tasks = [_task(f"Task {i}", f"desc {i}") for i in range(4)]
+    agent, audit, _ = _make_agent(tmp_path, threshold=0.6)
+
+    a, b = tasks[0], tasks[1]
+    pairs = [(a, b, 0.9) for _ in range(100)]
+    monkeypatch.setattr(agent, "_find_candidate_pairs", lambda t, e: pairs)
+
+    structured = _stub_structured(agent, returns=DedupDecisionList(decisions=[]))
+    agent.deduplicate(tasks)
+
+    assert structured.call_count == 3
+
+
+def test_dedup_merges_decisions_across_batches(tmp_path, monkeypatch):
+    """Decisions from every batch are collected and applied — a drop decided in
+    the 2nd batch is honored, not lost."""
+    t0, t1, t2, t3 = (_task("T0", "d0"), _task("T1", "d1"), _task("T2", "d2"), _task("T3", "d3"))
+    tasks = [t0, t1, t2, t3]
+    agent, audit, _ = _make_agent(tmp_path, threshold=0.6)
+
+    # 50 candidate pairs → 2 batches (40 + 10).
+    pairs = [(t0, t1, 0.9)] * 50
+    monkeypatch.setattr(agent, "_find_candidate_pairs", lambda t, e: pairs)
+
+    batch1 = DedupDecisionList(decisions=[
+        DedupDecision(task_id_a=str(t0.id), task_id_b=str(t1.id), decision="merge", reason="dup")
+    ])
+    batch2 = DedupDecisionList(decisions=[
+        DedupDecision(task_id_a=str(t2.id), task_id_b=str(t3.id), decision="merge", reason="dup")
+    ])
+    mock = _stub_structured(agent, returns=DedupDecisionList(decisions=[]))
+    mock.side_effect = [batch1, batch2]
+
+    out = agent.deduplicate(tasks)
+    out_ids = {str(t.id) for t in out}
+
+    assert mock.call_count == 2
+    assert out_ids == {str(t0.id), str(t2.id)}  # t1 and t3 dropped, one per batch
+
+
+def test_dedup_flags_degraded_batch_on_zero_merges(tmp_path, monkeypatch):
+    """A >30-pair batch that yields zero merges is flagged DEDUP_DEGRADED_BATCH."""
+    tasks = [_task("T0", "d0"), _task("T1", "d1")]
+    agent, audit, _ = _make_agent(tmp_path, threshold=0.6)
+
+    pairs = [(tasks[0], tasks[1], 0.9)] * 35  # single batch of 35 (>30)
+    monkeypatch.setattr(agent, "_find_candidate_pairs", lambda t, e: pairs)
+    _stub_structured(agent, returns=DedupDecisionList(decisions=[]))
+
+    agent.deduplicate(tasks)
+
+    assert agent.last_degraded is True
+    assert "DEDUP_DEGRADED_BATCH" in audit.actions()
+
+
+def test_dedup_small_input_uses_single_batch(tmp_path, monkeypatch):
+    """≤ batch-size pairs → exactly one runner call (behavior identical to the
+    legacy single-call path; no regression for the common small-doc case)."""
+    tasks = [_task("T0", "d0"), _task("T1", "d1")]
+    agent, audit, _ = _make_agent(tmp_path, threshold=0.6)
+
+    pairs = [(tasks[0], tasks[1], 0.9)] * 10  # 10 ≤ 40
+    monkeypatch.setattr(agent, "_find_candidate_pairs", lambda t, e: pairs)
+    structured = _stub_structured(agent, returns=DedupDecisionList(decisions=[]))
+
+    agent.deduplicate(tasks)
+
+    assert structured.call_count == 1

@@ -101,6 +101,14 @@ class DeduplicationAgent:
     # caller can tell that work-was-meant-to-happen but didn't.
     DEGRADED_INPUT_THRESHOLD = 100
 
+    # A3: candidate pairs are confirmed in batches so a big SOW's hundreds of
+    # pairs never overflow a single structured-output call's token budget. A
+    # batch larger than DEGRADED_BATCH_THRESHOLD that yields ZERO merges is the
+    # fingerprint of a truncated/failed response that still parsed — flagged
+    # DEDUP_DEGRADED_BATCH (a refinement of the run-level W3-D signal).
+    DEDUP_BATCH_SIZE = 40
+    DEGRADED_BATCH_THRESHOLD = 30
+
     def __init__(
         self,
         llm_client: LLMClient,
@@ -337,6 +345,39 @@ class DeduplicationAgent:
 
         return remaining_tasks
 
+    # ─── Pairwise confirmation (one batch) ─────────────────────────────────
+
+    def _confirm_pairs(self, pairs) -> DedupDecisionList:
+        """
+        Confirm one batch of candidate ``(task_a, task_b, similarity)`` pairs via
+        the Instructor-validated structured-output seam.
+
+        Builds the same pairwise JSON payload the legacy single call used and
+        returns the validated :class:`DedupDecisionList`. Raises
+        :class:`InstructorError` on a structured-output failure (the caller's
+        batch loop fails safe). Kept separate so :meth:`deduplicate` can chunk a
+        large candidate set into several bounded calls (A3).
+        """
+        pairs_json = json.dumps([
+            {
+                "task_id_a": str(a.id),
+                "title_a": a.title,
+                "description_a": a.short_description,
+                "task_id_b": str(b.id),
+                "title_b": b.title,
+                "description_b": b.short_description,
+                "similarity_score": round(sim, 3),
+            }
+            for a, b, sim in pairs
+        ], indent=2)
+
+        return self.runner.complete_structured(
+            prompt=DEDUP_PROMPT_TEMPLATE.format(pairs_json=pairs_json),
+            response_model=DedupDecisionList,
+            system=DEDUP_SYSTEM_PROMPT,
+            agent_name="DeduplicationAgent",
+        )
+
     # ─── Public entrypoint ─────────────────────────────────────────────────
 
     def deduplicate(self, tasks: list[ManagedTask]) -> list[ManagedTask]:
@@ -386,36 +427,51 @@ class DeduplicationAgent:
                 self._apply_cross_run_matches(tasks, embeddings)
             return tasks
 
-        # Step 3: LLM confirmation for candidate pairs
-        pairs_json = json.dumps([
-            {
-                "task_id_a": str(a.id),
-                "title_a": a.title,
-                "description_a": a.short_description,
-                "task_id_b": str(b.id),
-                "title_b": b.title,
-                "description_b": b.short_description,
-                "similarity_score": round(sim, 3),
-            }
-            for a, b, sim in candidate_pairs
-        ], indent=2)
-
-        # C-5: route through the Instructor-validated structured-output seam.
-        # The runner returns a validated DedupDecisionList — each DedupDecision
-        # already parsed (decision coerced into DedupDecisionType) — so the bespoke
-        # [DedupDecision(**d) ...] parse is gone. max_tokens stays at the runner
-        # default (8192, the same the complete_json path used); a dedup batch that
-        # outgrows it surfaces via the W3-D degraded signal below, not a crash.
+        # Step 3: LLM confirmation for candidate pairs, in batches.
+        # C-5: route through the Instructor-validated structured-output seam
+        # (validated DedupDecisionList — decision already coerced into
+        # DedupDecisionType). A3: confirm in batches of DEDUP_BATCH_SIZE and merge
+        # the per-batch decision lists, so hundreds of pairs from a big SOW never
+        # overflow a single call's token budget (which truncated silently before).
         # Any structured-output failure surfaces as one InstructorError, recorded
         # as DEDUP_ERROR and degraded to "tasks unchanged" (embeddings still
         # persisted so a retry can reuse them).
+        batch_size = self.DEDUP_BATCH_SIZE
+        batches = [
+            candidate_pairs[i:i + batch_size]
+            for i in range(0, len(candidate_pairs), batch_size)
+        ]
+        decisions = []
         try:
-            decision_result = self.runner.complete_structured(
-                prompt=DEDUP_PROMPT_TEMPLATE.format(pairs_json=pairs_json),
-                response_model=DedupDecisionList,
-                system=DEDUP_SYSTEM_PROMPT,
-                agent_name="DeduplicationAgent",
-            )
+            for batch in batches:
+                batch_decisions = self._confirm_pairs(batch).decisions
+                decisions.extend(batch_decisions)
+
+                # A3: per-batch degraded signal — a large batch (the kind prone to
+                # truncation) that returns zero merge decisions likely didn't do
+                # its job. Flag it (don't raise) so the caller knows.
+                if len(batch) > self.DEGRADED_BATCH_THRESHOLD:
+                    batch_merges = sum(
+                        1 for d in batch_decisions
+                        if d.decision in ("merge", "keep_first", "keep_second")
+                    )
+                    if batch_merges == 0:
+                        self.last_degraded = True
+                        self.last_degraded_reason = (
+                            f"0 merges from a {len(batch)}-pair batch "
+                            f"(threshold {self.DEGRADED_BATCH_THRESHOLD}); "
+                            "possible truncated or failed LLM dedup response"
+                        )
+                        logger.warning(
+                            "Dedup degraded (batch): {reason}",
+                            reason=self.last_degraded_reason,
+                        )
+                        self.audit.log(
+                            run_id=self.run_id,
+                            agent="DeduplicationAgent",
+                            action="DEDUP_DEGRADED_BATCH",
+                            detail=self.last_degraded_reason,
+                        )
         except InstructorError as e:
             self.audit.log(
                 run_id=self.run_id,
@@ -430,7 +486,6 @@ class DeduplicationAgent:
             return tasks
 
         # Step 4: Apply decisions (already-validated DedupDecision objects)
-        decisions = decision_result.decisions
         drop_ids: set[str] = set()
         task_map = {str(t.id): t for t in tasks}
 

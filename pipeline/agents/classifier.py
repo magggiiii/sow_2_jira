@@ -25,7 +25,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
-from core.agent_runner import AgentRunner
+from core.agent_runner import AgentRunner, InstructorError
 from models.schemas import UnitInterval
 from pipeline.llm_client import LLMClient
 
@@ -37,6 +37,20 @@ class SectionType(str, Enum):
     DEFINITIONS = "definitions"    # Glossary, acronyms
     SIGNATURE = "signature"        # Approvals, sign-off pages
     MIXED = "mixed"                # Looks like a mix — extract conservatively
+
+
+class RawClassification(BaseModel):
+    """Exactly what the classifier LLM returns — the Instructor response_model.
+
+    The domain :class:`ClassificationResult` additionally carries ``node_id``
+    (assigned by the agent, not produced by the model), so the LLM-facing schema
+    is this narrower triple. ``confidence`` is a clamped UnitInterval so an
+    out-of-range model value (e.g. 1.7) coerces into range instead of failing
+    validation, matching ClassificationResult's CONF-1 invariant.
+    """
+    type: SectionType
+    confidence: UnitInterval = Field(ge=0.0, le=1.0)
+    reason: str = ""
 
 
 class ClassificationResult(BaseModel):
@@ -126,61 +140,37 @@ class SectionClassifier:
             section_snippet=snippet,
         )
 
+        # C-5: route through the Instructor-validated structured-output seam.
+        # `raw` comes back as a fully-validated RawClassification — the section
+        # type is a real SectionType and confidence is already clamped into
+        # [0,1] by the model — so the manual dict/type/float parsing the regex
+        # `complete_json` path needed is gone. Any structured-output failure
+        # (call error, unparseable output, schema/enum violation instructor
+        # could not satisfy) surfaces as a single InstructorError, which we
+        # record and degrade to the safe MIXED default (extract anyway).
         try:
-            raw = self.runner.complete_json(
+            raw = self.runner.complete_structured(
                 prompt=prompt,
+                response_model=RawClassification,
                 system=CLASSIFIER_SYSTEM_PROMPT,
                 agent_name="SectionClassifier",
                 node_id=node_id,
             )
-        except (ValueError, RuntimeError) as e:
+        except InstructorError as e:
             self.audit.log(
                 run_id=self.run_id,
                 agent="SectionClassifier",
                 node_id=node_id,
                 action="CLASSIFY_ERROR",
-                detail=f"LLM call failed: {e}",
+                detail=f"Structured output failed: {e}",
             )
             return self._default_mixed(node_id, reason=f"LLM error: {e}")
 
-        if not isinstance(raw, dict):
-            self.audit.log(
-                run_id=self.run_id,
-                agent="SectionClassifier",
-                node_id=node_id,
-                action="CLASSIFY_PARSE_ERROR",
-                detail=f"Expected dict, got {type(raw).__name__}",
-            )
-            return self._default_mixed(node_id, reason="Non-dict classifier response")
-
-        try:
-            section_type = SectionType(str(raw.get("type", "")).strip().lower())
-        except ValueError:
-            self.audit.log(
-                run_id=self.run_id,
-                agent="SectionClassifier",
-                node_id=node_id,
-                action="CLASSIFY_INVALID_TYPE",
-                detail=f"Unknown type value: {raw.get('type')!r}",
-            )
-            return self._default_mixed(
-                node_id, reason=f"Unknown type {raw.get('type')!r}"
-            )
-
-        try:
-            confidence = float(raw.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        # Clamp into [0.0, 1.0] so a malformed value can't break the validator.
-        confidence = max(0.0, min(1.0, confidence))
-
-        reason = str(raw.get("reason", "") or "")[:300]
-
         result = ClassificationResult(
             node_id=node_id,
-            type=section_type,
-            confidence=confidence,
-            reason=reason,
+            type=raw.type,
+            confidence=raw.confidence,
+            reason=str(raw.reason or "")[:300],
         )
         self.audit.log(
             run_id=self.run_id,

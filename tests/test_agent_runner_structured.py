@@ -32,6 +32,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import core.agent_runner as agent_runner_mod
 from core.agent_runner import AgentRunner, InstructorError
 
+# Import the real llm_client up-front so it is cached in sys.modules with the
+# real ``litellm`` BEFORE any test injects a fake ``litellm`` via monkeypatch.
+# complete_structured lazily ``from pipeline.llm_client import`` the retry
+# helpers; if that module were first imported while a fake litellm is installed,
+# its top-level ``from litellm import RateLimitError`` would explode.
+import pipeline.llm_client  # noqa: E402,F401
+
 
 # ─── Response model under test ────────────────────────────────────────────────
 
@@ -338,3 +345,154 @@ def test_complete_structured_does_not_exist_on_old_call_paths():
     assert hasattr(AgentRunner, "complete_structured")
     # InstructorError is exported for callers to catch.
     assert "InstructorError" in agent_runner_mod.__all__
+
+
+# ─── A1: per-call timeout + bounded retry/backoff resilience ──────────────────
+#
+# complete_structured must survive transient provider errors (429 / 5xx / network
+# timeouts) the same way the legacy complete_json path did, reusing
+# pipeline.llm_client's extract_retry_hint / compute_wait_seconds /
+# is_retryable_remote_error helpers. Over 300-600 calls in a big-SOW run, a single
+# un-retried 429 silently drops an agent to its safe default (lost tasks), and a
+# hung call with no timeout blocks the whole run indefinitely.
+
+
+class _RemoteError(Exception):
+    """A litellm-style provider error carrying a status code and/or headers,
+    shaped so pipeline.llm_client's retry helpers classify it the same way they
+    classify a real RateLimitError / Timeout."""
+
+    def __init__(self, message, status_code=None, headers=None):
+        super().__init__(message)
+        if status_code is not None:
+            self.status_code = status_code
+        if headers is not None:
+            self.headers = headers
+
+
+def _sequence_behavior(*results):
+    """Build a create() behavior that yields ``results`` in order: an Exception
+    instance is raised; anything else is returned. Lets a test script a run like
+    'fail, fail, then succeed'."""
+    box = {"i": 0}
+
+    def behavior(kwargs):
+        i = box["i"]
+        box["i"] = i + 1
+        item = results[min(i, len(results) - 1)]
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    return behavior
+
+
+@pytest.fixture
+def recorded_sleeps(monkeypatch):
+    """Patch the backoff sleep so tests never actually wait; record wait values."""
+    import time as _time
+
+    waits: list[float] = []
+    monkeypatch.setattr(_time, "sleep", lambda s: waits.append(s))
+    return waits
+
+
+def test_complete_structured_retries_transient_then_succeeds(monkeypatch, recorded_sleeps):
+    """Two transient 429s, then success → returns the validated instance after 3
+    attempts, sleeping between each retry."""
+    canned = _Classification(type="actionable", confidence=0.9, reason="ok")
+    behavior = _sequence_behavior(
+        _RemoteError("rate limit: too many requests (429)", status_code=429),
+        _RemoteError("rate limit: too many requests (429)", status_code=429),
+        canned,
+    )
+    client = _install_instructor_stub(monkeypatch, behavior)
+    runner = AgentRunner(FakeLLM())
+
+    result = runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert result is canned
+    assert len(client.completions.calls) == 3       # 2 failures + 1 success
+    assert len(recorded_sleeps) == 2                 # one backoff per retry
+
+
+def test_complete_structured_gives_up_after_budget_then_raises(monkeypatch, recorded_sleeps):
+    """A persistently failing transient error exhausts the attempt budget and then
+    surfaces InstructorError (never a silent None), with the cause chained."""
+    monkeypatch.setenv("LLM_STRUCTURED_MAX_ATTEMPTS", "3")
+    err = _RemoteError("service unavailable (503)", status_code=503)
+    client = _install_instructor_stub(monkeypatch, _sequence_behavior(err))
+    runner = AgentRunner(FakeLLM())
+
+    with pytest.raises(InstructorError) as exc:
+        runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert len(client.completions.calls) == 3        # capped at the budget
+    assert len(recorded_sleeps) == 2                  # no sleep after the final attempt
+    assert isinstance(exc.value.__cause__, _RemoteError)
+
+
+def test_complete_structured_non_retryable_fails_immediately(monkeypatch, recorded_sleeps):
+    """A 401 (auth) is non-retryable → exactly one call, no backoff, InstructorError."""
+    err = _RemoteError("Unauthorized (401): invalid api key", status_code=401)
+    client = _install_instructor_stub(monkeypatch, _sequence_behavior(err))
+    runner = AgentRunner(FakeLLM())
+
+    with pytest.raises(InstructorError):
+        runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert len(client.completions.calls) == 1
+    assert recorded_sleeps == []
+
+
+def test_complete_structured_respects_retry_after_header(monkeypatch, recorded_sleeps):
+    """A Retry-After header dictates the backoff wait (not the jittered fallback)."""
+    canned = _Classification(type="info", confidence=0.3, reason="x")
+    behavior = _sequence_behavior(
+        _RemoteError("rate limited (429)", status_code=429, headers={"Retry-After": "7"}),
+        canned,
+    )
+    client = _install_instructor_stub(monkeypatch, behavior)
+    runner = AgentRunner(FakeLLM())
+
+    result = runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert result is canned
+    assert len(client.completions.calls) == 2
+    assert recorded_sleeps == [7.0]                  # honored the header, exactly
+
+
+def test_complete_structured_passes_default_timeout(monkeypatch):
+    """A per-call timeout (default 60s) is forwarded to litellm so a hung call
+    can never block the run forever."""
+    canned = _Classification(type="info", confidence=0.5, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    runner = AgentRunner(FakeLLM())
+
+    runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert client.completions.calls[0]["timeout"] == 60
+
+
+def test_complete_structured_timeout_env_override(monkeypatch):
+    """S2J_STRUCTURED_TIMEOUT overrides the default per-call timeout."""
+    monkeypatch.setenv("S2J_STRUCTURED_TIMEOUT", "120")
+    canned = _Classification(type="info", confidence=0.5, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    runner = AgentRunner(FakeLLM())
+
+    runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert client.completions.calls[0]["timeout"] == 120
+
+
+def test_complete_structured_ollama_gets_long_timeout(monkeypatch):
+    """Local Ollama models get the long (3600s) timeout — local generation is slow
+    and must not be killed by the remote 60s default."""
+    canned = _Classification(type="info", confidence=0.5, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    runner = AgentRunner(FakeProviderConfigOnly(model="ollama/qwen2.5:7b"))
+
+    runner.complete_structured(prompt="p", response_model=_Classification)
+
+    assert client.completions.calls[0]["timeout"] == 3600

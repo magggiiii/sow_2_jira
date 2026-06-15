@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Optional, Type, TypeVar, Union
 
 from pydantic import BaseModel, ValidationError
@@ -51,6 +52,18 @@ from core.results import StageResult
 
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to ``default`` when unset
+    or malformed (a bad value must never crash an agent mid-run)."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 class InstructorError(RuntimeError):
@@ -202,23 +215,45 @@ class AgentRunner:
         -------
         An instance of ``response_model`` (validated).
 
+        Resilience
+        ----------
+        The provider call carries a per-call ``timeout`` (60s remote / 3600s
+        local Ollama, override ``S2J_STRUCTURED_TIMEOUT``) and is wrapped in a
+        bounded retry/backoff loop that REUSES the legacy ``complete_json``
+        helpers (``is_retryable_remote_error`` / ``extract_retry_hint`` /
+        ``compute_wait_seconds``). Transient remote errors (429/408/5xx/network)
+        are retried with ``Retry-After``-aware jittered exponential backoff up to
+        ``LLM_STRUCTURED_MAX_ATTEMPTS`` (8) attempts / ``LLM_STRUCTURED_MAX_ELAPSED_S``
+        (300) seconds, each wait capped at ``LLM_STRUCTURED_MAX_WAIT_S`` (300).
+        Instructor's own validation-retry (for unsatisfiable *schemas*) is
+        orthogonal to this provider-error retry and the two compose.
+
         Raises
         ------
         InstructorError
-            On any instructor/litellm call failure, on a validation failure
-            instructor could not satisfy, or if the model cannot be resolved.
-            Never returns ``None``.
+            On a non-retryable instructor/litellm call failure (auth/4xx), on a
+            validation failure instructor could not satisfy, after the transient
+            retry budget is exhausted, or if the model cannot be resolved. Never
+            returns ``None``.
         """
         model = self._resolve_model()
 
         # Lazy imports: keep litellm/instructor out of module import time so the
-        # complete_json seam the agents use stays free of network deps.
+        # complete_json seam the agents use stays free of network deps. The
+        # retry/backoff helpers are REUSED from the legacy ``complete_json`` path
+        # (import-only, never modified) so structured output regains the exact
+        # resilience semantics ``_execute_call`` already proved in production.
         try:
             import instructor
             import litellm
+            from pipeline.llm_client import (
+                compute_wait_seconds,
+                extract_retry_hint,
+                is_retryable_remote_error,
+            )
         except Exception as e:  # pragma: no cover - import wiring guard
             raise InstructorError(
-                f"complete_structured: instructor/litellm unavailable: {e}"
+                f"complete_structured: structured-output dependencies unavailable: {e}"
             ) from e
 
         messages: list[dict[str, str]] = []
@@ -226,11 +261,21 @@ class AgentRunner:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        # Per-call timeout so a hung provider call can never block the run
+        # indefinitely. Mirrors ``_execute_call``: 60s remote, 3600s for local
+        # Ollama (slow generation), overridable via ``S2J_STRUCTURED_TIMEOUT``.
+        mode = getattr(self.llm, "mode", None)
+        is_local_ollama = (
+            str(model).startswith("ollama/") or getattr(mode, "value", None) == "local"
+        )
+        timeout = _env_int("S2J_STRUCTURED_TIMEOUT", 3600 if is_local_ollama else 60)
+
         create_kwargs: dict[str, Any] = {
             "model": model,
             "response_model": response_model,
             "max_tokens": max_tokens if max_tokens is not None else 8192,
             "messages": messages,
+            "timeout": timeout,
         }
 
         # Forward the per-run provider credentials the SAME way ``complete_json``
@@ -256,19 +301,50 @@ class AgentRunner:
         if extra_headers:
             create_kwargs["extra_headers"] = extra_headers
 
-        try:
-            client = instructor.from_litellm(
-                litellm.completion, mode=self._resolve_instructor_mode(instructor)
-            )
-            result = client.chat.completions.create(**create_kwargs)
-        except Exception as e:
-            # instructor raises its own ValidationError-wrapping/InstructorRetry
-            # error on unsatisfiable schemas, and litellm raises on call
-            # failures. Collapse both into one typed, non-silent error.
-            raise InstructorError(
-                f"complete_structured failed for agent "
-                f"{agent_name or 'unknown'} (model={model}): {e}"
-            ) from e
+        client = instructor.from_litellm(
+            litellm.completion, mode=self._resolve_instructor_mode(instructor)
+        )
+
+        # Bounded retry/backoff around the provider call. Only transient remote
+        # errors (429 / 408 / 5xx / network timeouts) are retried — auth/4xx and
+        # instructor's unsatisfiable-schema failures are non-retryable and fail
+        # fast. Budget via env (attempts / total elapsed / per-wait ceiling); on
+        # exhaustion we re-raise a typed InstructorError (callers already catch
+        # it and degrade), never a silent None. Instructor's own validation-retry
+        # is orthogonal — it retries unsatisfiable *schemas*, this retries
+        # provider *errors* — and the two compose.
+        max_attempts = _env_int("LLM_STRUCTURED_MAX_ATTEMPTS", 8)
+        max_elapsed_s = _env_int("LLM_STRUCTURED_MAX_ELAPSED_S", 300)
+        max_wait_s = _env_int("LLM_STRUCTURED_MAX_WAIT_S", 300)
+
+        start_total = time.monotonic()
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                result = client.chat.completions.create(**create_kwargs)
+                break
+            except Exception as e:
+                # instructor raises its own ValidationError-wrapping/InstructorRetry
+                # error on unsatisfiable schemas, and litellm raises on call
+                # failures. A non-retryable error (auth/4xx/validation) fails fast.
+                if not is_retryable_remote_error(e):
+                    raise InstructorError(
+                        f"complete_structured failed for agent "
+                        f"{agent_name or 'unknown'} (model={model}): {e}"
+                    ) from e
+
+                elapsed = time.monotonic() - start_total
+                if attempt >= max_attempts or elapsed >= max_elapsed_s:
+                    raise InstructorError(
+                        f"complete_structured exhausted retry budget for agent "
+                        f"{agent_name or 'unknown'} (model={model}) after "
+                        f"{attempt} attempts and {int(elapsed)}s: {e}"
+                    ) from e
+
+                retry_hint = extract_retry_hint(e)
+                wait_s = compute_wait_seconds(retry_hint, attempt, max_wait_s)
+                time.sleep(wait_s)
 
         # Defensive: instructor should always hand back a validated instance,
         # but never let a None / wrong-type slip through silently.

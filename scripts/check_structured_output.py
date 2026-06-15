@@ -146,12 +146,13 @@ def _verdict(audit: SmokeAudit, success: set[str], error: set[str]) -> tuple[boo
     has_ok = any(a in success for a in acts)
     has_err = any(a in error for a in acts)
     if has_err:
-        # Surface the recorded failure detail for a useful message.
+        # Surface the recorded failure detail for a useful message (full text —
+        # callers truncate for display; --record keeps it whole for diagnosis).
         detail = next(
             (r.get("detail", "") for r in audit.records if r.get("action") in error),
             "",
         )
-        return False, f"recorded {error & set(acts)}: {detail}"[:200]
+        return False, f"recorded {error & set(acts)}: {detail}"
     if not has_ok:
         return False, f"no success action {success} recorded; saw {sorted(set(acts))}"
     return True, f"ok ({success & set(acts)})"
@@ -356,7 +357,10 @@ def main() -> int:
         t0 = time.time()
         try:
             ok, msg, result = fn(client, run_id, args.self_test, tmp)
-            recorded[name] = _jsonable(result)
+            recorded[name] = (
+                _jsonable(result) if ok
+                else {"failed": True, "detail": msg, "degraded_output": _jsonable(result)}
+            )
         except Exception as e:
             ok, msg = False, f"EXCEPTION: {e}"
             recorded[name] = {"error": str(e)}
@@ -365,7 +369,9 @@ def main() -> int:
         dt = time.time() - t0
         rows.append((name, ok, msg, dt))
         mark = "✓" if ok else "✗"
-        print(f"  {mark} {name:<16} {dt:6.2f}s  {msg}")
+        # Full message when tracing (for diagnosis); otherwise one tidy line.
+        shown = msg if (ok or os.environ.get("S2J_SMOKE_TRACE")) else msg[:160]
+        print(f"  {mark} {name:<16} {dt:6.2f}s  {shown}")
 
     n_ok = sum(1 for _, ok, _, _ in rows if ok)
     n_total = len(rows)

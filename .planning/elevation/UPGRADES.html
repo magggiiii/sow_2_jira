@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">32</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;387</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">35</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">33</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;408</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">37</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -147,7 +147,7 @@
     <p class="sec-intro reveal">Eight tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is largely shipped — A1-C2 (resilience, integrity, parallelism, resumability) are done offline; only C3 (durable worker) waits on Wave-2 services. See <code>SCALE-HARDENING.md</code>.</p>
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.78)"></i></div><div class="wpct">78%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.88)"></i></div><div class="wpct">88%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -418,6 +418,17 @@
         <p class="why"><span class="wl">Better</span>The cancellation + status surfaces are now seams the Wave-2 durable worker (C3) binds to — closing the offline scale-hardening arc.</p>
       </div>
     </div>
+    <!-- INV-4 EVAL GATE SCAFFOLDING -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — INV-4 offline eval gate (scaffolding)</h3><span class="sha">9c31a88</span></div>
+      <div class="inc-sub reveal">A failable quality gate that drives the real pipeline offline and asserts the Wave-3 bands. Test-first — 21 new tests, suite 387 → 408 green. Recorded 103-node cassette deferred to post-C-4.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A gate that catches the INCOMPLETE-bomb, zero-merge, and conf=0.00 bugs</h4><span class="tag">INV-4 · test-12 scaffold</span></div>
+        <p class="what">Built an offline eval harness (<code>pipeline/evals/</code>): a cassette + replay seam, band-math over <code>pipeline_output.json</code>, and an <code>EvalHarness</code> that drives the real <code>PipelineOrchestrator.run()</code> with no network — plus negative controls proving the gate can fail.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The only eval scaffolding was three bare-pass stubs needing live Langfuse; there was no way to assert that a run's INCOMPLETE-rate, merge count, or conf=0.00 flags were sane — the path the plan (INV-4) requires before the coverage restructure and the Stage-runner flip.</div><div class="cell after"><span class="lbl">After</span><code>compute_bands</code> asserts incomplete_rate ≤ 0.40, merge_count ≥ 1 (from <code>merged_from</code> on survivors — merged tasks are dropped, so status==MERGED is always 0), zero_conf_flags == 0, no DEGRADED. A cassette keyed by (agent, node_id) replays at the real <code>AgentRunner.complete_structured</code> seam (not the provider — a correction to the original design); dedup determinism is solved by freezing candidate pairs + a closure-shared merge. Three negative controls turn the right band RED.</div></div>
+        <p class="why"><span class="wl">Better</span>The regression gate that unblocks the C-4 coverage restructure + Stage-runner flip exists and provably fails on the headline bugs — the faithful recorded 103-node cassette swaps in once post-dedup coverage (STEP 3.3) lands.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -426,7 +437,7 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: full C-4 fix + recorded golden cassette</h4><p><s>Offline eval gate scaffolding — cassette/replay seam, band-math, harness + negative controls — shipped.</s> Remaining: the C-4 coverage restructure (post-dedup, run-wide, confidence-gated INCOMPLETE), then swap the hand-authored cassette for a recorded 103-node golden run and flip the band test to a required CI gate that unblocks the typed Stage-runner.</p><span class="need">needs: C-4 restructure (3.3)</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
     </div>
   </section>

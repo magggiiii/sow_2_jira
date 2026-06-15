@@ -196,14 +196,39 @@ class AgentRunner:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "response_model": response_model,
+            "max_tokens": max_tokens if max_tokens is not None else 8192,
+            "messages": messages,
+        }
+
+        # Forward the per-run provider credentials the SAME way ``complete_json``
+        # does in ``LLMClient._execute_call``: the model string alone is not
+        # enough. ``configure_litellm_for_mode`` resolves api_key/api_base onto
+        # ``provider_config`` (e.g. a decrypted OpenRouter key from settings),
+        # and ``LLMClient`` may build ``extra_headers`` (OpenRouter attribution,
+        # Bifrost/Ollama routing). Instructor forwards unknown kwargs straight to
+        # ``litellm.completion``, so we pass them through here. Each is set ONLY
+        # when present — an empty value would clobber litellm's own env-based
+        # resolution. Without this, litellm finds no credentials and returns 401
+        # ("No cookie auth credentials found"). We do NOT resolve credentials
+        # here (that stays in the llm_router/LLMClient layer); we only pass the
+        # already-resolved values through.
+        provider_config = getattr(self.llm, "provider_config", None)
+        api_key = getattr(provider_config, "api_key", "") or ""
+        api_base = getattr(provider_config, "api_base", "") or ""
+        extra_headers = getattr(self.llm, "extra_headers", None)
+        if api_key:
+            create_kwargs["api_key"] = api_key
+        if api_base:
+            create_kwargs["api_base"] = api_base
+        if extra_headers:
+            create_kwargs["extra_headers"] = extra_headers
+
         try:
             client = instructor.from_litellm(litellm.completion)
-            result = client.chat.completions.create(
-                model=model,
-                response_model=response_model,
-                max_tokens=max_tokens if max_tokens is not None else 8192,
-                messages=messages,
-            )
+            result = client.chat.completions.create(**create_kwargs)
         except Exception as e:
             # instructor raises its own ValidationError-wrapping/InstructorRetry
             # error on unsatisfiable schemas, and litellm raises on call

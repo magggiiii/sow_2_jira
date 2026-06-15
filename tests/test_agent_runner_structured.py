@@ -45,8 +45,10 @@ class _Classification(BaseModel):
 
 
 class _FakeProviderConfig:
-    def __init__(self, model: str):
+    def __init__(self, model: str, api_key: str = "", api_base: str = ""):
         self.model = model
+        self.api_key = api_key
+        self.api_base = api_base
 
 
 class FakeLLM:
@@ -176,6 +178,42 @@ def test_complete_structured_forwards_max_tokens_override(monkeypatch):
     )
 
     assert client.completions.calls[0]["max_tokens"] == 2048
+
+
+def test_complete_structured_forwards_provider_credentials(monkeypatch):
+    """The resolved provider api_key/api_base MUST be threaded into the litellm
+    call. Otherwise litellm falls back to env vars and 401s — the exact live
+    smoke-gate failure ('No cookie auth credentials found'). Mirrors how
+    complete_json forwards provider_config.api_key/api_base in _execute_call.
+    """
+    canned = _Classification(type="actionable", confidence=0.8, reason="creds")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+
+    llm = FakeLLM(model="openrouter/google/gemini-2.5-flash")
+    llm.provider_config = _FakeProviderConfig(
+        "openrouter/google/gemini-2.5-flash",
+        api_key="sk-or-test-123",
+        api_base="https://openrouter.ai/api/v1",
+    )
+    runner = AgentRunner(llm)
+    runner.complete_structured(prompt="p", response_model=_Classification)
+
+    call = client.completions.calls[0]
+    assert call["api_key"] == "sk-or-test-123"
+    assert call["api_base"] == "https://openrouter.ai/api/v1"
+
+
+def test_complete_structured_omits_empty_credentials(monkeypatch):
+    """When the provider exposes no api_key/api_base (env-based auth), they are
+    NOT passed — so litellm's own env resolution still applies and we don't
+    clobber it with empty strings."""
+    canned = _Classification(type="info", confidence=0.2, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    runner = AgentRunner(FakeLLM())  # provider_config api_key/api_base default ""
+    runner.complete_structured(prompt="p", response_model=_Classification)
+    call = client.completions.calls[0]
+    assert "api_key" not in call
+    assert "api_base" not in call
 
 
 def test_complete_structured_resolves_model_from_provider_config_fallback(monkeypatch):

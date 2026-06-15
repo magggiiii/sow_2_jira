@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
@@ -45,10 +46,11 @@ class _Classification(BaseModel):
 
 
 class _FakeProviderConfig:
-    def __init__(self, model: str, api_key: str = "", api_base: str = ""):
+    def __init__(self, model: str, api_key: str = "", api_base: str = "", provider: str = ""):
         self.model = model
         self.api_key = api_key
         self.api_base = api_base
+        self.provider = provider
 
 
 class FakeLLM:
@@ -99,12 +101,25 @@ def _install_instructor_stub(monkeypatch, behavior):
     Returns the fake client so the test can inspect ``client.completions.calls``.
     """
     client = _FakeInstructorClient(behavior)
+    client.from_litellm_kwargs = {}
 
     # complete_structured does ``import instructor`` / ``import litellm`` inside
     # the method. We inject fakes into sys.modules so those imports resolve to
     # ours without touching the real packages or the network.
     fake_instructor = type(sys)("instructor")
-    fake_instructor.from_litellm = lambda completion, **kw: client
+    # Minimal Mode stand-in exposing the members complete_structured selects.
+    fake_instructor.Mode = SimpleNamespace(
+        JSON="json",
+        TOOLS="tool_call",
+        JSON_SCHEMA="json_schema",
+        OPENROUTER_STRUCTURED_OUTPUTS="openrouter_structured_outputs",
+    )
+
+    def _from_litellm(completion, **kw):
+        client.from_litellm_kwargs = kw  # capture the mode= kwarg for assertions
+        return client
+
+    fake_instructor.from_litellm = _from_litellm
 
     fake_litellm = type(sys)("litellm")
     fake_litellm.completion = lambda *a, **k: None  # never actually invoked
@@ -225,6 +240,43 @@ def test_complete_structured_resolves_model_from_provider_config_fallback(monkey
     runner.complete_structured(prompt="p", response_model=_Classification)
 
     assert client.completions.calls[0]["model"] == "ollama/qwen2.5:7b"
+
+
+# ─── Instructor mode selection (avoids the TOOLS nested-stringify failure) ────
+
+
+def test_complete_structured_defaults_to_json_mode(monkeypatch):
+    """Mode.TOOLS (instructor's from_litellm default) makes several providers
+    serialize nested list[Model] fields as stringified JSON, which fails Pydantic
+    validation. complete_structured defaults non-OpenAI/Anthropic providers to
+    JSON mode so nested objects round-trip."""
+    canned = _Classification(type="info", confidence=0.5, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    runner = AgentRunner(FakeLLM())  # provider "" → JSON
+    runner.complete_structured(prompt="p", response_model=_Classification)
+    assert client.from_litellm_kwargs.get("mode") == "json"
+
+
+def test_complete_structured_uses_tools_mode_for_openai(monkeypatch):
+    """OpenAI/Anthropic tool-calling handles nested arguments reliably, so those
+    providers keep Mode.TOOLS."""
+    canned = _Classification(type="info", confidence=0.5, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    llm = FakeLLM()
+    llm.provider_config = _FakeProviderConfig("gpt-4o", provider="openai")
+    runner = AgentRunner(llm)
+    runner.complete_structured(prompt="p", response_model=_Classification)
+    assert client.from_litellm_kwargs.get("mode") == "tool_call"
+
+
+def test_complete_structured_mode_env_override(monkeypatch):
+    """S2J_INSTRUCTOR_MODE overrides the chosen mode for experimentation."""
+    canned = _Classification(type="info", confidence=0.5, reason="x")
+    client = _install_instructor_stub(monkeypatch, lambda kw: canned)
+    monkeypatch.setenv("S2J_INSTRUCTOR_MODE", "JSON_SCHEMA")
+    runner = AgentRunner(FakeLLM())
+    runner.complete_structured(prompt="p", response_model=_Classification)
+    assert client.from_litellm_kwargs.get("mode") == "json_schema"
 
 
 # ─── Failure paths: raise the typed error, never return None ──────────────────

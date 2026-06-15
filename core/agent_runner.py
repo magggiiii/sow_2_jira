@@ -40,6 +40,7 @@ never drags in litellm/network unless structured output is actually requested.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Optional, Type, TypeVar, Union
 
 from pydantic import BaseModel, ValidationError
@@ -128,6 +129,35 @@ class AgentRunner:
                 "must expose the resolved litellm model string."
             )
         return str(model)
+
+    def _resolve_instructor_mode(self, instructor_mod):
+        """
+        Pick the instructor ``Mode`` for ``from_litellm``.
+
+        ``from_litellm`` defaults to ``Mode.TOOLS`` (tool-calling). Under tool
+        calling several providers — notably gemini via OpenRouter, confirmed on
+        both flash and pro by the live smoke-gate — serialize nested
+        ``list[Model]`` fields as STRINGIFIED JSON (``"{\\"title\\": …}"``),
+        which then fails Pydantic with ``Input should be an object``. ``Mode.JSON``
+        has the model emit one natural nested JSON object that round-trips, so we
+        default to it. OpenAI/Anthropic/Azure tool-calling handles nested
+        arguments reliably, so those keep ``Mode.TOOLS``.
+
+        ``S2J_INSTRUCTOR_MODE`` (e.g. ``JSON``/``JSON_SCHEMA``/
+        ``OPENROUTER_STRUCTURED_OUTPUTS``) overrides the choice for experiments;
+        an unknown value is ignored. This is a serialization tuning knob, not a
+        credential/router path.
+        """
+        Mode = instructor_mod.Mode
+        override = (os.environ.get("S2J_INSTRUCTOR_MODE") or "").strip()
+        if override and hasattr(Mode, override):
+            return getattr(Mode, override)
+
+        provider_config = getattr(self.llm, "provider_config", None)
+        provider = (getattr(provider_config, "provider", "") or "").lower()
+        if provider in ("openai", "anthropic", "azure"):
+            return Mode.TOOLS
+        return Mode.JSON
 
     def complete_structured(
         self,
@@ -227,7 +257,9 @@ class AgentRunner:
             create_kwargs["extra_headers"] = extra_headers
 
         try:
-            client = instructor.from_litellm(litellm.completion)
+            client = instructor.from_litellm(
+                litellm.completion, mode=self._resolve_instructor_mode(instructor)
+            )
             result = client.chat.completions.create(**create_kwargs)
         except Exception as e:
             # instructor raises its own ValidationError-wrapping/InstructorRetry

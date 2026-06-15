@@ -2,19 +2,22 @@
 """
 Behavior-pinning tests for GapRecoveryAgent (pipeline/agents/gap_recovery.py).
 
-These existed to lock the agent's observable contract while its single
-``complete_json`` call is routed through the AgentRunner seam. They use a FAKE
-LLM (a MagicMock plus a small recording stub) — no network, no litellm.
+These lock the agent's observable contract. C-5: the single LLM call now routes
+through ``runner.complete_structured(response_model=GapRecoveryResult)`` instead
+of ``complete_json``. The mock-point moved to ``agent.runner.complete_structured``
+— returning a validated ``GapRecoveryResult`` or raising ``InstructorError``.
+They use a FAKE LLM (MagicMock) — no network, no litellm.
 
-Pinned behavior:
+Pinned behavior (all preserved across the migration):
 - recover() returns a list of (RawTask, source_node) tuples, with
   TaskFlag.GAP_RECOVERED appended to each task's flags.
-- The LLM call forwards exactly: prompt (truncated to 16000 chars), the
+- The structured call forwards exactly: prompt (truncated to 16000 chars), the
   GAP_SYSTEM_PROMPT, agent_name="GapRecoveryAgent", and node_id.
 - Sections with < 100 chars of stripped text are skipped (no LLM call).
-- A non-list LLM response is ignored for that node.
-- A per-task parse error is swallowed and audited (other tasks still recover).
-- A whole-call LLM error is swallowed and audited (recover() still returns).
+- A structured-output failure is swallowed and audited (recover() still returns).
+- A per-task validation error is swallowed and audited (other tasks still
+  recover) — the permissive RawRecoveredTask item lets a dirty task through to
+  the agent's strict RawTask re-validation, which skips it.
 - Audit emits RECOVERY_COMPLETE when anything recovered, NO_GAPS_RECOVERED when
   nothing did.
 """
@@ -29,10 +32,12 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from core.agent_runner import InstructorError
 from models.schemas import RawTask, TaskFlag
 from pipeline.agents.gap_recovery import (
     GAP_SYSTEM_PROMPT,
     GapRecoveryAgent,
+    GapRecoveryResult,
 )
 
 
@@ -81,10 +86,20 @@ class _Indexer:
         return self._text[node["node_id"]]
 
 
-def _llm_returning(value):
-    client = MagicMock()
-    client.complete_json.return_value = value
-    return client
+def _stub_structured(agent, *, returns=None, raises=None) -> MagicMock:
+    """Stub the C-5 Instructor seam on the agent's runner.
+
+    ``returns`` is the validated ``GapRecoveryResult`` the runner would hand
+    back; ``raises`` simulates a structured-output failure. Returns the mock so
+    tests can assert call args / no-call.
+    """
+    mock = MagicMock()
+    if raises is not None:
+        mock.side_effect = raises
+    else:
+        mock.return_value = returns
+    agent.runner.complete_structured = mock
+    return mock
 
 
 def _long_text() -> str:
@@ -97,8 +112,10 @@ def _long_text() -> str:
 
 def test_recover_returns_task_node_tuples_with_gap_flag():
     node = _node()
-    llm = _llm_returning([_raw_task("Implement the missed export job")])
-    agent = GapRecoveryAgent(llm, _DummyAudit(), run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), _DummyAudit(), run_id="r1")
+    _stub_structured(agent, returns=GapRecoveryResult(
+        tasks=[_raw_task("Implement the missed export job")]
+    ))
     indexer = _Indexer({"n1": _long_text()})
 
     results = agent.recover([node], indexer)
@@ -110,19 +127,19 @@ def test_recover_returns_task_node_tuples_with_gap_flag():
     assert TaskFlag.GAP_RECOVERED in raw_obj.flags
 
 
-# ─── The LLM call forwards exactly the agent's current kwargs ─────────────────
+# ─── The structured call forwards exactly the agent's current kwargs ──────────
 
 
 def test_recover_forwards_expected_llm_kwargs():
     node = _node(node_id="n7", title="Appendix B")
-    llm = _llm_returning([])
-    agent = GapRecoveryAgent(llm, _DummyAudit(), run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), _DummyAudit(), run_id="r1")
+    structured = _stub_structured(agent, returns=GapRecoveryResult(tasks=[]))
     indexer = _Indexer({"n7": _long_text()})
 
     agent.recover([node], indexer)
 
-    assert llm.complete_json.call_count == 1
-    _, kwargs = llm.complete_json.call_args
+    assert structured.call_count == 1
+    _, kwargs = structured.call_args
     assert kwargs["system"] == GAP_SYSTEM_PROMPT
     assert kwargs["agent_name"] == "GapRecoveryAgent"
     assert kwargs["node_id"] == "n7"
@@ -132,15 +149,15 @@ def test_recover_forwards_expected_llm_kwargs():
 
 def test_recover_truncates_section_text_to_16000_chars():
     node = _node(node_id="big")
-    llm = _llm_returning([])
-    agent = GapRecoveryAgent(llm, _DummyAudit(), run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), _DummyAudit(), run_id="r1")
+    structured = _stub_structured(agent, returns=GapRecoveryResult(tasks=[]))
     # Use a marker char that does NOT appear anywhere in the prompt template so
     # the count isolates the embedded section body.
     indexer = _Indexer({"big": "§" * 50000})
 
     agent.recover([node], indexer)
 
-    _, kwargs = llm.complete_json.call_args
+    _, kwargs = structured.call_args
     # The template embeds section_text[:16000]; the prompt must not contain the
     # full 50000-char body.
     assert kwargs["prompt"].count("§") == 16000
@@ -151,23 +168,23 @@ def test_recover_truncates_section_text_to_16000_chars():
 
 def test_recover_skips_short_sections():
     node = _node(node_id="short")
-    llm = _llm_returning([_raw_task()])
-    agent = GapRecoveryAgent(llm, _DummyAudit(), run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), _DummyAudit(), run_id="r1")
+    structured = _stub_structured(agent, returns=GapRecoveryResult(tasks=[_raw_task()]))
     indexer = _Indexer({"short": "   tiny   "})  # < 100 chars stripped
 
     results = agent.recover([node], indexer)
 
     assert results == []
-    llm.complete_json.assert_not_called()
+    structured.assert_not_called()
 
 
-# ─── Non-list LLM response is ignored for that node ───────────────────────────
+# ─── Unparseable structured output is ignored for that node ───────────────────
 
 
 def test_recover_ignores_non_list_response():
     node = _node()
-    llm = _llm_returning({"unexpected": "dict"})
-    agent = GapRecoveryAgent(llm, _DummyAudit(), run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), _DummyAudit(), run_id="r1")
+    _stub_structured(agent, raises=InstructorError("not a valid GapRecoveryResult"))
     indexer = _Indexer({"n1": _long_text()})
 
     results = agent.recover([node], indexer)
@@ -175,17 +192,19 @@ def test_recover_ignores_non_list_response():
     assert results == []
 
 
-# ─── Per-task parse error is swallowed and audited ────────────────────────────
+# ─── Per-task validation error is swallowed and audited ───────────────────────
 
 
 def test_recover_swallows_per_task_parse_error_and_audits():
     node = _node()
-    # First task is malformed (missing required confidence), second is valid.
+    # First item is malformed (no confidence) — the permissive RawRecoveredTask
+    # accepts it, but the agent's strict RawTask re-validation rejects it. The
+    # second item is valid and must still recover.
     bad = {"title": "Broken", "short_description": "no confidence field"}
     good = _raw_task("Implement the valid recovered task")
-    llm = _llm_returning([bad, good])
     audit = _DummyAudit()
-    agent = GapRecoveryAgent(llm, audit, run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), audit, run_id="r1")
+    _stub_structured(agent, returns=GapRecoveryResult(tasks=[bad, good]))
     indexer = _Indexer({"n1": _long_text()})
 
     results = agent.recover([node], indexer)
@@ -195,15 +214,14 @@ def test_recover_swallows_per_task_parse_error_and_audits():
     assert "RECOVERY_PARSE_ERROR" in audit.actions()
 
 
-# ─── Whole-call LLM error is swallowed and audited ────────────────────────────
+# ─── Whole-call structured-output error is swallowed and audited ──────────────
 
 
 def test_recover_swallows_llm_error_and_audits():
     node = _node()
-    llm = MagicMock()
-    llm.complete_json.side_effect = RuntimeError("LLM exploded")
     audit = _DummyAudit()
-    agent = GapRecoveryAgent(llm, audit, run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), audit, run_id="r1")
+    _stub_structured(agent, raises=InstructorError("LLM exploded"))
     indexer = _Indexer({"n1": _long_text()})
 
     results = agent.recover([node], indexer)
@@ -217,9 +235,9 @@ def test_recover_swallows_llm_error_and_audits():
 
 def test_recover_audits_recovery_complete_when_tasks_found():
     node = _node()
-    llm = _llm_returning([_raw_task()])
     audit = _DummyAudit()
-    agent = GapRecoveryAgent(llm, audit, run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), audit, run_id="r1")
+    _stub_structured(agent, returns=GapRecoveryResult(tasks=[_raw_task()]))
     indexer = _Indexer({"n1": _long_text()})
 
     agent.recover([node], indexer)
@@ -230,9 +248,9 @@ def test_recover_audits_recovery_complete_when_tasks_found():
 
 def test_recover_audits_no_gaps_when_nothing_found():
     node = _node()
-    llm = _llm_returning([])
     audit = _DummyAudit()
-    agent = GapRecoveryAgent(llm, audit, run_id="r1")
+    agent = GapRecoveryAgent(MagicMock(), audit, run_id="r1")
+    _stub_structured(agent, returns=GapRecoveryResult(tasks=[]))
     indexer = _Indexer({"n1": _long_text()})
 
     agent.recover([node], indexer)
@@ -247,7 +265,7 @@ def test_recover_audits_no_gaps_when_nothing_found():
 def test_agent_uses_agent_runner_over_its_llm():
     from core.agent_runner import AgentRunner
 
-    llm = _llm_returning([])
+    llm = MagicMock()
     agent = GapRecoveryAgent(llm, _DummyAudit(), run_id="r1")
 
     assert isinstance(agent.runner, AgentRunner)

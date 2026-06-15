@@ -1,8 +1,16 @@
 # tests/test_extraction.py
 """
-Wave 2B coverage: ExtractionAgent parses the new {scratchpad, tasks} wrapper
-and still accepts the legacy bare-array shape. Also confirms the existing
+Wave 2B coverage: ExtractionAgent produces RawTasks from the Instructor-
+validated ExtractionResult ({scratchpad, tasks}). Also confirms the existing
 LOW_CONFIDENCE auto-flag still fires at threshold after the prompt change.
+
+C-5 Instructor migration: extraction's single LLM call now routes through
+``runner.complete_structured(response_model=ExtractionResult)`` instead of
+``complete_json``. The mock-point moved to ``agent.runner.complete_structured`` —
+returning a validated ``ExtractionResult`` or raising ``InstructorError``. The
+provider-side shape juggling (bare array vs wrapper, non-list ``tasks``,
+unsupported types) is now Instructor's job: a result that can't be validated
+surfaces as InstructorError. Every behavioral assertion is preserved.
 """
 
 from __future__ import annotations
@@ -15,8 +23,9 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from core.agent_runner import InstructorError
 from models.schemas import AcceptanceCriterion, TaskFlag
-from pipeline.agents.extraction import TaskExtractionAgent
+from pipeline.agents.extraction import ExtractionResult, TaskExtractionAgent
 
 
 class _DummyAudit:
@@ -62,26 +71,35 @@ def _raw_task(title: str = "Implement login API", confidence: float = 0.9) -> di
     }
 
 
-def _llm_returning(value):
-    client = MagicMock()
-    client.complete_json.return_value = value
-    return client
+def _stub_structured(agent, *, returns=None, raises=None) -> MagicMock:
+    """Stub the C-5 Instructor seam on the agent's runner.
+
+    ``returns`` is the validated ``ExtractionResult`` the runner would hand back;
+    ``raises`` simulates a structured-output failure. Returns the mock so tests
+    can assert call/no-call.
+    """
+    mock = MagicMock()
+    if raises is not None:
+        mock.side_effect = raises
+    else:
+        mock.return_value = returns
+    agent.runner.complete_structured = mock
+    return mock
 
 
 # ─── New wrapper shape ──────────────────────────────────────────────────────
 
 def test_extraction_parses_scratchpad_wrapper():
-    """LLM returns {scratchpad, tasks} — tasks parse, scratchpad is audited."""
-    payload = {
-        "scratchpad": "Three atomic units: login, registration, password reset.",
-        "tasks": [
+    """Validated ExtractionResult {scratchpad, tasks} — tasks parse, scratchpad audited."""
+    audit = _DummyAudit()
+    agent = TaskExtractionAgent(llm_client=MagicMock(), audit_logger=audit, run_id="r1")
+    _stub_structured(agent, returns=ExtractionResult(
+        scratchpad="Three atomic units: login, registration, password reset.",
+        tasks=[
             _raw_task("Implement login API"),
             _raw_task("Implement registration API"),
         ],
-    }
-    llm = _llm_returning(payload)
-    audit = _DummyAudit()
-    agent = TaskExtractionAgent(llm_client=llm, audit_logger=audit, run_id="r1")
+    ))
 
     tasks = agent.extract(_node(), _section_text())
     assert len(tasks) == 2
@@ -102,11 +120,10 @@ def test_extraction_parses_scratchpad_wrapper():
 
 
 def test_extraction_scratchpad_missing_is_ok():
-    """Wrapper with no scratchpad still parses tasks. No EXTRACTION_SCRATCHPAD log."""
-    payload = {"tasks": [_raw_task()]}
-    llm = _llm_returning(payload)
+    """Result with no scratchpad still parses tasks. No EXTRACTION_SCRATCHPAD log."""
     audit = _DummyAudit()
-    agent = TaskExtractionAgent(llm_client=llm, audit_logger=audit, run_id="r1")
+    agent = TaskExtractionAgent(llm_client=MagicMock(), audit_logger=audit, run_id="r1")
+    _stub_structured(agent, returns=ExtractionResult(tasks=[_raw_task()]))
 
     tasks = agent.extract(_node(), _section_text())
     assert len(tasks) == 1
@@ -115,41 +132,41 @@ def test_extraction_scratchpad_missing_is_ok():
     )
 
 
-def test_extraction_wrapper_with_non_list_tasks_returns_empty():
-    """Wrapper present but tasks field is not a list → empty result + audit."""
-    payload = {"scratchpad": "Confused", "tasks": "oops"}
-    llm = _llm_returning(payload)
+def test_extraction_invalid_structured_output_returns_empty():
+    """Instructor could not produce a valid ExtractionResult → empty result + audit."""
     audit = _DummyAudit()
-    agent = TaskExtractionAgent(llm_client=llm, audit_logger=audit, run_id="r1")
+    agent = TaskExtractionAgent(llm_client=MagicMock(), audit_logger=audit, run_id="r1")
+    _stub_structured(agent, raises=InstructorError("tasks field was not a list"))
 
     tasks = agent.extract(_node(), _section_text())
     assert tasks == []
     assert any(r.get("action") == "EXTRACTION_ERROR" for r in audit.records)
 
 
-# ─── Legacy shape fallback ──────────────────────────────────────────────────
+# ─── Tasks-only result parses cleanly ───────────────────────────────────────
 
-def test_extraction_falls_back_to_bare_array():
-    """Old / small models still return a bare list. The agent must accept it."""
-    payload = [_raw_task("Legacy task one"), _raw_task("Legacy task two")]
-    llm = _llm_returning(payload)
+def test_extraction_tasks_only_result():
+    """A tasks-only ExtractionResult (no scratchpad) parses every task, no log."""
     audit = _DummyAudit()
-    agent = TaskExtractionAgent(llm_client=llm, audit_logger=audit, run_id="r1")
+    agent = TaskExtractionAgent(llm_client=MagicMock(), audit_logger=audit, run_id="r1")
+    _stub_structured(agent, returns=ExtractionResult(
+        tasks=[_raw_task("Legacy task one"), _raw_task("Legacy task two")],
+    ))
 
     tasks = agent.extract(_node(), _section_text())
     assert len(tasks) == 2
     assert tasks[0].title == "Legacy task one"
-    # No scratchpad logged (legacy shape has none).
+    # No scratchpad logged (none present).
     assert not any(
         r.get("action") == "EXTRACTION_SCRATCHPAD" for r in audit.records
     )
 
 
-def test_extraction_unsupported_response_type_returns_empty():
-    """If the LLM returns something that is neither dict nor list, fail safe."""
-    llm = _llm_returning("just a string")
+def test_extraction_structured_failure_returns_empty():
+    """Any structured-output failure fails safe to an empty result + audit row."""
     audit = _DummyAudit()
-    agent = TaskExtractionAgent(llm_client=llm, audit_logger=audit, run_id="r1")
+    agent = TaskExtractionAgent(llm_client=MagicMock(), audit_logger=audit, run_id="r1")
+    _stub_structured(agent, raises=InstructorError("provider returned a bare string"))
 
     tasks = agent.extract(_node(), _section_text())
     assert tasks == []
@@ -160,20 +177,19 @@ def test_extraction_unsupported_response_type_returns_empty():
 
 def test_extraction_low_confidence_flag_unchanged():
     """confidence below threshold (default 0.6) auto-adds LOW_CONFIDENCE flag."""
-    payload = {
-        "scratchpad": "Edge case",
-        "tasks": [
-            _raw_task("Borderline task", confidence=0.5),  # below threshold
-            _raw_task("Solid task", confidence=0.9),       # above threshold
-        ],
-    }
-    llm = _llm_returning(payload)
     agent = TaskExtractionAgent(
-        llm_client=llm,
+        llm_client=MagicMock(),
         audit_logger=_DummyAudit(),
         run_id="r1",
         confidence_threshold=0.6,
     )
+    _stub_structured(agent, returns=ExtractionResult(
+        scratchpad="Edge case",
+        tasks=[
+            _raw_task("Borderline task", confidence=0.5),  # below threshold
+            _raw_task("Solid task", confidence=0.9),       # above threshold
+        ],
+    ))
 
     tasks = agent.extract(_node(), _section_text())
     assert len(tasks) == 2
@@ -186,11 +202,11 @@ def test_extraction_low_confidence_flag_unchanged():
 
 def test_extraction_short_section_skipped():
     """Existing < 50 char guard still short-circuits before the LLM call."""
-    llm = MagicMock()
     audit = _DummyAudit()
-    agent = TaskExtractionAgent(llm_client=llm, audit_logger=audit, run_id="r1")
+    agent = TaskExtractionAgent(llm_client=MagicMock(), audit_logger=audit, run_id="r1")
+    structured = _stub_structured(agent, returns=ExtractionResult(tasks=[_raw_task()]))
 
     tasks = agent.extract(_node(), "tiny")
     assert tasks == []
-    llm.complete_json.assert_not_called()
+    structured.assert_not_called()
     assert any(r.get("action") == "SKIPPED_SHORT_SECTION" for r in audit.records)

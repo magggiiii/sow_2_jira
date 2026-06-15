@@ -1,10 +1,26 @@
 # pipeline/agents/extraction.py
 
 import json
+from pydantic import BaseModel, Field
+
 from models.schemas import RawTask, TaskFlag, normalize_acceptance_criteria
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
-from core.agent_runner import AgentRunner
+from core.agent_runner import AgentRunner, InstructorError
+
+
+class ExtractionResult(BaseModel):
+    """Instructor ``response_model`` (C-5) — the extractor's output object.
+
+    Mirrors the ``{"scratchpad": ..., "tasks": [...]}`` wrapper the prompt asks
+    for. ``tasks`` is a list of the existing :class:`RawTask` (validated, with
+    its permissive Union ACs and clamped confidence), so the per-task dict-parse
+    loop the regex path needed is replaced by iterating already-validated tasks.
+    The legacy bare-array shape the agent used to special-case is now Instructor's
+    concern: the runner always hands back a validated ExtractionResult.
+    """
+    scratchpad: str = ""
+    tasks: list[RawTask] = Field(default_factory=list)
 
 EXTRACTION_SYSTEM_PROMPT = """You are a senior Jira project manager extracting actionable work items from a Statement of Work (SOW).
 You think in terms of real Jira boards: Epics, Stories, Tasks, and Sub-tasks.
@@ -266,14 +282,23 @@ class TaskExtractionAgent:
             hierarchy_context=HIERARCHY_CONTEXT.get(hierarchy, HIERARCHY_CONTEXT["epic_task"]),
         )
 
+        # C-5: route through the Instructor-validated structured-output seam.
+        # The runner returns a validated ExtractionResult — the {scratchpad,
+        # tasks} wrapper, with each task already a schema-valid RawTask. That
+        # replaces the manual dict/list shape juggling and the per-task
+        # RawTask(**raw) parse loop. Any structured-output failure (call error,
+        # unparseable output, a tasks field Instructor could not coerce into a
+        # list of RawTask) surfaces as one InstructorError, recorded as
+        # EXTRACTION_ERROR (error_count++) and degraded to an empty list.
         try:
-            raw_response = self.runner.complete_json(
+            result = self.runner.complete_structured(
                 prompt=prompt,
+                response_model=ExtractionResult,
                 system=EXTRACTION_SYSTEM_PROMPT,
                 agent_name="ExtractionAgent",
                 node_id=node["node_id"],
             )
-        except (ValueError, RuntimeError) as e:
+        except InstructorError as e:
             self.error_count += 1
             self.audit.log(
                 run_id=self.run_id,
@@ -284,37 +309,9 @@ class TaskExtractionAgent:
             )
             return []
 
-        # New shape: {"scratchpad": "...", "tasks": [...]}.
-        # Legacy shape (still accepted): a bare list of task dicts.
-        scratchpad = ""
-        if isinstance(raw_response, dict):
-            scratchpad = str(raw_response.get("scratchpad", "") or "")
-            raw_list = raw_response.get("tasks", [])
-            if not isinstance(raw_list, list):
-                self.error_count += 1
-                self.audit.log(
-                    run_id=self.run_id,
-                    agent="ExtractionAgent",
-                    node_id=node["node_id"],
-                    action="EXTRACTION_ERROR",
-                    detail="LLM returned wrapper without a tasks list",
-                )
-                return []
-        elif isinstance(raw_response, list):
-            raw_list = raw_response
-        else:
-            self.error_count += 1
-            self.audit.log(
-                run_id=self.run_id,
-                agent="ExtractionAgent",
-                node_id=node["node_id"],
-                action="EXTRACTION_ERROR",
-                detail="LLM returned neither a wrapper dict nor a task list",
-            )
-            return []
-
         # Audit-log the scratchpad so reviewers can see what the model was
         # thinking, but never propagate it into RawTask.
+        scratchpad = result.scratchpad or ""
         if scratchpad:
             self.audit.log(
                 run_id=self.run_id,
@@ -325,28 +322,18 @@ class TaskExtractionAgent:
             )
 
         tasks = []
-        for raw in raw_list:
-            try:
-                task = RawTask(**raw)
-                # Auto-flag low confidence
-                if task.confidence < self.confidence_threshold:
-                    if "LOW_CONFIDENCE" not in task.flags:
-                        task.flags.append("LOW_CONFIDENCE")
-                # Normalize ACs to the structured form so the rest of the
-                # pipeline only deals with AcceptanceCriterion objects.
-                task.acceptance_criteria = normalize_acceptance_criteria(
-                    task.acceptance_criteria
-                )
-                tasks.append(task)
-            except Exception as e:
-                self.error_count += 1
-                self.audit.log(
-                    run_id=self.run_id,
-                    agent="ExtractionAgent",
-                    node_id=node["node_id"],
-                    action="TASK_PARSE_ERROR",
-                    detail=f"Could not parse task: {e} | raw: {str(raw)[:200]}",
-                )
+        for task in result.tasks:
+            # `task` is already a validated RawTask. Apply the same downstream
+            # touches the regex path did: auto-flag low confidence, then
+            # normalize ACs to the structured form so the rest of the pipeline
+            # only deals with AcceptanceCriterion objects.
+            if task.confidence < self.confidence_threshold:
+                if "LOW_CONFIDENCE" not in task.flags:
+                    task.flags.append("LOW_CONFIDENCE")
+            task.acceptance_criteria = normalize_acceptance_criteria(
+                task.acceptance_criteria
+            )
+            tasks.append(task)
 
         self.audit.log(
             run_id=self.run_id,

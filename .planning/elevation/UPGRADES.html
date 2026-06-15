@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">26</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;349</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">29</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">27</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;365</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">30</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -149,7 +149,7 @@
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
-      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.13)"></i></div><div class="wpct">13%</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.25)"></i></div><div class="wpct">25%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -352,6 +352,17 @@
         <p class="why"><span class="wl">Better</span>Structured output regains the production resilience the regex path had — the prerequisite for parallelizing the per-node loop (B1), where concurrency would otherwise multiply transient-failure task-loss.</p>
       </div>
     </div>
+    <!-- A2 PER-NODE ISOLATION + GRACEFUL MAX_NODES -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — per-node isolation &amp; graceful capacity cap (A2)</h3><span class="sha">78b4fb8</span></div>
+      <div class="inc-sub reveal">One bad node no longer aborts the whole run, and an over-cap document yields partial output instead of a hard crash. Test-first — 16 new tests, suite 349 → 365 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A single failing node can't sink a 150-node run anymore</h4><span class="tag">scale · A2</span></div>
+        <p class="what">Extracted the per-node body into <code>_process_node</code> and the loop into <code>_extract_all</code>, which isolates each node in try/except; replaced the <code>max_nodes</code> hard-stop with a strategy-gated cap.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Any single node's unhandled error aborted the entire multi-hundred-node run, losing every task; and a document over <code>max_nodes</code> raised a hard <code>RuntimeError</code> with no partial output.</div><div class="cell after"><span class="lbl">After</span>A failing node is logged (<code>EXTRACTION_FAILED</code> audit row), counted, and skipped — the loop continues; &gt;5% failures flag the run via a <code>node_processing</code> health stage. Over-cap docs are processed up to the cap with partial output kept and <code>DEGRADED_CAPACITY</code> flagged (default <code>node_processing_strategy="degraded"</code>; <code>"strict"</code> keeps the legacy hard-stop).</div></div>
+        <p class="why"><span class="wl">Better</span>Long runs degrade gracefully instead of failing all-or-nothing, and <code>_process_node</code> (no shared-state mutation) is the seam B1 parallelizes.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -361,7 +372,7 @@
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Parallel per-node extraction (~4-5× faster) <span class="tag">scale · B1</span></h4><p>Today the per-node agent loop is strictly sequential (~25 min-2 h for a 55pg SOW). Nodes are independent — <code>StateAgent</code> continuation is rule-based and applied <em>after</em> extraction — so a thread pool over nodes is safe, keeping only state-merge + dedup sequential. ~150-node run: ~30 min → ~6-10 min.</p><span class="need">buildable now (config-gated)</span></div></div>
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Big-doc integrity <span class="tag">scale · A2-A4</span></h4><p>Per-node error isolation (one bad node never crashes the run), graceful <code>max_nodes</code> (process the cap + emit partial output, not a hard <code>RuntimeError</code>), batch the dedup candidate pairs (no single-call truncation), and surface section truncation as a warning+flag instead of silently dropping tasks on dense pages.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Big-doc integrity <span class="tag">scale · A3-A4</span></h4><p><s>Per-node error isolation; graceful <code>max_nodes</code> (A2 — shipped).</s> Remaining: batch the dedup candidate pairs (no single-call truncation), and surface section truncation as a warning+flag instead of silently dropping tasks on dense pages.</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Resumable &amp; cancellable runs <span class="tag">scale · C1-C2</span></h4><p>Per-node checkpoint + resume (a crash at node 45/60 no longer loses 40 min of work — reuses the <code>skip_indexing</code>/tree-cache precedent), plus a <code>cancel_check</code> seam and a filesystem status fallback so partial progress survives a restart even before the durable worker lands.</p><span class="need">buildable now</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Eval cassette harness (unblocks the full C-4 fix)</h4><p>A frozen golden-SOW fixture that asserts quality bands (INCOMPLETE-rate ≤ 0.40, merges ≥ 1, zero conf=0.00 flags). This is the gate (INV-4) that lets the coverage logic move post-dedup and the linear pipeline flip to the typed runner — safely.</p><span class="need">needs: recorded fixtures</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>

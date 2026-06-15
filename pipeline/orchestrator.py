@@ -297,7 +297,92 @@ class PipelineOrchestrator:
         except Exception:
             pass  # audit must never mask the isolation it is recording
 
-    def _extract_all(self, nodes, coverage):
+    # ─── C1: per-node checkpoint + resume ──────────────────────────────────
+
+    def _extraction_checkpoint_path(self) -> Path:
+        return Path(f"data/sessions/{self.config.run_id}/extraction_checkpoint.json")
+
+    def _write_extraction_checkpoint(self, nodes, last_index, all_closed_tasks, open_tasks, coverage) -> None:
+        """
+        Persist resume state after node ``last_index`` (atomic temp+replace). Holds
+        the node-id list (for node-set validation on resume), the closed/open task
+        sets, and coverage state. Best-effort: a checkpoint write failure must
+        never abort the run — durability is a safety net, not a hard dependency.
+        """
+        try:
+            path = self._extraction_checkpoint_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "node_ids": [n["node_id"] for n in nodes],
+                "last_index": last_index,
+                "all_closed_tasks": [t.model_dump(mode="json") for t in all_closed_tasks],
+                "open_tasks": [t.model_dump(mode="json") for t in open_tasks],
+                "coverage": coverage.to_dict(),
+                "ts": time.time(),
+            }
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                json.dump(payload, f, default=str)
+            os.replace(tmp, path)
+        except Exception as e:
+            logger.warning(f"Could not write extraction checkpoint: {e}")
+
+    def _load_extraction_checkpoint(self) -> dict | None:
+        try:
+            path = self._extraction_checkpoint_path()
+            if not path.exists():
+                return None
+            with open(path) as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not read extraction checkpoint: {e}")
+            return None
+
+    def _delete_extraction_checkpoint(self) -> None:
+        try:
+            self._extraction_checkpoint_path().unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Could not delete extraction checkpoint: {e}")
+
+    def _maybe_resume(self, nodes, coverage):
+        """
+        Decide whether to resume from a prior extraction checkpoint.
+
+        Returns ``(start_index, all_closed_tasks, open_tasks)``. When resumption is
+        disabled, no checkpoint exists, the node-set has changed, or the payload is
+        unreadable, returns ``(0, [], [])`` (fresh run) — deleting a stale/mismatched
+        checkpoint so it can't corrupt a later run. On a valid match, restores the
+        closed/open tasks + coverage and returns the index of the first not-yet-done
+        node.
+        """
+        if not getattr(self.config, "enable_resumption", True):
+            return 0, [], []
+        data = self._load_extraction_checkpoint()
+        if not data:
+            return 0, [], []
+
+        if data.get("node_ids") != [n["node_id"] for n in nodes]:
+            logger.warning("› Resume checkpoint node-set mismatch — starting fresh")
+            self._delete_extraction_checkpoint()
+            return 0, [], []
+
+        try:
+            all_closed = [ManagedTask.model_validate(d) for d in data.get("all_closed_tasks", [])]
+            open_tasks = [ManagedTask.model_validate(d) for d in data.get("open_tasks", [])]
+        except Exception as e:
+            logger.warning(f"› Resume checkpoint unreadable ({e}) — starting fresh")
+            self._delete_extraction_checkpoint()
+            return 0, [], []
+
+        coverage.restore_from(data.get("coverage", {}))
+        start_index = int(data.get("last_index", -1)) + 1
+        logger.info(
+            f"› Resuming run: {start_index}/{len(nodes)} nodes already processed "
+            f"({len(all_closed)} tasks restored)"
+        )
+        return start_index, all_closed, open_tasks
+
+    def _extract_all(self, nodes, coverage, *, start_index=0, all_closed_tasks=None, open_tasks=None):
         """
         Run extraction over all nodes with per-node error isolation, returning
         ``(all_closed_tasks, open_tasks, cancelled)``.
@@ -313,8 +398,9 @@ class PipelineOrchestrator:
         """
         concurrency = self._node_concurrency()
         total = len(nodes)
-        all_closed_tasks: list[ManagedTask] = []
-        open_tasks: list[ManagedTask] = []
+        # Seed accumulators — a resume restores prior tasks; a fresh run is empty.
+        all_closed_tasks: list[ManagedTask] = list(all_closed_tasks or [])
+        open_tasks: list[ManagedTask] = list(open_tasks or [])
 
         with Progress(
             SpinnerColumn(),
@@ -324,11 +410,14 @@ class PipelineOrchestrator:
             TimeElapsedColumn(),
             console=console
         ) as progress:
-            task_bar = progress.add_task("[cyan]Extracting nodes...", total=total)
+            task_bar = progress.add_task(
+                "[cyan]Extracting nodes...", total=total, completed=start_index
+            )
 
             # ── Sequential path (legacy; SOW_NODE_CONCURRENCY=1) ──────────────
             if concurrency <= 1:
-                for i, node in enumerate(nodes):
+                for i in range(start_index, total):
+                    node = nodes[i]
                     current_node_progress = 0.40 + (0.40 * (i / total)) if total else 0.40
                     if self.stop_event.is_set():
                         logger.warning(f"› Pipeline cancelled by user at node {i}")
@@ -341,16 +430,17 @@ class PipelineOrchestrator:
 
                     try:
                         result = self._process_node(node, open_tasks, i, total)
-                        if result is None:
-                            continue  # classifier gated this section out
-                        open_tasks, newly_closed, section_tasks = result
-                        for task in section_tasks:
-                            coverage.mark_covered(node["node_id"], str(task.id))
-                        all_closed_tasks.extend(newly_closed)
+                        if result is not None:
+                            open_tasks, newly_closed, section_tasks = result
+                            for task in section_tasks:
+                                coverage.mark_covered(node["node_id"], str(task.id))
+                            all_closed_tasks.extend(newly_closed)
                     except Exception as e:
                         self._record_node_failure(node, i, e)
-                    finally:
-                        progress.advance(task_bar)
+                    # C1: checkpoint after each node (incl. gated/failed) so a
+                    # resume skips it. Best-effort; never aborts the run.
+                    self._write_extraction_checkpoint(nodes, i, all_closed_tasks, open_tasks, coverage)
+                    progress.advance(task_bar)
 
                 return all_closed_tasks, open_tasks, False
 
@@ -361,13 +451,14 @@ class PipelineOrchestrator:
             self._update_status(3, f"Extracting {total} nodes (concurrency={concurrency})...", 0.40)
 
             # Phase 1: extract concurrently (pure per-node; status_callback=None
-            # so no worker thread mutates the shared provider's callback).
+            # so no worker thread mutates the shared provider's callback). On a
+            # resume, only the not-yet-done nodes (start_index:) are extracted.
             raw_by_index: list = [None] * total
             failed: set[int] = set()
             with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
                 future_to_i = {
-                    ex.submit(self._extract_node, node, i, total, None): i
-                    for i, node in enumerate(nodes)
+                    ex.submit(self._extract_node, nodes[i], i, total, None): i
+                    for i in range(start_index, total)
                 }
                 for fut in concurrent.futures.as_completed(future_to_i):
                     i = future_to_i[fut]
@@ -380,25 +471,27 @@ class PipelineOrchestrator:
                         progress.advance(task_bar)
 
             # Phase 2: apply sequentially in node order (order-sensitive merge,
-            # critic, coverage, coverage-marking).
-            for i, node in enumerate(nodes):
+            # critic, coverage, coverage-marking), checkpointing after each node.
+            for i in range(start_index, total):
+                node = nodes[i]
                 if self.stop_event.is_set():
                     logger.warning(f"› Pipeline cancelled by user at node {i}")
                     return all_closed_tasks, open_tasks, True
-                if i in failed:
-                    continue
-                raw_tasks = raw_by_index[i]
-                if raw_tasks is None:
-                    continue  # classifier gated this section out
-                try:
-                    open_tasks, newly_closed, section_tasks = self._apply_node(
-                        node, raw_tasks, open_tasks
-                    )
-                    for task in section_tasks:
-                        coverage.mark_covered(node["node_id"], str(task.id))
-                    all_closed_tasks.extend(newly_closed)
-                except Exception as e:
-                    self._record_node_failure(node, i, e)
+                if i not in failed:
+                    raw_tasks = raw_by_index[i]
+                    if raw_tasks is not None:  # None == classifier-gated
+                        try:
+                            open_tasks, newly_closed, section_tasks = self._apply_node(
+                                node, raw_tasks, open_tasks
+                            )
+                            for task in section_tasks:
+                                coverage.mark_covered(node["node_id"], str(task.id))
+                            all_closed_tasks.extend(newly_closed)
+                        except Exception as e:
+                            self._record_node_failure(node, i, e)
+                # C1: checkpoint after each node (incl. gated/failed) so a resume
+                # skips it. Best-effort; never aborts the run.
+                self._write_extraction_checkpoint(nodes, i, all_closed_tasks, open_tasks, coverage)
 
         return all_closed_tasks, open_tasks, False
 
@@ -495,10 +588,19 @@ class PipelineOrchestrator:
             span.set_attribute("node_count", len(nodes))
             self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
 
+            # C1: resume from a prior crash if a valid checkpoint exists (skip
+            # done nodes, restore their tasks + coverage). Fresh run → (0, [], []).
+            start_index, resume_closed, resume_open = self._maybe_resume(nodes, coverage)
+
             # A2: per-node error isolation lives in _extract_all — one node's
             # failure is logged + counted and the loop continues. Cancellation
             # returns whatever was extracted so far.
-            all_closed_tasks, open_tasks, cancelled = self._extract_all(nodes, coverage)
+            all_closed_tasks, open_tasks, cancelled = self._extract_all(
+                nodes, coverage,
+                start_index=start_index,
+                all_closed_tasks=resume_closed,
+                open_tasks=resume_open,
+            )
             if cancelled:
                 return all_closed_tasks
 
@@ -608,6 +710,11 @@ class PipelineOrchestrator:
                 sem_path = checkpoint_path.parent / "coverage_reports.json"
                 with open(sem_path, "w") as f:
                     json.dump(self.section_coverage_reports, f, indent=2, default=str)
+
+            # C1: the run completed — the per-node resume checkpoint is no longer
+            # needed, so a re-run starts fresh rather than resuming a finished run.
+            self._delete_extraction_checkpoint()
+
             self.telemetry.emit("step.completed", {
                 "run_id": self.config.run_id,
                 "step": "save",

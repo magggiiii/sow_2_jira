@@ -345,6 +345,10 @@ class RunConfig(BaseModel):
     # the node list, keeps partial output, and flags the run DEGRADED_CAPACITY;
     # "strict" preserves the legacy hard Denial-of-Wallet RuntimeError.
     node_processing_strategy: Literal["strict", "degraded"] = "degraded"
+    # C1: write a per-node extraction checkpoint and resume from it after a crash
+    # (skip done nodes, restore their tasks + coverage). Off → single end-of-run
+    # checkpoint only (legacy).
+    enable_resumption: bool = True
     run_id: str = Field(default_factory=lambda: str(uuid4())[:8])
     provider_config: Optional[ProviderConfig] = None
 

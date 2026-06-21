@@ -447,6 +447,18 @@
         <p class="why"><span class="wl">Better</span>Cross-section duplicates stop poisoning the signal — the mechanism behind the ~100%→&lt;40% drop. Env-gated (<code>SOW_COVERAGE_CORPUS_FILTER</code>, default OFF so the INV-4 gate stays byte-deterministic; on in prod). 13 deterministic tests; adversarially reviewed (11 agents) → 0 defects.</p>
       </div>
     </div>
+
+    <!-- PUSH ADMISSION GATE -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Push admission gate (STEP 3.5)</h3><span class="sha">2da7024</span></div>
+      <div class="inc-sub reveal">A deterministic guard on what reaches Jira — the other half of the guardrail band beside the coverage gate. Test-first — 23 tests, suite 463 green; adversarially reviewed → 0 defects.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The pipeline refuses to push known-bad work to Jira</h4><span class="tag">STEP 3.5 · PushGate</span></div>
+        <p class="what">A pure, read-only gate that decides which approved tasks may actually be created in Jira.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Nothing stopped an INCOMPLETE / low-confidence / ambiguous task — or any task from a DEGRADED run — from being pushed; and a re-push could duplicate work already created in Jira.</div><div class="cell after"><span class="lbl">After</span><code>PushGate.assert_pushable</code> classifies skip-first: already-pushed tasks (<code>jira_issue_key</code>) are skipped idempotently; INCOMPLETE / LOW_CONFIDENCE / AMBIGUOUS_SCOPE / NO_ACCEPTANCE_CRITERIA tasks and any task on a DEGRADED run are blocked unless explicitly overridden; everything else pushes. Fail-closed by design.</div></div>
+        <p class="why"><span class="wl">Better</span>The headline Jira-push feature now has a quality floor and idempotency. Pure + additive (wired into the live push in W5); informational flags don't block, and the blocking set is injectable for stricter shops.</p>
+      </div>
+    </div>
   </section>
 
   <!-- NEXT -->
@@ -476,7 +488,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-22 · branch elevation/wave-0 · 440 tests green
+    Updated 2026-06-22 · branch elevation/wave-0 · 463 tests green
   </footer>
 
 </div>

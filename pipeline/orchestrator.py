@@ -130,6 +130,10 @@ class PipelineOrchestrator:
         # run() after dedup + gap recovery). Always present so consumers can read
         # it even before run() executes.
         self.coverage_gate_result = None
+        # C-4 / STEP 3.5: dependency-injection seam for the coverage corpus filter's
+        # embedder. None -> resolve the dedup MiniLM embedder lazily (only when the
+        # filter is enabled); tests inject a deterministic fake here.
+        self.coverage_filter_embed_fn = None
 
         # A2: per-node error isolation + graceful capacity capping. These are run
         # signals fed into the health report at the end of run().
@@ -314,6 +318,26 @@ class PipelineOrchestrator:
         except (TypeError, ValueError):
             return float(default)
 
+    def _coverage_filter_enabled(self) -> bool:
+        """STEP 3.5: the embedding-tier corpus filter is OFF by default. Off keeps
+        the INV-4 harness + existing gate tests byte-identical (the embedder is
+        never sourced); production enables it via ``SOW_COVERAGE_CORPUS_FILTER=1``,
+        which is also when the real-run INCOMPLETE rate actually drops."""
+        return os.getenv("SOW_COVERAGE_CORPUS_FILTER", "0") == "1"
+
+    def _coverage_embed_fn(self):
+        """Resolve the corpus-filter embedder. A per-instance override
+        (``coverage_filter_embed_fn``) wins so tests inject a deterministic fake
+        without loading MiniLM; otherwise lazily reuse the dedup agent's ONE MiniLM
+        embedder. Returns None when no embedder is available (filter then skipped)."""
+        override = getattr(self, "coverage_filter_embed_fn", None)
+        if override is not None:
+            return override
+        if self.dedup_agent is None:
+            return None
+        embedder = self.dedup_agent._get_embedder()  # reuse the single loaded model
+        return lambda texts: embedder.encode(texts, normalize_embeddings=True)
+
     def _run_coverage_verify(self, tasks):
         """
         Apply INCOMPLETE to the FINAL (deduped + gap-recovered) task set,
@@ -324,9 +348,47 @@ class PipelineOrchestrator:
         genuine ``missed_items``. This replaces the per-section, pre-dedup blanket
         flag that produced the ~100% INCOMPLETE bomb. Run-level advisory metadata is
         recorded on ``self.coverage_gate_result``.
+
+        STEP 3.5: when ``SOW_COVERAGE_CORPUS_FILTER=1``, each reported miss is first
+        tiered against the FINAL corpus by embedding similarity and the already-
+        covered cross-section duplicates (sim >= 0.85) are dropped before the gate
+        sees them — this is what drops the real-run INCOMPLETE rate. OFF by default,
+        so the gate sees the reports unchanged (byte-identical to the structural fix).
         """
         gate = CoverageGate(floor=self._coverage_floor())
-        result = gate.apply(tasks, self.section_coverage_reports)
+        reports = self.section_coverage_reports
+
+        if self._coverage_filter_enabled() and self.section_coverage_reports:
+            embed_fn = self._coverage_embed_fn()
+            if embed_fn is not None:
+                from pipeline.features.coverage_filter import CoverageCorpusFilter
+
+                before = len(self.section_coverage_reports)
+                surviving, audit = CoverageCorpusFilter(embed_fn).filter_reports(
+                    self.section_coverage_reports, list(tasks)
+                )
+                # Persist the filtered view so the gate AND the saved
+                # coverage_reports.json reflect the surviving (genuine) misses.
+                self.section_coverage_reports = surviving
+                reports = surviving
+                try:
+                    self.audit.log(
+                        run_id=self.config.run_id,
+                        agent="CoverageCorpusFilter",
+                        node_id=None,
+                        action="COVERAGE_CORPUS_FILTERED",
+                        task_id=None,
+                        detail=(
+                            f"reports={before}->{len(surviving)} "
+                            f"dropped={sum(a.dropped for a in audit)} "
+                            f"overlap={sum(a.likely_overlap for a in audit)} "
+                            f"uncovered={sum(a.uncovered for a in audit)}"
+                        ),
+                    )
+                except Exception:
+                    pass
+
+        result = gate.apply(tasks, reports)
         self.coverage_gate_result = result
 
         if result.flagged_task_count:

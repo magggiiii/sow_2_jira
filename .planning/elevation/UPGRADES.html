@@ -440,6 +440,12 @@
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every node's coverage check flagged its whole section INCOMPLETE inline, pre-dedup — a single confident miss per section drove the real run to ~100% INCOMPLETE, and merged-away duplicates still counted.</div><div class="cell after"><span class="lbl">After</span>A pure <code>CoverageGate</code> (reusing the shared <code>ConfidenceGate</code>) flags the FINAL deduped set report-level: a task is INCOMPLETE only when one of its <code>source_refs</code> belongs to a section whose report is confident (<code>checker_confidence ≥ floor</code>) AND has genuine misses. No inline path → no double-flag.</div></div>
         <p class="why"><span class="wl">Better</span>The INCOMPLETE rate reflects survivors and real misses, not a blanket sweep — and the INV-4 flagbomb control still goes RED through the new gate, proving it's wired.</p>
       </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Embedding-tier corpus filter drops cross-section duplicate "misses"</h4><span class="tag">C-4 · STEP 3.5</span></div>
+        <p class="what">The piece that actually drops the real-run rate: filter each reported miss against the final deduped corpus by similarity before the gate sees it.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The structural move flags correctly, but most "misses" on a real SOW are cross-section duplicates — work already captured as a task extracted elsewhere — and the checker, seeing only one section, still reports them. They'd flag genuine tasks INCOMPLETE.</div><div class="cell after"><span class="lbl">After</span>A feature-stage <code>CoverageCorpusFilter</code> (reusing the dedup MiniLM embedder) tiers every miss vs the final corpus: drop ≥0.85 (already covered), advisory 0.70–0.85, genuine &lt;0.70. Only genuine misses survive to the gate; a section with none no longer flags.</div></div>
+        <p class="why"><span class="wl">Better</span>Cross-section duplicates stop poisoning the signal — the mechanism behind the ~100%→&lt;40% drop. Env-gated (<code>SOW_COVERAGE_CORPUS_FILTER</code>, default OFF so the INV-4 gate stays byte-deterministic; on in prod). 13 deterministic tests; adversarially reviewed (11 agents) → 0 defects.</p>
+      </div>
     </div>
   </section>
 
@@ -470,7 +476,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-15 · branch elevation/wave-0 · 426 tests green
+    Updated 2026-06-22 · branch elevation/wave-0 · 440 tests green
   </footer>
 
 </div>

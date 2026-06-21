@@ -272,6 +272,150 @@ class CoverageGate:
         return True
 
 
+# ─── PushGate (STEP 3.5) ──────────────────────────────────────────────────────
+
+# TaskFlag values that BLOCK a Jira push (quality failures). Informational flags
+# (NO_MOCKUP / POTENTIAL_DUPLICATE / GAP_RECOVERED / TRUNCATION) do NOT block.
+# Imported lazily inside the gate to keep this module import-light; the literal
+# names are kept here as the documented contract.
+_BLOCKING_FLAG_NAMES = (
+    "INCOMPLETE",            # C-4 confident coverage miss — known-partial work item
+    "LOW_CONFIDENCE",        # critic/extraction low-confidence — not trustworthy to ship
+    "AMBIGUOUS_SCOPE",       # not actionable as written
+    "NO_ACCEPTANCE_CRITERIA",  # fails the "actionable Jira-ready task" bar
+)
+
+
+def _build_blocking_flags():
+    from models.schemas import TaskFlag
+
+    return frozenset(TaskFlag(n) for n in _BLOCKING_FLAG_NAMES)
+
+
+# The default blocking set, resolved once. TRUNCATION is intentionally NOT here
+# (it's a run-quality breadcrumb, not a per-task verdict) but ``PushGate`` takes
+# ``blocking_flags`` so a stricter deployment can add it.
+try:  # pragma: no cover - trivial import guard
+    BLOCKING_FLAGS = _build_blocking_flags()
+except Exception:  # pragma: no cover
+    BLOCKING_FLAGS = frozenset()
+
+
+def _flag_value(flag: Any) -> str:
+    """Normalize a flag (TaskFlag enum or bare string) to its string value."""
+    return flag.value if hasattr(flag, "value") else str(flag)
+
+
+@dataclass(frozen=True)
+class PushDecision:
+    """Per-task push verdict — the audit trail of an ``assert_pushable`` call."""
+
+    task_id: str
+    verdict: Literal["push", "skip", "block"]
+    reason: str = ""
+
+
+@dataclass
+class PushGateResult:
+    """Partition of a push batch. ``pushable`` is in input order; merged-away
+    duplicates never reach here (dedup ran upstream)."""
+
+    pushable: list = field(default_factory=list)       # task objects cleared to push
+    skipped: list = field(default_factory=list)        # PushDecision — already pushed
+    blocked: list = field(default_factory=list)        # PushDecision — flagged / DEGRADED run
+    decisions: list = field(default_factory=list)      # PushDecision per input task, in order
+
+
+class PushBlocked(Exception):
+    """Raised by :meth:`PushGate.assert_pushable` when a block exists and
+    ``override`` is False. Carries the full :class:`PushGateResult` so the caller
+    can still push the cleared subset and surface per-task reasons."""
+
+    def __init__(self, result: "PushGateResult") -> None:
+        self.result = result
+        self.blocked = result.blocked
+        msg = "; ".join(f"{d.task_id}: {d.reason}" for d in result.blocked) or "push blocked"
+        super().__init__(msg)
+
+
+class PushGate:
+    """
+    Deterministic admission gate for Jira push (STEP 3.5).
+
+    Pure + read-only — it NEVER mutates tasks (the PUSHED status is set by the
+    caller after a successful Jira create). Classification is SKIP-first:
+
+      1. ``jira_issue_key`` present -> SKIP (idempotent re-push; survives override).
+      2. else, run DEGRADED or task carries a blocking flag -> BLOCK (unless override).
+      3. else -> PUSH.
+
+    ``assert_pushable`` returns a :class:`PushGateResult`; with ``override=False``
+    a non-empty blocked set raises :class:`PushBlocked` (carrying that result).
+    Accepts tasks and ``run_status`` as typed models OR ``model_dump`` dicts.
+    """
+
+    __slots__ = ("blocking_values",)
+
+    def __init__(self, blocking_flags=None) -> None:
+        flags = BLOCKING_FLAGS if blocking_flags is None else blocking_flags
+        self.blocking_values = frozenset(_flag_value(f) for f in flags)
+
+    @staticmethod
+    def _is_degraded(run_status: Any) -> bool:
+        """Read run-level DEGRADED from a RunHealthReport, its ``to_dict`` form,
+        or a bare bool. (FAILED is intentionally not treated as degraded here —
+        ``is_degraded`` is DEGRADED-only; a FAILED run blocking push is a
+        documented follow-up.)"""
+        if run_status is None:
+            return False
+        if isinstance(run_status, bool):
+            return run_status
+        return bool(_read(run_status, "is_degraded", False))
+
+    def _blocking_names(self, flags: Any) -> list[str]:
+        # Fail closed: a scalar flag (a bare string, or a single str-Enum TaskFlag)
+        # is treated as one flag rather than iterated char-by-char — so a malformed
+        # task can never let a blocking flag slip through a shape quirk.
+        if isinstance(flags, str):
+            flags = [flags]
+        names = [_flag_value(f) for f in (flags or [])]
+        return [n for n in names if n in self.blocking_values]
+
+    def assert_pushable(self, tasks, run_status, *, override: bool = False) -> PushGateResult:
+        degraded = self._is_degraded(run_status)
+        result = PushGateResult()
+
+        for task in tasks:
+            task_id = str(_read(task, "id", "") or "")
+            key = _read(task, "jira_issue_key", None)
+            if key:
+                decision = PushDecision(task_id, "skip", f"already pushed ({key})")
+                result.skipped.append(decision)
+                result.decisions.append(decision)
+                continue
+
+            names = self._blocking_names(_read(task, "flags", []))
+            if degraded or names:
+                parts = (["DEGRADED run"] if degraded else []) + ([",".join(names)] if names else [])
+                reason = "; ".join(parts)
+                if override:
+                    decision = PushDecision(task_id, "push", f"override ({reason})")
+                    result.pushable.append(task)
+                else:
+                    decision = PushDecision(task_id, "block", reason)
+                    result.blocked.append(decision)
+                result.decisions.append(decision)
+                continue
+
+            decision = PushDecision(task_id, "push", "")
+            result.pushable.append(task)
+            result.decisions.append(decision)
+
+        if result.blocked and not override:
+            raise PushBlocked(result)
+        return result
+
+
 # ─── verify primitives ───────────────────────────────────────────────────────
 
 # finish_reason values that indicate the provider cut the response short by a
@@ -347,6 +491,11 @@ __all__ = [
     "CoverageGate",
     "CoverageGateResult",
     "CoverageReportDecision",
+    "PushGate",
+    "PushGateResult",
+    "PushDecision",
+    "PushBlocked",
+    "BLOCKING_FLAGS",
     "assert_work_done",
     "assert_finish_complete",
     "assert_nonempty_when_expected",

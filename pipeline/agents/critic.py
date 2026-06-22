@@ -41,6 +41,7 @@ from models.schemas import (
     normalize_acceptance_criteria,
 )
 from pipeline.llm_client import LLMClient
+from prompts import registry
 
 
 # ─── Schema ───────────────────────────────────────────────────────────────────
@@ -101,60 +102,9 @@ class CritiqueBatch(BaseModel):
 
 # ─── Prompts ──────────────────────────────────────────────────────────────────
 
-CRITIC_SYSTEM_PROMPT = (
-    "You are a senior Jira reviewer. You read a section of a Statement of Work "
-    "and a list of extracted tasks, then critique each task for verb-first "
-    "titles, testable acceptance criteria, atomic scope, and likely duplicates. "
-    "Be conservative: prefer flagging over rewriting when in doubt. "
-    "Return ONLY a valid JSON array. No prose. No markdown fences."
-)
+CRITIC_SYSTEM_PROMPT = registry.load("critic.system.v1")
 
-CRITIC_PROMPT_TEMPLATE = """You are reviewing extracted Jira tasks for one SOW section.
-
-═══ ISSUES YOU CAN REPORT ═══
-- "non_verb_title": Title does not start with a clear action verb (Create, Implement, Design, Configure, Integrate, Build, Set up, Develop, Define, Write, etc.).
-- "vague_title": Title is too generic / non-specific (e.g. "User Authentication", "The dashboard").
-- "untestable_ac": One or more acceptance criteria are unverifiable (e.g. "system works correctly", "users are happy").
-- "too_broad": Scope spans multiple sprints or distinct deliverables — should be split.
-- "likely_duplicate": Strongly overlaps another task in the same list.
-- "missing_ac": Task has no acceptance_criteria at all.
-- "nothing_to_fix": Task is fine.
-
-═══ AUTO-FIX RULES ═══
-- For "non_verb_title": provide `suggested_title` ONLY if you are confident the rewrite is faithful. Confidence ≥ 0.8 will be auto-applied.
-- For "untestable_ac": provide `suggested_acceptance_criteria` (full replacement list, structured form). Confidence ≥ 0.8 will be auto-applied.
-- For "missing_ac": provide `suggested_acceptance_criteria` (any confidence applies — the task currently has none).
-- For "too_broad", "likely_duplicate", "vague_title": DO NOT provide a fix. Only report the issue.
-
-═══ STRUCTURED ACCEPTANCE CRITERION SHAPE ═══
-Each suggested_acceptance_criteria item:
-  {{"condition": "<testable statement>", "type": "functional|nonfunctional|security|performance|usability", "verified_by": "test|review|demo|inspection"}}
-
-═══ OUTPUT FORMAT ═══
-Return a JSON array. One object per task you reviewed. Skip nothing — if a task is fine, return it with issues=["nothing_to_fix"].
-
-Each object MUST have:
-{{
-  "task_id": "<the UUID string from the input>",
-  "issues": ["<one or more issue names from the list above>"],
-  "suggested_title": "<string or null>",
-  "suggested_acceptance_criteria": [ ... ] or null,
-  "confidence": 0.0 to 1.0,
-  "reason": "<one short clause explaining your call>"
-}}
-
-Return ONLY the JSON array. No preamble.
-
-═══ SECTION CONTEXT ═══
-Section title: {section_title}
-Section node_id: {node_id}
-
-Section text (may be truncated):
-{section_text}
-
-═══ TASKS UNDER REVIEW ═══
-{tasks_json}
-"""
+CRITIC_PROMPT_TEMPLATE = registry.load("critic.user.v1")
 
 
 # ─── Agent ────────────────────────────────────────────────────────────────────

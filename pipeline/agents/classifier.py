@@ -28,6 +28,7 @@ from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from models.schemas import UnitInterval
 from pipeline.llm_client import LLMClient
+from prompts import registry
 
 
 class SectionType(str, Enum):
@@ -63,40 +64,10 @@ class ClassificationResult(BaseModel):
     reason: str
 
 
-CLASSIFIER_SYSTEM_PROMPT = (
-    "You are a precise section classifier for Statement of Work (SOW) documents. "
-    "Return ONLY a single valid JSON object. No explanation. No markdown fences."
-)
+CLASSIFIER_SYSTEM_PROMPT = registry.load("classifier.system.v1")
 
 
-CLASSIFIER_PROMPT_TEMPLATE = """You classify a single SOW section into one of:
-
-- "actionable": contains concrete work items, deliverables, features to build, integrations, migrations, tests to write, or configurations to set up.
-- "context": background, overview, project history, problem statement, business goals, executive summary.
-- "legal": legal terms, payment terms, warranties, indemnity, confidentiality, liability, termination clauses.
-- "definitions": glossary, acronyms, terminology definitions.
-- "signature": signature lines, approval blocks, sign-off pages, contact tables.
-- "mixed": clearly contains BOTH non-actionable content AND at least one work item.
-
-═══ RULES ═══
-- If the section describes WHAT to build / integrate / migrate / configure / test → "actionable".
-- If you are unsure between actionable and one of the others → pick "actionable" or "mixed" (false positives are cheap, false negatives are expensive).
-- Use "context" only when the section is purely descriptive with no work implied.
-- Be especially careful with sections titled "Scope", "Requirements", "Approach", "Solution" — these are almost always actionable.
-
-═══ OUTPUT FORMAT ═══
-Return EXACTLY one JSON object with these fields:
-{{
-  "type": "actionable" | "context" | "legal" | "definitions" | "signature" | "mixed",
-  "confidence": 0.0 to 1.0,
-  "reason": "one short clause (max 20 words) explaining the call"
-}}
-
-Section title: {section_title}
-
-Section snippet (first portion of the section):
-{section_snippet}
-"""
+CLASSIFIER_PROMPT_TEMPLATE = registry.load("classifier.user.v1")
 
 
 class SectionClassifier:

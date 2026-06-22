@@ -16,8 +16,9 @@ from pipeline.llm_client import LLMClient
 from pipeline.observability import logger
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
+from prompts import registry
 
-DEDUP_SYSTEM_PROMPT = "You are a precise task deduplication agent. Return ONLY valid JSON."
+DEDUP_SYSTEM_PROMPT = registry.load("dedup.system.v1")
 
 
 class DedupDecisionList(BaseModel):
@@ -65,30 +66,7 @@ def _merge_str_list(
             combined.append(s)
     return combined or None
 
-DEDUP_PROMPT_TEMPLATE = """You are reviewing pairs of extracted tasks from a Statement of Work for duplication.
-
-Two tasks are duplicates if they describe the SAME piece of work, even if worded differently.
-Two tasks are NOT duplicates if they describe different aspects of similar work.
-
-For each pair, decide:
-- "merge": they are the same work item — the first should absorb the second
-- "keep_both": they are distinct work items
-- "keep_first": the second is a subset of the first — drop the second
-- "keep_second": the first is a subset of the second — drop the first
-
-Return ONLY a valid JSON array:
-[
-  {{
-    "task_id_a": "uuid-string",
-    "task_id_b": "uuid-string",
-    "decision": "merge" | "keep_both" | "keep_first" | "keep_second",
-    "reason": "one sentence explanation"
-  }}
-]
-
-Pairs to review:
-{pairs_json}
-"""
+DEDUP_PROMPT_TEMPLATE = registry.load("dedup.user.v1")
 
 
 class DeduplicationAgent:

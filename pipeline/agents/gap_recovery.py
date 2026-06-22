@@ -8,6 +8,7 @@ from core.agent_runner import AgentRunner, InstructorError
 from models.schemas import AcceptanceCriterion, RawTask, TaskDependency, TaskFlag
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
+from prompts import registry
 
 
 class RawRecoveredTask(BaseModel):
@@ -39,46 +40,9 @@ class GapRecoveryResult(BaseModel):
     in a single object with one ``tasks`` field."""
     tasks: list[RawRecoveredTask] = Field(default_factory=list)
 
-GAP_SYSTEM_PROMPT = """You are a senior Jira project manager reviewing a SOW section that was initially skipped.
-Return ONLY valid JSON. No explanation. No markdown fences. No preamble."""
+GAP_SYSTEM_PROMPT = registry.load("gap.system.v1")
 
-GAP_PROMPT_TEMPLATE = """You are reviewing a section of a Statement of Work that our system found NO tasks in.
-
-This may be because:
-1. The section genuinely contains no actionable work items (context, background, legal terms, definitions)
-2. Our system missed tasks
-
-Carefully re-read the section. If you find actionable work items, extract them as Jira tickets:
-
-═══ RULES ═══
-- Only real, actionable work — not context or boilerplate
-- Each task must be atomic: completable by one person in 1-2 sprints
-- Title MUST start with a verb: Create, Implement, Design, Configure, Integrate, Build, Set up
-- Acceptance criteria MUST be testable checklist items: "[ ] Condition that can be verified"
-- If there truly are no tasks, return an empty array []
-
-Use the same JSON schema:
-{{
-  "title": "string — verb-first, max 80 chars",
-  "short_description": "string — 1-2 sentences, what this task delivers",
-  "acceptance_criteria": ["[ ] testable condition", ...] or null,
-  "use_case": "string — As a [role], I want [goal] so that [benefit]" or null,
-  "considerations_constraints": ["string", ...] or null,
-  "deliverables": ["string — concrete output", ...] or null,
-  "mockup_prototype": "string" or null,
-  "confidence": 0.0 to 1.0,
-  "flags": ["GAP_RECOVERED", ...],
-  "continues_to_next": false
-}}
-
-Return ONLY a valid JSON array. No preamble.
-
-SOW Section Title: {section_title}
-SOW Pages: {page_start} to {page_end}
-
-Section Text:
-{section_text}
-"""
+GAP_PROMPT_TEMPLATE = registry.load("gap.user.v1")
 
 
 class GapRecoveryAgent:

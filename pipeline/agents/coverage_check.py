@@ -37,6 +37,7 @@ from models.schemas import (
     normalize_acceptance_criteria,
 )
 from pipeline.llm_client import LLMClient
+from prompts import registry
 
 
 # ─── Output models (kept module-local, NOT in models/schemas.py) ──────────────
@@ -104,50 +105,9 @@ def should_flag_section_incomplete(
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
 
-COVERAGE_SYSTEM_PROMPT = """You are a meticulous Jira project auditor reviewing whether a
-SOW section's actionable deliverables were fully captured as Jira tasks.
-Return ONLY valid JSON. No explanation. No markdown fences. No preamble."""
+COVERAGE_SYSTEM_PROMPT = registry.load("coverage.system.v1")
 
-COVERAGE_PROMPT_TEMPLATE = """You are auditing the extraction of Jira tasks from a Statement
-of Work (SOW) section. Below you have the section text and the tasks our system
-already extracted from it (titles + acceptance criteria). Your job: identify
-concrete, actionable deliverables in the section text that are NOT covered by
-those tasks.
-
-═══ STRICT RULES ═══
-- Report ONLY actionable, concrete work items. SKIP:
-    - Background / context / company descriptions
-    - Definitions, glossary, acronyms
-    - Legal terms, payment terms, warranties, confidentiality
-    - Signatures, approvals, dates
-    - General assumptions and policy statements
-- A "miss" is something a developer or designer could pick up and ship that is
-  clearly described in the section but not represented in the extracted task
-  titles or acceptance criteria.
-- BE CONSERVATIVE. False positives are worse than false negatives — only flag
-  items you are genuinely confident were dropped.
-- If everything actionable in the section is already covered, return [].
-
-═══ OUTPUT FORMAT ═══
-Return a JSON array. Each element must have EXACTLY these fields:
-{{
-  "description": "string — 1-2 sentences describing the missed deliverable",
-  "confidence": 0.0 to 1.0,
-  "reason": "string — short clause explaining why this is an actionable miss"
-}}
-
-Return ONLY the JSON array. No preamble. No explanation. No markdown.
-
-═══ SECTION ═══
-Title: {section_title}
-Pages: {page_start} to {page_end}
-
-Section Text:
-{section_text}
-
-═══ ALREADY-EXTRACTED TASKS ═══
-{extracted_summary}
-"""
+COVERAGE_PROMPT_TEMPLATE = registry.load("coverage.user.v1")
 
 
 class CoverageChecker:

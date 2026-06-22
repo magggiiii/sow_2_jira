@@ -437,6 +437,44 @@ class AgentRunner:
 
         return StageResult.ok(parsed, agent=spec.name, **metrics)
 
+    # ─── Spec-driven structured run (validated Pydantic instance) ─────────────
+
+    def run_structured(
+        self,
+        spec: AgentSpec,
+        payload: Any,
+        *,
+        node_id: str = "",
+    ) -> Any:
+        """
+        Render ``spec`` against ``payload`` and return a VALIDATED
+        ``spec.response_model`` instance via :meth:`complete_structured`.
+
+        The structured-output complement to :meth:`run`: where ``run`` uses the
+        bare ``complete_json`` seam and returns a :class:`StageResult`,
+        ``run_structured`` uses the instructor-validated ``complete_structured``
+        path the six extraction-pipeline agents rely on and returns the model
+        instance directly.
+
+        It forwards EXACTLY the kwargs those agents pass today — ``prompt`` (from
+        ``spec.render(payload)``), ``response_model``, ``system``, ``agent_name``,
+        ``node_id``, and ``max_tokens`` only when ``spec.max_tokens`` is set — so
+        an agent that builds a spec and calls this is behavior-identical to the
+        inline ``complete_structured`` call it replaces. Prompt-render errors and
+        any :class:`InstructorError` from the provider propagate unchanged (the
+        agents keep their own ``try/except InstructorError`` around the call).
+        """
+        kwargs: dict[str, Any] = {
+            "prompt": spec.render(payload),
+            "response_model": spec.response_model,
+            "system": spec.system_prompt,
+            "agent_name": spec.name,
+            "node_id": node_id,
+        }
+        if spec.max_tokens is not None:
+            kwargs["max_tokens"] = spec.max_tokens
+        return self.complete_structured(**kwargs)
+
 
 def _split_result(raw: Any) -> tuple[Any, dict[str, Any]]:
     """

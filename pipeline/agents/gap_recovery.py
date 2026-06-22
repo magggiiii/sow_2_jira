@@ -5,6 +5,7 @@ from typing import Optional, Union
 from pydantic import BaseModel, Field
 
 from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
 from models.schemas import AcceptanceCriterion, RawTask, TaskDependency, TaskFlag
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
@@ -59,6 +60,14 @@ class GapRecoveryAgent:
         # Instructor-validated structured-output seam (complete_structured);
         # see recover() for the per-node failure/degrade handling.
         self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: declare the structured call as an AgentSpec; the prompt
+        # builder wraps the existing instance-bound _build_prompt.
+        self.spec = AgentSpec(
+            name="GapRecoveryAgent",
+            system_prompt=GAP_SYSTEM_PROMPT,
+            prompt_builder=lambda p: self._build_prompt(*p),
+            response_model=GapRecoveryResult,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.max_iterations = max_iterations
@@ -92,12 +101,8 @@ class GapRecoveryAgent:
             # one InstructorError, recorded as RECOVERY_ERROR and skipped for this
             # node (recover() still returns whatever other nodes produced).
             try:
-                result = self.runner.complete_structured(
-                    prompt=self._build_prompt(node, section_text),
-                    response_model=GapRecoveryResult,
-                    system=GAP_SYSTEM_PROMPT,
-                    agent_name="GapRecoveryAgent",
-                    node_id=node["node_id"],
+                result = self.runner.run_structured(
+                    self.spec, (node, section_text), node_id=node["node_id"]
                 )
             except InstructorError as e:
                 self.audit.log(

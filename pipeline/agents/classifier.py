@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
 from models.schemas import UnitInterval
 from pipeline.llm_client import LLMClient
 from prompts import registry
@@ -90,6 +91,13 @@ class SectionClassifier:
         # Route the single classifier LLM call through the AgentRunner's
         # Instructor-validated structured-output seam (complete_structured).
         self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: declare the structured call as an AgentSpec; run via the runner.
+        self.spec = AgentSpec(
+            name="SectionClassifier",
+            system_prompt=CLASSIFIER_SYSTEM_PROMPT,
+            prompt_template=CLASSIFIER_PROMPT_TEMPLATE,
+            response_model=RawClassification,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.min_confidence = min_confidence
@@ -119,10 +127,10 @@ class SectionClassifier:
         if len(snippet) < 30:
             return self._default_mixed(node_id, reason="Section too short to classify")
 
-        prompt = CLASSIFIER_PROMPT_TEMPLATE.format(
-            section_title=title,
-            section_snippet=snippet,
-        )
+        payload = {
+            "section_title": title,
+            "section_snippet": snippet,
+        }
 
         # C-5: route through the Instructor-validated structured-output seam.
         # `raw` comes back as a fully-validated RawClassification — the section
@@ -133,13 +141,7 @@ class SectionClassifier:
         # could not satisfy) surfaces as a single InstructorError, which we
         # record and degrade to the safe MIXED default (extract anyway).
         try:
-            raw = self.runner.complete_structured(
-                prompt=prompt,
-                response_model=RawClassification,
-                system=CLASSIFIER_SYSTEM_PROMPT,
-                agent_name="SectionClassifier",
-                node_id=node_id,
-            )
+            raw = self.runner.run_structured(self.spec, payload, node_id=node_id)
         except InstructorError as e:
             self.audit.log(
                 run_id=self.run_id,

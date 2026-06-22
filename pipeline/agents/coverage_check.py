@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
 from core.guardrails import ConfidenceGate
 from models.schemas import (
     AcceptanceCriterion,
@@ -134,6 +135,14 @@ class CoverageChecker:
         # Route the single coverage-check LLM call through the AgentRunner's
         # Instructor-validated structured-output seam (complete_structured).
         self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: declare the structured call as an AgentSpec; the prompt
+        # builder wraps the existing instance-bound _build_prompt.
+        self.spec = AgentSpec(
+            name="CoverageChecker",
+            system_prompt=COVERAGE_SYSTEM_PROMPT,
+            prompt_builder=lambda p: self._build_prompt(*p),
+            response_model=CoverageAudit,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.min_confidence = min_confidence
@@ -179,8 +188,6 @@ class CoverageChecker:
             )
             return empty
 
-        prompt = self._build_prompt(node, section_text, extracted_tasks)
-
         # C-5: route through the Instructor-validated structured-output seam.
         # The checker emits a JSON array of misses, so the response_model is a
         # CoverageAudit wrapper. Each MissedItem arrives schema-validated
@@ -190,12 +197,8 @@ class CoverageChecker:
         # InstructorError, recorded as COVERAGE_CHECK_ERROR and degraded to an
         # empty report — never a crash.
         try:
-            audit_result = self.runner.complete_structured(
-                prompt=prompt,
-                response_model=CoverageAudit,
-                system=COVERAGE_SYSTEM_PROMPT,
-                agent_name="CoverageChecker",
-                node_id=node_id,
+            audit_result = self.runner.run_structured(
+                self.spec, (node, section_text, extracted_tasks), node_id=node_id
             )
         except InstructorError as e:
             self.audit.log(

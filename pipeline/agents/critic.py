@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
 from core.guardrails import ConfidenceGate
 from models.schemas import (
     AcceptanceCriterion,
@@ -140,6 +141,14 @@ class TaskCritic:
         # Route the agent's single LLM call through the shared AgentRunner's
         # Instructor-validated structured-output seam (complete_structured).
         self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: declare the structured call as an AgentSpec; the prompt
+        # builder wraps the existing instance-bound _build_prompt.
+        self.spec = AgentSpec(
+            name=self.AGENT_NAME,
+            system_prompt=CRITIC_SYSTEM_PROMPT,
+            prompt_builder=lambda p: self._build_prompt(*p),
+            response_model=CritiqueBatch,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.auto_fix_threshold = auto_fix_threshold
@@ -183,8 +192,6 @@ class TaskCritic:
         if not tasks:
             return tasks, report
 
-        prompt = self._build_prompt(tasks, section_text, node)
-
         # C-5: route through the Instructor-validated structured-output seam.
         # The critic emits a JSON array, so the response_model is a CritiqueBatch
         # wrapper whose single `critiques` field is a list of permissive
@@ -193,12 +200,8 @@ class TaskCritic:
         # as one InstructorError, recorded as CRITIQUE_LLM_ERROR and degraded to
         # "tasks unchanged + empty report" — never a silent crash.
         try:
-            batch = self.runner.complete_structured(
-                prompt=prompt,
-                response_model=CritiqueBatch,
-                system=CRITIC_SYSTEM_PROMPT,
-                agent_name=self.AGENT_NAME,
-                node_id=node_id,
+            batch = self.runner.run_structured(
+                self.spec, (tasks, section_text, node), node_id=node_id
             )
         except InstructorError as e:
             self.audit.log(

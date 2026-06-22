@@ -7,6 +7,7 @@ from models.schemas import RawTask, TaskFlag, normalize_acceptance_criteria
 from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
 from prompts import registry
 
 
@@ -55,6 +56,14 @@ class TaskExtractionAgent:
         # Route the single LLM call through the AgentRunner's Instructor-validated
         # structured-output seam (complete_structured); see extract().
         self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: this agent's single structured call declared as an AgentSpec
+        # and routed via runner.run_structured (byte-identical kwargs).
+        self.spec = AgentSpec(
+            name="ExtractionAgent",
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
+            prompt_template=EXTRACTION_PROMPT_TEMPLATE,
+            response_model=ExtractionResult,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.confidence_threshold = confidence_threshold
@@ -112,13 +121,13 @@ class TaskExtractionAgent:
                 ),
             )
 
-        prompt = EXTRACTION_PROMPT_TEMPLATE.format(
-            section_title=node["title"],
-            page_start=node["page_start"],
-            page_end=node["page_end"],
-            section_text=section_text,
-            hierarchy_context=HIERARCHY_CONTEXT.get(hierarchy, HIERARCHY_CONTEXT["epic_task"]),
-        )
+        payload = {
+            "section_title": node["title"],
+            "page_start": node["page_start"],
+            "page_end": node["page_end"],
+            "section_text": section_text,
+            "hierarchy_context": HIERARCHY_CONTEXT.get(hierarchy, HIERARCHY_CONTEXT["epic_task"]),
+        }
 
         # C-5: route through the Instructor-validated structured-output seam.
         # The runner returns a validated ExtractionResult — the {scratchpad,
@@ -129,12 +138,8 @@ class TaskExtractionAgent:
         # list of RawTask) surfaces as one InstructorError, recorded as
         # EXTRACTION_ERROR (error_count++) and degraded to an empty list.
         try:
-            result = self.runner.complete_structured(
-                prompt=prompt,
-                response_model=ExtractionResult,
-                system=EXTRACTION_SYSTEM_PROMPT,
-                agent_name="ExtractionAgent",
-                node_id=node["node_id"],
+            result = self.runner.run_structured(
+                self.spec, payload, node_id=node["node_id"]
             )
         except InstructorError as e:
             self.error_count += 1

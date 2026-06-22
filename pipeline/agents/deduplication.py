@@ -16,6 +16,7 @@ from pipeline.llm_client import LLMClient
 from pipeline.observability import logger
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
 from prompts import registry
 
 DEDUP_SYSTEM_PROMPT = registry.load("dedup.system.v1")
@@ -118,6 +119,13 @@ class DeduplicationAgent:
         # dedup-specific pairwise prompt build + merge/keep application stay here;
         # only the model call + verdict parsing move onto the validated seam.
         self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: declare the structured dedup call as an AgentSpec; run via the runner.
+        self.spec = AgentSpec(
+            name="DeduplicationAgent",
+            system_prompt=DEDUP_SYSTEM_PROMPT,
+            prompt_template=DEDUP_PROMPT_TEMPLATE,
+            response_model=DedupDecisionList,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.threshold = similarity_threshold
@@ -349,12 +357,7 @@ class DeduplicationAgent:
             for a, b, sim in pairs
         ], indent=2)
 
-        return self.runner.complete_structured(
-            prompt=DEDUP_PROMPT_TEMPLATE.format(pairs_json=pairs_json),
-            response_model=DedupDecisionList,
-            system=DEDUP_SYSTEM_PROMPT,
-            agent_name="DeduplicationAgent",
-        )
+        return self.runner.run_structured(self.spec, {"pairs_json": pairs_json})
 
     # ─── Public entrypoint ─────────────────────────────────────────────────
 

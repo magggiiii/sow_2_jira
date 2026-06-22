@@ -456,7 +456,13 @@
       <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The pipeline refuses to push known-bad work to Jira</h4><span class="tag">STEP 3.5 · PushGate</span></div>
         <p class="what">A pure, read-only gate that decides which approved tasks may actually be created in Jira.</p>
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>Nothing stopped an INCOMPLETE / low-confidence / ambiguous task — or any task from a DEGRADED run — from being pushed; and a re-push could duplicate work already created in Jira.</div><div class="cell after"><span class="lbl">After</span><code>PushGate.assert_pushable</code> classifies skip-first: already-pushed tasks (<code>jira_issue_key</code>) are skipped idempotently; INCOMPLETE / LOW_CONFIDENCE / AMBIGUOUS_SCOPE / NO_ACCEPTANCE_CRITERIA tasks and any task on a DEGRADED run are blocked unless explicitly overridden; everything else pushes. Fail-closed by design.</div></div>
-        <p class="why"><span class="wl">Better</span>The headline Jira-push feature now has a quality floor and idempotency. Pure + additive (wired into the live push in W5); informational flags don't block, and the blocking set is injectable for stricter shops.</p>
+        <p class="why"><span class="wl">Better</span>The headline Jira-push feature now has a quality floor and idempotency. Informational flags don't block, and the blocking set is injectable for stricter shops.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>...and it's now wired into the live push path</h4><span class="tag">STEP 5.3</span></div>
+        <p class="what">Activated the gate: approved tasks pass through PushGate before any Jira create, and the unwired experimental MCP client was deleted.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>PushGate existed but was dormant — the push handler created every approved task in Jira regardless of flags or run health. A dead, never-wired <code>jira_mcp_client.py</code> sat alongside the real client.</div><div class="cell after"><span class="lbl">After</span><code>run_push_task</code> gates via <code>_gate_push</code> (never crashes): already-pushed tasks skip idempotently, blocked / DEGRADED-run tasks surface as failed results and never reach Jira, and only cleared tasks are created — with an explicit <code>override</code> to force-push. The dead MCP client is gone.</div></div>
+        <p class="why"><span class="wl">Better</span>Coverage/critic flags now actually gate what ships — a flagged task is refused at push, not silently created. The loop closes: gate flags → push refuses. 7 tests; adversarially reviewed → 0 defects.</p>
       </div>
     </div>
   </section>
@@ -488,7 +494,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-22 · branch elevation/wave-0 · 463 tests green
+    Updated 2026-06-22 · branch elevation/wave-0 · 470 tests green
   </footer>
 
 </div>

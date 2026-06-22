@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-06-22 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">35</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;546</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">41</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">36</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;554</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">42</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -148,7 +148,7 @@
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.78)"></i></div><div class="wpct">78%</div></div>
-      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs</small></div><div class="track"><i class="part" style="transform:scaleX(.98)"></i></div><div class="wpct">98%</div></div>
+      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.88)"></i></div><div class="wpct">88%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
@@ -482,6 +482,12 @@
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every agent assembled its own <code>complete_structured(prompt, response_model, system, agent_name, node_id)</code> call — the same call shape duplicated six times, with no single place to see or vary how an agent talks to the model.</div><div class="cell after"><span class="lbl">After</span>Each agent builds one <code>AgentSpec(name, system, prompt template/builder, response_model)</code> and calls <code>runner.run_structured(spec, payload)</code>. The new runner method forwards byte-identical kwargs, so the call shape lives in exactly one place. New <code>run_structured</code> tests + per-agent spec-wiring tests pin it; every existing agent test passes unchanged.</div></div>
         <p class="why"><span class="wl">Better</span>The agent→model boundary is now uniform and declarative — the substrate the typed <code>PipelineRunner</code> (3.7) builds on. Zero behavior change (546 tests); adversarially reviewed → 0 defects.</p>
       </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The pipeline is now stages you can run two ways</h4><span class="tag">STEP 3.7 · PipelineRunner</span></div>
+        <p class="what"><code>run()</code>'s eight phases are extracted into reusable stage methods; a new <code>PipelineRunner</code> sequences them from a <code>StageRegistry</code>, selectable behind a flag and proven byte-equivalent to <code>run()</code> offline.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The whole pipeline lived as one ~245-line linear <code>run()</code> method. No way to reorder, inspect, or swap phases — and no second implementation to validate the behavior against.</div><div class="cell after"><span class="lbl">After</span><code>run()</code> is a thin sequencer over eight <code>_stage_*</code> methods threaded through a <code>PipelineContext</code>; <code>core/pipeline/</code> adds <code>Stage</code> / <code>StageRegistry</code> / <code>PipelineRunner</code>, and <code>run_via_pipeline()</code> runs the SAME phases from the registry. <code>RunConfig.use_pipeline_runner</code> opts in; an offline golden test drives the synthetic cassette through both paths and asserts identical task_count / merges / flags / coverage / health. <code>run()</code> is retained (deletion gated on the faithful cassette, 3.8).</div></div>
+        <p class="why"><span class="wl">Better</span>The extraction pipeline is data, not a monolith — phases can be reordered (PEV), inspected, or driven by a durable worker, with the legacy <code>run()</code> kept as the equivalence oracle until the live cassette lands. Zero behavior change (554 tests); adversarially reviewed → 0 defects.</p>
+      </div>
     </div>
   </section>
 
@@ -512,7 +518,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-22 · branch elevation/wave-0 · 546 tests green
+    Updated 2026-06-22 · branch elevation/wave-0 · 554 tests green
   </footer>
 
 </div>

@@ -369,6 +369,10 @@ class RunConfig(BaseModel):
     coverage_min_confidence: Optional[float] = None            # env SOW_COVERAGE_MIN_CONFIDENCE (dynamic)
     coverage_corpus_filter: Optional[bool] = None              # env SOW_COVERAGE_CORPUS_FILTER (off)
     node_concurrency: Optional[int] = None                     # env SOW_NODE_CONCURRENCY (6)
+    # STEP 3.7: opt a run into the staged PipelineRunner path (run_via_pipeline)
+    # instead of the legacy linear run() body. Default off → unchanged behavior;
+    # the two are proven equivalent offline (test_pipeline_runner_equivalence).
+    use_pipeline_runner: bool = False
 
 
 # ─── Audit Log Entry ──────────────────────────────────────────────────────────

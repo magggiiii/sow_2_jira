@@ -27,6 +27,7 @@ from pipeline.agents.coverage_check import CoverageChecker
 from audit.logger import AuditLogger
 from core.health import RunHealthReport, build_health_report
 from core.guardrails import CoverageGate
+from core.pipeline import PipelineContext, PipelineRunner
 from pipeline.observability import logger, tracer, trace_span, sync_telemetry
 from pipeline.telemetry import TelemetryEmitter
 import os
@@ -714,21 +715,60 @@ class PipelineOrchestrator:
         """
         Full pipeline. Returns final task list ready for review UI.
         Saves checkpoint to data/pipeline_output.json after completion.
+
+        STEP 3.7: run() is now a thin, explicit sequencer over the ``_stage_*``
+        phase methods, threading one :class:`PipelineContext`. ``run_via_pipeline``
+        runs the SAME phase methods via the :class:`StageRegistry`; the two are
+        equivalence-tested offline. ``config.use_pipeline_runner`` opts a run into
+        the registry-driven path. ``run()`` is NOT deleted (gated on STEP 3.8).
         """
+        if self.config.use_pipeline_runner:
+            return self.run_via_pipeline()
+
+        ctx = PipelineContext(orch=self)
+        self._stage_setup(ctx)
+        self._stage_index(ctx)
+        self._stage_extract(ctx)
+        if ctx.cancelled:
+            return ctx.result()
+        self._stage_dedup(ctx)
+        self._stage_gap_recovery(ctx)
+        self._stage_coverage_gate(ctx)
+        self._stage_health(ctx)
+        self._stage_save(ctx)
+        return ctx.result()
+
+    def run_via_pipeline(self) -> list[ManagedTask]:
+        """STEP 3.7: run the pipeline via the staged :class:`PipelineRunner` — the
+        same ``_stage_*`` phases as run(), sequenced from the registry, threading
+        one PipelineContext (the runner stops early if a stage sets cancelled).
+        Equivalence with run() is proved in tests/test_pipeline_runner_equivalence.py."""
+        from pipeline.stages import build_default_registry
+
+        ctx = PipelineContext(orch=self)
+        PipelineRunner(build_default_registry()).run(ctx)
+        return ctx.result()
+
+    # ─── STEP 3.7: run() phases, extracted as ctx-threaded stage methods ──────
+    # Each method holds the EXACT code the legacy run() body ran for that phase,
+    # rebinding its locals onto the shared PipelineContext. run() (above) and the
+    # registry-driven runner both call these, so behavior is single-sourced.
+
+    def _stage_setup(self, ctx: PipelineContext) -> None:
         sync_telemetry()
         # Ensure provider_config is loaded and set ContextVar for this run/thread
         if not self.config.provider_config:
             self.config.provider_config = configure_litellm_for_mode(self.config.llm_mode)
-        
-        token = current_provider_config.set(self.config.provider_config)
-        
+
+        current_provider_config.set(self.config.provider_config)
+
         # Re-init components that need the resolved config
         self.llm.provider_config = self.config.provider_config
         self.llm.model = self.config.provider_config.model
         self.indexer.model = self.config.provider_config.model
 
         self._print_run_summary()
-        
+
         self.telemetry.emit("run.started", {
             "run_id": self.config.run_id,
             "llm_mode": self.config.llm_mode.value,
@@ -736,8 +776,9 @@ class PipelineOrchestrator:
             "max_nodes": self.config.max_nodes,
             "filename": Path(self.config.sow_pdf_path).name,
         })
-        run_start = time.time()
+        ctx.run_start = time.time()
 
+    def _stage_index(self, ctx: PipelineContext) -> None:
         # ── Step 1-2: Parse + Index via PageIndex ────────────────────────────
         with tracer.start_as_current_span("STEP_1_2_PAGEINDEX"):
             step_start = time.time()
@@ -764,7 +805,6 @@ class PipelineOrchestrator:
 
         # Persist node hierarchy lookup so downstream consumers (JiraClient,
         # Wave-2 agents) can resolve parent titles without re-walking the tree.
-        # Keep the payload minimal — title/depth/parent_id are enough today.
         try:
             node_index_path = Path(f"data/sessions/{self.config.run_id}/node_index.json")
             node_index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -795,7 +835,12 @@ class PipelineOrchestrator:
             "duration_ms": 0,
             "node_count": len(nodes),
         })
+        ctx.nodes = nodes
+        ctx.coverage = coverage
 
+    def _stage_extract(self, ctx: PipelineContext) -> None:
+        nodes = ctx.nodes
+        coverage = ctx.coverage
         # ── Step 3: Chunk Loop — Extract + State per node ─────────────────────
         with tracer.start_as_current_span("STEP_3_EXTRACT_LOOP") as span:
             step_start = time.time()
@@ -815,8 +860,11 @@ class PipelineOrchestrator:
                 all_closed_tasks=resume_closed,
                 open_tasks=resume_open,
             )
+            ctx.all_closed_tasks = all_closed_tasks
+            ctx.open_tasks = open_tasks
             if cancelled:
-                return all_closed_tasks
+                ctx.cancelled = True
+                return
 
             # Force-close remaining open tasks
             forced_closed = self.state_agent.close_all_remaining(open_tasks)
@@ -830,12 +878,13 @@ class PipelineOrchestrator:
 
         logger.success(f"✓ Extracted {len(all_closed_tasks)} raw tasks")
 
+    def _stage_dedup(self, ctx: PipelineContext) -> None:
         # ── Step 4: Deduplication ─────────────────────────────────────────────
         with tracer.start_as_current_span("STEP_4_DEDUP"):
             step_start = time.time()
             self._update_status(4, "Deduplicating tasks...", 0.85)
             logger.info("› Step 4/5: Deduplicating tasks...")
-            deduplicated = self.dedup_agent.deduplicate(all_closed_tasks)
+            deduplicated = self.dedup_agent.deduplicate(ctx.all_closed_tasks)
             logger.info(f"✓ {len(deduplicated)} tasks after deduplication")
             self.telemetry.emit("step.completed", {
                 "run_id": self.config.run_id,
@@ -843,7 +892,11 @@ class PipelineOrchestrator:
                 "duration_ms": int((time.time() - step_start) * 1000),
                 "task_count": len(deduplicated),
             })
+        ctx.deduplicated = deduplicated
 
+    def _stage_gap_recovery(self, ctx: PipelineContext) -> None:
+        coverage = ctx.coverage
+        deduplicated = ctx.deduplicated
         # ── Step 5b: Gap Recovery ─────────────────────────────────────────────
         report = coverage.coverage_report()
         logger.info(f"Coverage: {report['coverage_pct']}% ({report['covered_nodes']}/{report['total_nodes']} nodes)")
@@ -877,20 +930,20 @@ class PipelineOrchestrator:
                     "duration_ms": int((time.time() - step_start) * 1000),
                     "task_count": len(deduplicated),
                 })
+        ctx.report = report
+        ctx.deduplicated = deduplicated
 
+    def _stage_coverage_gate(self, ctx: PipelineContext) -> None:
         # ── Step 4c: run-wide coverage gate (C-4 / STEP 3.3) ──────────────────
         # Confidence-gated, report-level INCOMPLETE on the FINAL (deduped +
-        # gap-recovered) task set. Moved out of the per-node loop so a single
-        # confident miss can't blanket-flag pre-dedup (the ~100% INCOMPLETE bomb)
-        # and tasks are never double-flagged. Mutates `deduplicated` in place.
-        self._run_coverage_verify(deduplicated)
+        # gap-recovered) task set. Mutates ``ctx.deduplicated`` in place.
+        self._run_coverage_verify(ctx.deduplicated)
 
+    def _stage_health(self, ctx: PipelineContext) -> None:
+        report = ctx.report
         # ── Assemble run health summary (GUARDRAIL-3) ─────────────────────────
         # Additive, read-only: distill the signals the stages already produced
-        # (dedup degraded flag, extraction error count, coverage availability)
-        # into a RunHealthReport. This does not alter any stage's behavior or the
-        # value returned by run(); it only adds the `health` key to the saved
-        # checkpoint and exposes self.health_report.
+        # into a RunHealthReport.
         self.health_report = build_health_report({
             "dedup_degraded": getattr(self.dedup_agent, "last_degraded", False),
             "dedup_degraded_reason": getattr(self.dedup_agent, "last_degraded_reason", None),
@@ -900,9 +953,12 @@ class PipelineOrchestrator:
             "capacity_degraded": self.capacity_degraded,
             "capacity_degraded_reason": self.capacity_degraded_reason,
             "node_error_count": self.node_error_count,
-            "node_total": len(nodes),
+            "node_total": len(ctx.nodes),
         })
 
+    def _stage_save(self, ctx: PipelineContext) -> None:
+        deduplicated = ctx.deduplicated
+        report = ctx.report
         # ── Step 5: Save Checkpoint ───────────────────────────────────────────
         with tracer.start_as_current_span("STEP_5_SAVE"):
             step_start = time.time()
@@ -947,11 +1003,9 @@ class PipelineOrchestrator:
         logger.info(f"Checkpoint saved: {checkpoint_path}")
         self.telemetry.emit("run.completed", {
             "run_id": self.config.run_id,
-            "duration_ms": int((time.time() - run_start) * 1000),
+            "duration_ms": int((time.time() - ctx.run_start) * 1000),
             "task_count": len(deduplicated),
             "coverage_pct": report["coverage_pct"],
         })
 
         sync_telemetry()
-
-        return deduplicated

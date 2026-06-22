@@ -352,6 +352,24 @@ class RunConfig(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid4())[:8])
     provider_config: Optional[ProviderConfig] = None
 
+    # STEP 5.4: pipeline tuning knobs, promoted from bare ``os.getenv`` reads in
+    # PipelineOrchestrator. Each defaults to None — the "not specified" sentinel —
+    # so the orchestrator resolves it as: explicit field > env var / app_config >
+    # the original hardcoded default. None therefore reproduces today's behavior
+    # byte-for-byte (env still works as a fallback; legacy checkpoints that lack
+    # these keys load as None) while letting a caller pin a value per run.
+    extraction_confidence_threshold: Optional[float] = None   # env EXTRACTION_CONFIDENCE_THRESHOLD (0.6)
+    dedup_similarity_threshold: Optional[float] = None         # env DEDUP_SIMILARITY_THRESHOLD (0.85)
+    classifier_enabled: Optional[bool] = None                  # env SOW_CLASSIFIER_ENABLED (on)
+    critic_enabled: Optional[bool] = None                      # env SOW_ENABLE_CRITIC (on)
+    semantic_coverage_enabled: Optional[bool] = None           # env SOW_SEMANTIC_COVERAGE (on)
+    critic_threshold: Optional[float] = None                   # env SOW_CRITIC_THRESHOLD (0.8)
+    max_section_chars: Optional[int] = None                    # app_config["pipeline"]["max_section_chars"] (16000)
+    max_gap_recovery_iterations: Optional[int] = None          # app_config["pipeline"]["max_gap_recovery_iterations"]
+    coverage_min_confidence: Optional[float] = None            # env SOW_COVERAGE_MIN_CONFIDENCE (dynamic)
+    coverage_corpus_filter: Optional[bool] = None              # env SOW_COVERAGE_CORPUS_FILTER (off)
+    node_concurrency: Optional[int] = None                     # env SOW_NODE_CONCURRENCY (6)
+
 
 # ─── Audit Log Entry ──────────────────────────────────────────────────────────
 

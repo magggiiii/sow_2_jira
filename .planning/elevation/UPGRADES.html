@@ -130,12 +130,12 @@
     <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
     <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
     <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
-    <p class="updated reveal"><b>Last updated:</b> 2026-06-15 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-06-22 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
       <div class="metric"><div class="num">33</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;408</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">37</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;491</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">39</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -153,7 +153,7 @@
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.35)"></i></div><div class="wpct">35%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.45)"></i></div><div class="wpct">45%</div></div>
     </div>
   </section>
 
@@ -464,6 +464,12 @@
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>PushGate existed but was dormant — the push handler created every approved task in Jira regardless of flags or run health. A dead, never-wired <code>jira_mcp_client.py</code> sat alongside the real client.</div><div class="cell after"><span class="lbl">After</span><code>run_push_task</code> gates via <code>_gate_push</code> (never crashes): already-pushed tasks skip idempotently, blocked / DEGRADED-run tasks surface as failed results and never reach Jira, and only cleared tasks are created — with an explicit <code>override</code> to force-push. The dead MCP client is gone.</div></div>
         <p class="why"><span class="wl">Better</span>Coverage/critic flags now actually gate what ships — a flagged task is refused at push, not silently created. The loop closes: gate flags → push refuses. 7 tests; adversarially reviewed → 0 defects.</p>
       </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Pipeline tuning is now part of the run contract</h4><span class="tag">STEP 5.4 · RunConfig</span></div>
+        <p class="what">The 11 pipeline tuning knobs — confidence &amp; dedup thresholds, the three intelligence-agent toggles, critic threshold, section-char cap, gap-recovery iterations, coverage floor, corpus filter, and node concurrency — are now typed, optional fields on <code>RunConfig</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each knob was a scattered <code>os.getenv</code> read buried in <code>PipelineOrchestrator.__init__</code>, invisible to callers and never captured — so a run's actual tuning lived only in the process environment, not in its own config record.</div><div class="cell after"><span class="lbl">After</span>Each is a typed <code>Optional</code> field on <code>RunConfig</code> defaulting to <code>None</code>. The orchestrator resolves every knob as <em>explicit field → env / app_config → original default</em>, so <code>None</code> reproduces today's behavior byte-for-byte (env still works as a fallback, legacy <code>pipeline_output.json</code> checkpoints still load), while a caller can now pin any knob per run and have it persisted.</div></div>
+        <p class="why"><span class="wl">Better</span>Tuning is explicit, per-run, and recorded in the run itself instead of hidden in the shell — and fully back-compatible. 21 tests; adversarially reviewed → 0 defects.</p>
+      </div>
     </div>
   </section>
 
@@ -494,7 +500,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-22 · branch elevation/wave-0 · 470 tests green
+    Updated 2026-06-22 · branch elevation/wave-0 · 491 tests green
   </footer>
 
 </div>

@@ -89,11 +89,29 @@ class PipelineOrchestrator:
             stop_event=self.stop_event
         )
 
-        # Build agents
-        threshold = float(os.getenv("EXTRACTION_CONFIDENCE_THRESHOLD", "0.6"))
-        dedup_threshold = float(os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.85"))
-        max_gap_iter = app_config["pipeline"]["max_gap_recovery_iterations"]
-        max_section_chars = app_config["pipeline"].get("max_section_chars", 16000)
+        # Build agents. STEP 5.4: each tuning knob resolves as
+        # ``config field if set else env / app_config else legacy default`` — see
+        # RunConfig. A None field reproduces the prior os.getenv behavior exactly.
+        threshold = (
+            config.extraction_confidence_threshold
+            if config.extraction_confidence_threshold is not None
+            else float(os.getenv("EXTRACTION_CONFIDENCE_THRESHOLD", "0.6"))
+        )
+        dedup_threshold = (
+            config.dedup_similarity_threshold
+            if config.dedup_similarity_threshold is not None
+            else float(os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.85"))
+        )
+        max_gap_iter = (
+            config.max_gap_recovery_iterations
+            if config.max_gap_recovery_iterations is not None
+            else app_config["pipeline"]["max_gap_recovery_iterations"]
+        )
+        max_section_chars = (
+            config.max_section_chars
+            if config.max_section_chars is not None
+            else app_config["pipeline"].get("max_section_chars", 16000)
+        )
 
         self.extraction_agent = TaskExtractionAgent(
             self.llm, audit, config.run_id, threshold, max_section_chars
@@ -105,25 +123,45 @@ class PipelineOrchestrator:
         )
         self.gap_agent = GapRecoveryAgent(self.llm, audit, config.run_id, max_gap_iter)
 
-        # Intelligence-layer additions (260512-002). Each is togglable via env
-        # because each adds ~1 LLM call per section.
+        # Intelligence-layer additions (260512-002). Each is togglable (config field
+        # > env, default on) because each adds ~1 LLM call per section.
+        classifier_enabled = (
+            config.classifier_enabled
+            if config.classifier_enabled is not None
+            else os.getenv("SOW_CLASSIFIER_ENABLED", "1") != "0"
+        )
+        critic_enabled = (
+            config.critic_enabled
+            if config.critic_enabled is not None
+            else os.getenv("SOW_ENABLE_CRITIC", "1") != "0"
+        )
+        semantic_coverage_enabled = (
+            config.semantic_coverage_enabled
+            if config.semantic_coverage_enabled is not None
+            else os.getenv("SOW_SEMANTIC_COVERAGE", "1") != "0"
+        )
+        critic_threshold = (
+            config.critic_threshold
+            if config.critic_threshold is not None
+            else float(os.getenv("SOW_CRITIC_THRESHOLD", "0.8"))
+        )
         self.classifier = (
             SectionClassifier(self.llm, audit, config.run_id)
-            if os.getenv("SOW_CLASSIFIER_ENABLED", "1") != "0" else None
+            if classifier_enabled else None
         )
         self.critic = (
             TaskCritic(
                 self.llm, audit, config.run_id,
-                auto_fix_threshold=float(os.getenv("SOW_CRITIC_THRESHOLD", "0.8")),
+                auto_fix_threshold=critic_threshold,
             )
-            if os.getenv("SOW_ENABLE_CRITIC", "1") != "0" else None
+            if critic_enabled else None
         )
         self.coverage_checker = (
             CoverageChecker(
                 self.llm, audit, config.run_id,
                 max_section_chars=max_section_chars,
             )
-            if os.getenv("SOW_SEMANTIC_COVERAGE", "1") != "0" else None
+            if semantic_coverage_enabled else None
         )
         self.section_coverage_reports: dict[str, dict] = {}
         # C-4 / STEP 3.3: result of the run-wide post-dedup coverage gate (set in
@@ -219,10 +257,14 @@ class PipelineOrchestrator:
 
     def _node_concurrency(self) -> int:
         """
-        Resolve the per-node extract concurrency from ``SOW_NODE_CONCURRENCY``
-        (default 6). ``1`` reproduces the legacy strictly-sequential path. A
-        malformed value falls back to the default rather than crashing a run.
+        Resolve the per-node extract concurrency. STEP 5.4: ``config.node_concurrency``
+        wins when set; otherwise fall back to ``SOW_NODE_CONCURRENCY`` (default 6).
+        ``1`` reproduces the legacy strictly-sequential path; the ``max(1, ...)``
+        floor applies to both paths. A malformed env value falls back to the default
+        rather than crashing a run.
         """
+        if self.config.node_concurrency is not None:
+            return max(1, self.config.node_concurrency)
         try:
             return max(1, int(os.getenv("SOW_NODE_CONCURRENCY", "6")))
         except ValueError:
@@ -306,8 +348,11 @@ class PipelineOrchestrator:
 
         Defaults to the coverage checker's per-item ``min_confidence`` (0.6) so the
         run-wide gate and the legacy per-section predicate share one definition of
-        "confident enough"; override with ``SOW_COVERAGE_MIN_CONFIDENCE``.
+        "confident enough". STEP 5.4: ``config.coverage_min_confidence`` wins when
+        set; otherwise override with ``SOW_COVERAGE_MIN_CONFIDENCE``.
         """
+        if self.config.coverage_min_confidence is not None:
+            return float(self.config.coverage_min_confidence)
         default = (
             self.coverage_checker.min_confidence
             if self.coverage_checker is not None
@@ -322,7 +367,10 @@ class PipelineOrchestrator:
         """STEP 3.5: the embedding-tier corpus filter is OFF by default. Off keeps
         the INV-4 harness + existing gate tests byte-identical (the embedder is
         never sourced); production enables it via ``SOW_COVERAGE_CORPUS_FILTER=1``,
-        which is also when the real-run INCOMPLETE rate actually drops."""
+        which is also when the real-run INCOMPLETE rate actually drops. STEP 5.4:
+        ``config.coverage_corpus_filter`` wins when set, else the env fallback."""
+        if self.config.coverage_corpus_filter is not None:
+            return self.config.coverage_corpus_filter
         return os.getenv("SOW_COVERAGE_CORPUS_FILTER", "0") == "1"
 
     def _coverage_embed_fn(self):

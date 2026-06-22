@@ -30,7 +30,8 @@ sys.path.insert(0, str(UI_DIR.parent))
 # Langfuse/Argus env vars at module-import time.
 load_dotenv(UI_DIR.parent / ".env")
 
-from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus
+from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus, JiraPushResult
+from core.guardrails import PushGate, PushBlocked
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
 from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
@@ -611,11 +612,49 @@ def approve_all(session_id: Optional[str] = None):
 class PushRequest(BaseModel):
     jira_hierarchy: Optional[str] = None
     jira_project_key: Optional[str] = None
+    # STEP 5.3: force-push past the PushGate (flagged / DEGRADED-run tasks).
+    override: bool = False
 
 def _append_status_log(status: ProcessingStatus, msg: str) -> None:
     status.logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
     if len(status.logs) > 50:
         status.logs.pop(0)
+
+
+def _gate_push(approved_tasks, run_status, override: bool = False):
+    """STEP 5.3: run approved tasks through PushGate before any Jira create.
+
+    Returns ``(pushable_tasks, gated_results)``. ``pushable_tasks`` are cleared to
+    push; ``gated_results`` are synthesized ``JiraPushResult``s for tasks the gate
+    skipped (already pushed → idempotent success) or blocked (a blocking flag, or
+    ANY task on a DEGRADED run → failed result carrying the reason). Never raises —
+    a blocked task is surfaced as a failure, not a crash, so one bad task can't abort
+    the whole push. ``override=True`` force-pushes flagged/DEGRADED tasks (skips of
+    already-pushed tasks still hold — idempotency is not a quality gate).
+    """
+    by_id = {str(t.id): t for t in approved_tasks}
+    try:
+        result = PushGate().assert_pushable(approved_tasks, run_status, override=override)
+    except PushBlocked as exc:
+        result = exc.result
+
+    gated: list[JiraPushResult] = []
+    for decision in result.blocked:
+        task = by_id.get(decision.task_id)
+        if task is not None:
+            gated.append(JiraPushResult(
+                task_id=task.id, success=False,
+                error=f"Blocked by PushGate: {decision.reason}",
+            ))
+    for decision in result.skipped:
+        task = by_id.get(decision.task_id)
+        if task is not None:
+            gated.append(JiraPushResult(
+                task_id=task.id, success=True,
+                jira_issue_key=task.jira_issue_key,
+                warning="Already pushed; skipped (idempotent)",
+            ))
+    return result.pushable, gated
 
 def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id: str):
     status = ProcessingStatus(
@@ -664,9 +703,21 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
             audit = AuditLogger()
             jira = JiraClient(hierarchy, audit, run_config.get("run_id", session_id or "ui"), project_key=project_key)
 
+            # STEP 5.3: gate approved tasks through PushGate before any Jira create —
+            # skip already-pushed (idempotent), block flagged / DEGRADED-run tasks
+            # (surfaced as failed results, never a crash) unless override.
+            run_status = data.get("health")
+            override = bool(getattr(req, "override", False)) if req else False
+            pushable, gated_results = _gate_push(approved_tasks, run_status, override)
+
             status.progress = 0.2
-            _append_status_log(status, f"Pushing {len(approved_tasks)} tasks")
-            results = jira.push_tasks(approved_tasks)
+            _append_status_log(
+                status,
+                f"PushGate: {len(pushable)} cleared, {len(gated_results)} gated"
+                f"{' [override]' if override else ''}",
+            )
+            push_results = jira.push_tasks(pushable) if pushable else []
+            results = push_results + gated_results
 
             result_map = {str(r.task_id): r for r in results}
             for i, t in enumerate(tasks_data):

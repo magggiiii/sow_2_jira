@@ -4,7 +4,9 @@
 **Branch:** `elevation/wave-0` (HEAD = the checkpoint commit below, 73 ahead of `main`; run `git log -1` for the exact SHA — amend rewrites the hash so it isn't embedded here)
 **Checkpoint commit:** the most recent `docs: session checkpoint 2026-06-22 (PART 2) …` commit — run `git log -1`.
 **Linear:** [SOW-to-Jira Elevation](https://linear.app/calibraint-ai/project/sow-to-jira-elevation-883972f170ac) (team CAL). **DEFERRED — no comment posted (locked).**
-**Status:** **STEP 5.4 + STEP 3.6 (both halves) shipped, TDD + adversarial-review, suite green before each commit.** Suite **546 passed / 1 skipped, EXIT 0** (was 470). `main` untouched, **nothing pushed**. 73 ahead of main after this checkpoint.
+**Status:** **The ENTIRE offline-verifiable backlog is COMPLETE — STEP 5.4 + STEP 3.6 (a+b) + STEP 3.7 all shipped** (TDD + adversarial-review, 0 confirmed defects each). Suite **554 passed / 1 skipped, EXIT 0** (was 470). `main` untouched, **nothing pushed**. ~74 ahead of main.
+
+> **UPDATE (post-checkpoint):** §3 below was written when 3.7 was still pending; **3.7 is now DONE** (`7ff37d4` — `core/pipeline/` substrate + `run()` refactored into 8 `_stage_*` methods + `run_via_pipeline()` behind `RunConfig.use_pipeline_runner` + offline equivalence golden `tests/test_pipeline_runner_equivalence.py`; `run()` NOT deleted). The PART_1 premise that `core/pipeline/runner.py` "existed from W0" was false — it was built this session from scratch. **Remaining elevation work is all BLOCKED** (see §5): STEP 3.8 cassette + 3.7 final `run()` deletion need a LIVE run; Waves 1/2/4 + 3.9 need provisioned services. A fresh session has no offline-buildable increment without unblocking one of those — confirm the wall with the user first.
 
 ## 1. What's done (this session)
 

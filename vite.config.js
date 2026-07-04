@@ -4,8 +4,8 @@ import { defineConfig } from 'vite'
 //
 // The Python/FastAPI backend serves the BUILT frontend from `ui/dist` under its
 // existing `/static` mount, so built asset URLs must be prefixed with `/static/`
-// (base). `app.js` is still a plain IIFE on day one (module split lands in UI.2b),
-// so Vite just bundles + hashes it — zero behaviour change.
+// (base). UI.2b split the monolithic IIFE into an ES module graph under
+// `ui/src/` (entry `ui/src/main.js`); Vite resolves + bundles + hashes it.
 //
 // Dev (`npm run dev` / `make ui-dev`): Vite serves `ui/` with HMR and proxies
 // `/api` to the uvicorn backend on :8000.

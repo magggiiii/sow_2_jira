@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-07-04 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (local ahead of PR #7 — new commits not yet pushed) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">39</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;602</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">45</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">40</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;604</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">46</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -149,7 +149,7 @@
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
-      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.88)"></i></div><div class="wpct">88%</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -306,6 +306,17 @@
         <p class="what">Errors surfaced to the UI now carry a class — transient / user-fixable / terminal — not just an opaque string.</p>
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>A failed pipeline run or Jira push put <code>str(e)</code> into a single <code>error</code> field. The UI couldn't tell a retry-able rate-limit from a bad API key from a permanent bad-request — every failure looked identical.</div><div class="cell after"><span class="lbl">After</span>A new stdlib-only <code>core/errors.py</code> defines <code>ErrorClass</code> + <code>classify_exception()</code>. The Jira-push and pipeline/server boundaries classify each failure onto a new <code>error_class</code> field on <code>JiraPushResult</code> and <code>ProcessingStatus</code> — transient (retry), user-fixable (fix credentials), or terminal.</div></div>
         <p class="why"><span class="wl">Better</span>Production failures are actionable: the UI can branch on the failure kind instead of string-matching. Purely additive — behavior is otherwise byte-identical. (Adversarial review caught a status-regex false-positive that would silently upgrade terminal errors to retry-able; fixed + regression-tested before merge.)</p>
+      </div>
+    </div>
+    <!-- RELIABILITY — ANCHORED RETRY CLASSIFICATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Reliability — anchored retry classification</h3><span class="sha">a9765dd</span></div>
+      <div class="inc-sub reveal">Follow-up surfaced by the typed-exception review: stop misreading bare numbers as an HTTP status. TDD, +2 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Bare numbers no longer trigger false retries</h4><span class="tag">retry classifier</span></div>
+        <p class="what">The status-from-message fallback is now anchored to a "status"/"HTTP" cue in ALL three retry classifiers (<code>core.errors</code>, <code>llm_client</code>, <code>pageindex</code>).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A bare 3-digit number in an error message (a token count, JSON column, or list index — e.g. "line 1 column 512") was read as an HTTP 5xx, so a terminal error could be classified retry-able and burn the whole retry budget on a failure that will never succeed.</div><div class="cell after"><span class="lbl">After</span>The message regex only matches a code adjacent to a status/HTTP cue; attribute-borne status (how real litellm/requests errors expose it) is unchanged. Genuine 5xx retries are unaffected; terminal errors now fail fast.</div></div>
+        <p class="why"><span class="wl">Better</span>A class of silent, wasteful retry loops is closed across every retry classifier in the codebase — found by grepping ALL instances, not just the one the review named.</p>
       </div>
     </div>
     <!-- DOMAIN ENUMS -->

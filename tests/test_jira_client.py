@@ -148,6 +148,45 @@ def test_blocks_link_direction_blocker_is_outward(make_client):
     )
 
 
+def test_duplicates_link_direction_declaring_task_is_outward(make_client):
+    """
+    For a 'duplicates' dependency the task that DECLARES it is the duplicate.
+    Per Jira 'Duplicate' link semantics (outward = "duplicates", inward =
+    "is duplicated by"), the declaring (source) task must be the OUTWARD side
+    so the link reads 'Duplicator duplicates Original'; the target is inward.
+
+    This is the OPPOSITE side from a 'blocks' dependency, where the target
+    (the blocker) is outward — which is exactly why direction is resolved
+    per-kind through the LINK_DIRECTION map rather than a single hard-coded
+    outward=target rule.
+    """
+    duplicator = _task(
+        "Duplicator",
+        deps=[TaskDependency(target_ref="Original", reason="same work", kind="duplicates")],
+    )
+    original = _task("Original")
+
+    client, fake = make_client(hierarchy=JiraHierarchy.FLAT)
+    results = client.push_tasks([duplicator, original])
+
+    key_by_title = {}
+    for t, r in zip([duplicator, original], results):
+        assert r.success
+        key_by_title[t.title] = r.jira_issue_key
+
+    fake.create_issue_link.assert_called_once()
+    _, kwargs = fake.create_issue_link.call_args
+    assert kwargs["type"] == "Duplicate"
+    assert kwargs["outwardIssue"] == key_by_title["Duplicator"], (
+        f"the declaring 'Duplicator' should be the outward 'duplicates' side, "
+        f"got outwardIssue={kwargs.get('outwardIssue')}"
+    )
+    assert kwargs["inwardIssue"] == key_by_title["Original"], (
+        f"the target 'Original' should be the inward side, "
+        f"got inwardIssue={kwargs.get('inwardIssue')}"
+    )
+
+
 def test_push_skips_tasks_with_existing_jira_issue_key(make_client):
     """
     JIRA-2 idempotency (audit C-11): re-pushing must not re-create issues that

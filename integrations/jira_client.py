@@ -27,6 +27,31 @@ _MAX_RETRY_ATTEMPTS = 4  # total attempts including the first
 _BASE_BACKOFF_SECONDS = 1.0
 _MAX_BACKOFF_SECONDS = 30.0
 
+# ── Dependency link direction (audit jira-8) ─────────────────────────────────
+# A TaskDependency is declared ON the source task and NAMES a target. Jira link
+# types are directional: the OUTWARD issue carries the type's outward verb toward
+# the INWARD issue (for "Blocks", outward="blocks" / inward="is blocked by").
+# We resolve (jira_link_type, target_is_outward) PER KIND so each link reads
+# naturally — the direction is deliberately NOT uniform across kinds:
+#
+#   blocks     -> ("Blocks",    target_is_outward=True)
+#       the target is the blocker/prerequisite: "target blocks source"
+#       (equivalently, source is blocked by target).
+#   duplicates -> ("Duplicate", target_is_outward=False)
+#       the DECLARING source task is the duplicate: "source duplicates target".
+#   relates_to -> ("Relates",   target_is_outward=False)
+#       "Relates" is symmetric; "source relates to target" (direction cosmetic).
+#
+# Keyed by the lowercased DependencyKind value (matches the `.lower()` coercion
+# below, which already normalizes dirty enum casing). Unknown kinds fall back to
+# a symmetric "Relates" originating from the source.
+LINK_DIRECTION: dict[str, tuple[str, bool]] = {
+    "blocks": ("Blocks", True),
+    "duplicates": ("Duplicate", False),
+    "relates_to": ("Relates", False),
+}
+_DEFAULT_LINK_DIRECTION: tuple[str, bool] = ("Relates", False)
+
 T = TypeVar("T")
 
 
@@ -322,12 +347,6 @@ class JiraClient:
         if not title_to_key:
             return
 
-        link_type_map = {
-            "blocks": "Blocks",
-            "duplicates": "Duplicate",
-            "relates_to": "Relates",
-        }
-
         linked = 0
         unresolved = 0
         for task in tasks:
@@ -356,21 +375,28 @@ class JiraClient:
                     continue
                 if target_key == source_key:
                     continue  # don't self-link
-                link_type = link_type_map.get((dep.kind or "blocks").lower(), "Relates")
+                # Resolve link type + direction per-kind (see LINK_DIRECTION).
+                # The dependency is source DEPENDS-ON target; which issue takes
+                # the outward role depends on the kind: for "blocks" the target
+                # (blocker) is outward, for "duplicates"/"relates_to" the
+                # declaring source is outward.
+                link_type, target_is_outward = LINK_DIRECTION.get(
+                    (dep.kind or "blocks").lower(), _DEFAULT_LINK_DIRECTION
+                )
+                outward_key, inward_key = (
+                    (target_key, source_key)
+                    if target_is_outward
+                    else (source_key, target_key)
+                )
                 try:
-                    # The source task DEPENDS ON target_ref. For a "Blocks"
-                    # link the dependency means the TARGET is the blocker (the
-                    # source cannot proceed until the target is done): the
-                    # target is the OUTWARD ("blocks") side and the dependent
-                    # source is the INWARD ("is blocked by") side.
                     # The jira SDK accepts both kwargs.
                     _with_retry(
                         lambda: self.jira.create_issue_link(
                             type=link_type,
-                            outwardIssue=target_key,
-                            inwardIssue=source_key,
+                            outwardIssue=outward_key,
+                            inwardIssue=inward_key,
                         ),
-                        description=f"create_issue_link({target_key}->{source_key})",
+                        description=f"create_issue_link({outward_key}->{inward_key})",
                     )
                     linked += 1
                     self.audit.log(

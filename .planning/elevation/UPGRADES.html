@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-07-04 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (local ahead of PR #7 — new commits not yet pushed) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">38</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;588</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">44</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">39</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;602</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">45</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -147,7 +147,7 @@
     <p class="sec-intro reveal">Eight tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is largely shipped — A1-C2 (resilience, integrity, parallelism, resumability) are done offline; only C3 (durable worker) waits on Wave-2 services. See <code>SCALE-HARDENING.md</code>.</p>
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.78)"></i></div><div class="wpct">78%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.88)"></i></div><div class="wpct">88%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
@@ -452,6 +452,18 @@
       </div>
     </div>
 
+    <!-- WAVE 3 — DEDUP-UUID REMAPPER -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Replay-time dedup-UUID remapper</h3><span class="sha">0810c6f</span></div>
+      <div class="inc-sub reveal">De-risks the faithful INV-4 cassette without a live run. TDD + adversarial review (4 defects caught &amp; fixed), +14 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Rewrite recorded dedup decisions onto the replay run's fresh UUIDs</h4><span class="tag">STEP 3.8 · offline</span></div>
+        <p class="what">A pure replay-side remapper that maps a recorded <code>DeduplicationAgent</code> decision's task ids onto the current run's freshly-minted ones, matching by title → node_id → position.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A recorded dedup response embeds the <em>recording</em> run's fresh task UUIDs. A replay mints different ones, so a statically-recorded merge decision never matches the replay run's tasks — the exact blocker on a faithful 103-node cassette (the gate for the Stage-runner flip).</div><div class="cell after"><span class="lbl">After</span><code>build_dedup_id_remap</code> + <code>remap_recorded_dedup_ids</code> (in <code>pipeline/evals/replay.py</code>) rewrite the recorded ids onto the current run: anchored matches (unique title, then node_id) claim first; positional fallback only for anchor-less refs; each task claimed once; decisions that can't be remapped — or that would collapse into a self-merge — are dropped, never faked.</div></div>
+        <p class="why"><span class="wl">Better</span>The hardest determinism problem behind the faithful cassette is solved and unit-proven offline, so wiring the live recording becomes a mechanical step. Adversarial review caught 4 real defects (a collision→self-merge that would silently delete a task, a position-fallback wrong-merge, and two test-quality gaps) — all fixed and regression-tested before merge.</p>
+      </div>
+    </div>
+
     <!-- C-4 COVERAGE RESTRUCTURE -->
     <div class="increment">
       <div class="inc-head reveal"><h3>Wave 3 — Coverage restructure (C-4 / STEP 3.3)</h3><span class="sha">8ce7310</span></div>
@@ -519,8 +531,8 @@
     <h2 class="reveal">Buildable now — on deck.</h2>
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, and the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested) shipped.</s> Remaining: run the recorder against a real 103-node SOW (live gemini), remap dedup decisions' run-fresh task UUIDs at replay time, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run + UUID remap</span></div></div>
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Remaining: inverted Jira issue-link direction + typed exception classification. <s>Push idempotency (skip already-pushed) shipped via PushGate; the dead MCP client was deleted.</s> Independent, low-risk, testable bug fixes. Note: removing Ollama/Bifrost (STEP 5.1) is <b>locked — out of scope</b>.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested), and the replay-time dedup-UUID remapper (match by title/node_id/position, self-merge-safe) shipped.</s> Remaining (live-run): run the recorder against a real 103-node SOW (live gemini), wire the remapper's <code>RecordedTaskRef</code>s into the faithful cassette, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p><s>Inverted Jira issue-link direction (per-kind <code>LINK_DIRECTION</code> map — <code>blocks</code> was already correct; <code>duplicates</code> fixed) and typed exception classification (3-way <code>ErrorClass</code> at the push + pipeline boundaries) shipped. Push idempotency shipped via PushGate; the dead MCP client was deleted.</s> Remaining: the STEP 5.3 PushGate/MCP cleanup tail. Note: removing Ollama/Bifrost (STEP 5.1) is <b>locked — out of scope</b>.</p><span class="need">buildable now</span></div></div>
     </div>
   </section>
 

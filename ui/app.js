@@ -18,8 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // DOM Elements
     const taskListEl = getEl('taskList');
     const template = getEl('taskCardTemplate');
-    const themeToggle = getEl('themeToggle');
-    const toastContainer = getEl('toastContainer');
+        const toastContainer = getEl('toastContainer');
     
     // Upload & Process Elements
     const uploadZone = getEl('uploadZone');
@@ -75,19 +74,9 @@ document.addEventListener('DOMContentLoaded', () => {
         el.addEventListener('change', renderTasks);
     });
 
-    // Theme logic
-    if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-    }
-    
-    if (themeToggle) {
-        themeToggle.addEventListener('click', () => {
-            const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', theme);
-            localStorage.setItem('theme', theme);
-        });
-    }
-    
+    // Single dark theme (UI.1): the theme toggle switched to a light theme that
+    // never existed, so the control + its JS were removed. No data-theme needed.
+
     // --- Settings Modal Logic ---
     let providerRegistry = {};
     let providerSettingsCache = {};
@@ -355,25 +344,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnCancelProcess) {
         btnCancelProcess.addEventListener('click', async () => {
             if (!activeSessionId) return;
+            const sessionToCancel = activeSessionId;
+
+            // 1. Immediate UI reset — NEVER block on the network. The backend may be
+            //    the very thing that's hung (that's usually why cancel was pressed),
+            //    so tearing down the UI must not wait on the cancel request.
+            if (statusInterval) clearInterval(statusInterval);
+            if (progressOverlay) progressOverlay.style.display = 'none';
+            showToast('Extraction Stopped', 'success');
+            activeSessionId = null;
+            sessionStorage.removeItem('activeSessionId');
+            resetToNewSession();
+
+            // 2. Signal the backend best-effort, bounded by a short timeout so a hung
+            //    server can't leave a dangling request (replaces fire-and-forget).
             try {
-                // 1. Signal backend
-                fetch(`/api/cancel/${activeSessionId}`, { method: 'POST' });
-                
-                // 2. Immediate UI reset (Home Redirect)
-                if (statusInterval) clearInterval(statusInterval);
-                if (progressOverlay) progressOverlay.style.display = 'none';
-                
-                showToast('Extraction Stopped', 'success');
-                
-                // 3. Reset state
-                activeSessionId = null;
-                sessionStorage.removeItem('activeSessionId');
-                resetToNewSession();
-                await loadSessions();
-                
+                const ac = new AbortController();
+                const t = setTimeout(() => ac.abort(), 3000);
+                await fetch(`/api/cancel/${sessionToCancel}`, { method: 'POST', signal: ac.signal });
+                clearTimeout(t);
             } catch (e) {
-                showToast('Failed to stop clean', 'error');
+                /* UI already reset; the run is abandoned client-side regardless. */
             }
+            await loadSessions();
         });
     }
 
@@ -555,18 +548,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function startStatusPolling() {
         if (statusInterval) clearInterval(statusInterval);
+        let pollErrorCount = 0;
         statusInterval = setInterval(async () => {
+            const polledSession = activeSessionId;
             try {
                 const res = await fetch('/api/status' + getSessionQuery());
                 const status = await res.json();
-                
+                // Stale-response guard: the user switched sessions mid-request → drop it.
+                if (activeSessionId !== polledSession) return;
+                pollErrorCount = 0;
+
                 if (status.is_running || status.progress >= 1.0) {
                     const runIdLabel = status.run_id ? ` (Run: ${status.run_id})` : '';
                     if (progressStepTitle) {
                         if (status.kind === 'jira_push') {
                             progressStepTitle.textContent = `Jira Push${runIdLabel}`;
                         } else {
-                            progressStepTitle.textContent = `Step ${status.current_step}/6${runIdLabel}`;
+                            progressStepTitle.textContent = `Step ${status.current_step}${runIdLabel}`;
                         }
                     }
                     if (progressMessage) progressMessage.textContent = status.message;
@@ -617,17 +615,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             } catch (e) {
+                pollErrorCount++;
                 console.error("Polling error", e);
+                if (pollErrorCount >= 3 && progressMessage) {
+                    progressMessage.textContent = 'Reconnecting…';
+                    progressMessage.style.color = 'var(--warning)';
+                }
             }
         }, 1000);
     }
 
     // Fetch Initial Data
+    let hasLoadedTasks = false;  // suppresses the "No SOW Loaded" flash before the first load resolves
     async function loadData() {
         try {
             const res = await fetch('/api/tasks' + getSessionQuery());
             taskData = await res.json();
-            
+            hasLoadedTasks = true;
+
             // Populate config if available
             if (taskData.config || taskData.env_defaults) {
                 const cfg = taskData.config || {};
@@ -656,6 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateStats();
             renderTasks();
         } catch (e) {
+            hasLoadedTasks = true;  // a failed load still resolves the empty-state (no permanently-blank pane)
             showToast('Failed to load data', 'error');
         }
     }
@@ -762,10 +768,10 @@ document.addEventListener('DOMContentLoaded', () => {
         taskListEl.innerHTML = '';
         const visibleTasks = (taskData.tasks || []).filter(shouldShow);
         
-        if (visibleTasks.length === 0) {
+        if (visibleTasks.length === 0 && hasLoadedTasks) {
             const emptyEl = document.createElement('div');
             emptyEl.className = 'empty-state';
-            emptyEl.innerHTML = '<h2>No Statement of Work Loaded</h2><p>Upload a PDF or text document to extract Jira tasks.</p>';
+            emptyEl.innerHTML = '<h2>No Statement of Work Loaded</h2><p>Upload a SOW PDF to extract Jira tasks.</p>';
             taskListEl.appendChild(emptyEl);
         }
 
@@ -934,10 +940,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (type === 'success') toast.style.borderLeftColor = 'var(--success)';
         
         toastContainer.appendChild(toast);
-        setTimeout(() => {
+        const dismiss = () => {
             toast.style.opacity = '0';
             setTimeout(() => toast.remove(), 300);
-        }, 3000);
+        };
+        if (type === 'error') {
+            // Errors persist until dismissed so the user can act before they vanish.
+            toast.style.cursor = 'pointer';
+            toast.title = 'Click to dismiss';
+            toast.addEventListener('click', dismiss);
+        } else {
+            setTimeout(dismiss, 3000);
+        }
     }
 
     function showSpinner() {

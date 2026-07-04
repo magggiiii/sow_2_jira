@@ -9,6 +9,8 @@
   --text-lg: 1.25rem;
   --text-xl: 1.563rem;
   --text-2xl: 1.953rem;
+  --text-3xl: 2.441rem;
+  --text-4xl: 3.052rem;
 
   /* Spacing - 4pt Grid */
   --space-2: 0.125rem;
@@ -44,6 +46,21 @@
   --error-bg: rgba(239, 68, 68, 0.1);
   --warning: #f59e0b;
   --warning-bg: rgba(245, 158, 11, 0.1);
+  --info: #3b82f6;
+  --info-bg: rgba(59, 130, 246, 0.1);
+
+  /* Semantic task-status tokens (one per TaskStatus, so no dot is colorless) */
+  --status-approved: var(--success);
+  --status-rejected: var(--error);
+  --status-pending:  var(--warning);
+  --status-pushed:   var(--accent-primary);
+  --status-closed:   var(--text-secondary);
+
+  /* Error-severity tokens — drive the failure UX chips (see ErrorClass:
+     transient=retryable / user_fixable=fix creds / terminal=failed) */
+  --sev-transient: var(--warning);       /* amber  — retryable */
+  --sev-fixable:   var(--accent-primary);/* orange — user must fix */
+  --sev-terminal:  var(--error);         /* red    — permanent */
 
   --shadow-sm: 0 4px 6px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 10px 40px -10px rgba(0, 0, 0, 0.7);
@@ -53,10 +70,6 @@
   --radius-lg: 12px;
   
   --transition-ease: 300ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-[data-theme="dark"] {
-  /* Inherit root variables as default since we are enforcing a dark reference scheme */
 }
 
 * {
@@ -76,14 +89,10 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-[data-theme="dark"] body {
-  font-weight: 400; 
-}
-
 /* Typography */
-h1 { font-family: var(--font-sans); font-size: 2.5rem; font-weight: 600; letter-spacing: -0.02em; margin-bottom: var(--space-8); color: var(--text-primary); }
+h1 { font-family: var(--font-sans); font-size: var(--text-3xl); font-weight: 600; letter-spacing: -0.02em; margin-bottom: var(--space-8); color: var(--text-primary); }
 h1 i { font-style: italic; font-weight: 700; color: var(--text-secondary); }
-h2 { font-family: var(--font-sans); font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
+h2 { font-family: var(--font-sans); font-size: var(--text-xl); font-weight: 600; letter-spacing: -0.01em; color: var(--text-primary); }
 h3 { font-family: var(--font-sans); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); margin-bottom: var(--space-8); }
 p { font-family: var(--font-sans); font-size: var(--text-base); color: var(--text-secondary); }
 
@@ -418,11 +427,15 @@ textarea.input-field { resize: vertical; min-height: 100px; }
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+  /* Default so an unmapped/unknown status is never an invisible dot */
+  background-color: var(--text-tertiary);
+  box-shadow: 0 0 8px var(--text-tertiary);
 }
-.status-indicator.approved { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
-.status-indicator.rejected { background-color: var(--error); box-shadow: 0 0 8px var(--error); }
-.status-indicator.closed { background-color: var(--warning); box-shadow: 0 0 8px var(--warning); }
-.status-indicator.pushed { background-color: var(--accent-primary); box-shadow: 0 0 8px var(--accent-primary); }
+.status-indicator.approved { background-color: var(--status-approved); box-shadow: 0 0 8px var(--status-approved); }
+.status-indicator.rejected { background-color: var(--status-rejected); box-shadow: 0 0 8px var(--status-rejected); }
+.status-indicator.pending  { background-color: var(--status-pending);  box-shadow: 0 0 8px var(--status-pending); }
+.status-indicator.closed   { background-color: var(--status-closed);   box-shadow: 0 0 8px var(--status-closed); }
+.status-indicator.pushed   { background-color: var(--status-pushed);   box-shadow: 0 0 8px var(--status-pushed); }
 
 .task-title-text {
   font-size: var(--text-base);

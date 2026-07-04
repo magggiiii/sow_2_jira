@@ -15,19 +15,6 @@
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>SOW to Jira</h2>
-                <button id="themeToggle" class="btn btn-outline" aria-label="Toggle theme" style="min-height: auto; padding: var(--space-4);">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="5"></circle>
-                        <line x1="12" y1="1" x2="12" y2="3"></line>
-                        <line x1="12" y1="21" x2="12" y2="23"></line>
-                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                        <line x1="1" y1="12" x2="3" y2="12"></line>
-                        <line x1="21" y1="12" x2="23" y2="12"></line>
-                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-                    </svg>
-                </button>
             </div>
             
             <div class="divider"></div>
@@ -145,7 +132,7 @@
             <!-- Progress Overlay -->
             <div id="progressOverlay" class="progress-overlay" style="display: none;">
                 <div class="progress-card">
-                    <h2 id="progressStepTitle">Step 1: Parsing PDF...</h2>
+                    <h2 id="progressStepTitle">Preparing…</h2>
                     <p id="progressMessage" style="margin-bottom: var(--space-16);">Initializing pipeline...</p>
                     <div class="progress-bar-bg">
                         <div id="progressBarFill" class="progress-bar-fill" style="width: 0%;"></div>
@@ -202,7 +189,7 @@
                             <span id="modelFetchStatus" class="metric-label"></span>
                         </div>
                         <small id="openrouterModelHelp" class="metric-label" style="display: none; margin-top: var(--space-8); line-height: 1.5;">
-                            <div>Recommended for SOW extraction: <code style="background: var(--surface-2); padding: 0 4px; border-radius: 3px;">google/gemini-2.5-flash</code> — best quality-per-dollar on this pipeline (~$0.49/run). <button type="button" id="btnUseRecommendedModel" class="btn btn-outline" style="padding: 2px 8px; font-size: 0.85em; margin-left: 4px;">Use it</button></div>
+                            <div>Recommended for SOW extraction: <code style="background: var(--bg-surface-hover); padding: 0 4px; border-radius: 3px;">google/gemini-2.5-flash</code> — best quality-per-dollar on this pipeline (~$0.49/run). <button type="button" id="btnUseRecommendedModel" class="btn btn-outline" style="padding: 2px 8px; font-size: 0.85em; margin-left: 4px;">Use it</button></div>
                             <div style="margin-top: 4px;">Browse the full catalogue at <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.</div>
                         </small>
                     </div>

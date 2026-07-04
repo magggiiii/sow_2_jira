@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-07-04 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (local ahead of PR #7 — new commits not yet pushed) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">37</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;555</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">43</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">38</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;588</div><div class="lab">Tests passing (was red on checkout)</div></div>
+      <div class="metric"><div class="num">44</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -153,7 +153,7 @@
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.52)"></i></div><div class="wpct">52%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
     </div>
   </section>
 
@@ -295,6 +295,17 @@
         <p class="what">Which issue is the "outward" side of a dependency link is now resolved per relationship kind, not hard-coded to the target.</p>
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every dependency link put the target issue on the outward side. Correct for <code>blocks</code> ("target blocks source", already pinned by tests) — but backwards for <code>duplicates</code>: it read "target duplicates source" when the task that <em>declares</em> the dependency is the duplicate.</div><div class="cell after"><span class="lbl">After</span>A documented <code>LINK_DIRECTION</code> map resolves <code>(link_type, target_is_outward)</code> per kind — <code>blocks</code>→"target blocks source" (unchanged), <code>duplicates</code>→"source duplicates target" (fixed), <code>relates_to</code>→symmetric — and a regression test pins each direction.</div></div>
         <p class="why"><span class="wl">Better</span>Dependency links now read correctly for every kind, and the direction is self-documenting — no future reader has to re-derive whether "blocks" is inverted. (The alleged inversion in the roadmap turned out to be a false alarm: <code>blocks</code> was already correct; only <code>duplicates</code> needed the fix.)</p>
+      </div>
+    </div>
+    <!-- WAVE 5 — TYPED EXCEPTIONS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 5 — Typed exception classification</h3><span class="sha">868e95a</span></div>
+      <div class="inc-sub reveal">Give failures a machine-readable class so the UI can react. TDD, +33 tests (new <code>core/errors.py</code>).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>3-way error taxonomy at the push + pipeline boundaries</h4><span class="tag">harn-8 (focused)</span></div>
+        <p class="what">Errors surfaced to the UI now carry a class — transient / user-fixable / terminal — not just an opaque string.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A failed pipeline run or Jira push put <code>str(e)</code> into a single <code>error</code> field. The UI couldn't tell a retry-able rate-limit from a bad API key from a permanent bad-request — every failure looked identical.</div><div class="cell after"><span class="lbl">After</span>A new stdlib-only <code>core/errors.py</code> defines <code>ErrorClass</code> + <code>classify_exception()</code>. The Jira-push and pipeline/server boundaries classify each failure onto a new <code>error_class</code> field on <code>JiraPushResult</code> and <code>ProcessingStatus</code> — transient (retry), user-fixable (fix credentials), or terminal.</div></div>
+        <p class="why"><span class="wl">Better</span>Production failures are actionable: the UI can branch on the failure kind instead of string-matching. Purely additive — behavior is otherwise byte-identical. (Adversarial review caught a status-regex false-positive that would silently upgrade terminal errors to retry-able; fixed + regression-tested before merge.)</p>
       </div>
     </div>
     <!-- DOMAIN ENUMS -->

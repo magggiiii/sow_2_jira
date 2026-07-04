@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-07-05 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (pushed → GitHub + GitLab; PR #7 updated, OPEN) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">41</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">42</div><div class="lab">Upgrades shipped &amp; verified</div></div>
       <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;604</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">48</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">50</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -154,7 +154,7 @@
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.12)"></i></div><div class="wpct">12%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.22)"></i></div><div class="wpct">22%</div></div>
     </div>
   </section>
 
@@ -556,7 +556,7 @@
     <div class="plist">
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested), and the replay-time dedup-UUID remapper (match by title/node_id/position, self-merge-safe) shipped.</s> Remaining (live-run): run the recorder against a real 103-node SOW (live gemini), wire the remapper's <code>RecordedTaskRef</code>s into the faithful cassette, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p><s>Inverted Jira issue-link direction (per-kind <code>LINK_DIRECTION</code> map — <code>blocks</code> was already correct; <code>duplicates</code> fixed) and typed exception classification (3-way <code>ErrorClass</code> at the push + pipeline boundaries) shipped. Push idempotency shipped via PushGate; the dead MCP client was deleted.</s> Remaining: the STEP 5.3 PushGate/MCP cleanup tail. Note: removing Ollama/Bifrost (STEP 5.1) is <b>locked — out of scope</b>.</p><span class="need">buildable now</span></div></div>
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 6 — UI/UX rework (audit-driven, 9 phases)</h4><p>A 4-lens frontend audit (IA · visual · UX/a11y · code) surfaced two blockers — the theme toggle switches to a <b>light theme that doesn't exist</b> (breaks the app), and the new <code>error_class</code> taxonomy is <b>completely unconsumed</b> so every failure dead-ends at "Dismiss" — plus non-existent responsiveness (1 <code>@media</code> in 619 lines), no modal/keyboard a11y, and a 979-line god-file. The track (<b>UI.1→UI.7</b>): <s>honest tokens + single dark theme + polling hardening (UI.1 shipped, <code>32ba3f4</code>)</s> → <b>next: UI.2a</b> light Vite build → UI.2b module split + ~1KB store (keep-vanilla, no framework) → <code>error_class</code>-aware retry/fix/failed UX → accessible keyboard-fast review flow → flow-integrity guards → responsive + dialog a11y → onboarding + push-results panel. Offline-buildable (two live-backend verify passes). Full spec: <code>IMPLEMENTATION-PLAN.md</code> WAVE 6.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 6 — UI/UX rework (audit-driven, 9 phases)</h4><p>A 4-lens frontend audit (IA · visual · UX/a11y · code) surfaced two blockers — the theme toggle switches to a <b>light theme that doesn't exist</b> (breaks the app), and the new <code>error_class</code> taxonomy is <b>completely unconsumed</b> so every failure dead-ends at "Dismiss" — plus non-existent responsiveness (1 <code>@media</code> in 619 lines), no modal/keyboard a11y, and a 979-line god-file. The track (<b>UI.1→UI.7</b>): <s>honest tokens + single dark theme + polling hardening (UI.1, <code>32ba3f4</code>); light Vite build seam (UI.2a, <code>baaa3d0</code>)</s> → <b>next: UI.2b</b> module split + ~1KB store (keep-vanilla, no framework) → <code>error_class</code>-aware retry/fix/failed UX → accessible keyboard-fast review flow → flow-integrity guards → responsive + dialog a11y → onboarding + push-results panel. Offline-buildable (two live-backend verify passes). Full spec: <code>IMPLEMENTATION-PLAN.md</code> WAVE 6.</p><span class="need">buildable now</span></div></div>
     </div>
   </section>
 

@@ -31,6 +31,7 @@ sys.path.insert(0, str(UI_DIR.parent))
 load_dotenv(UI_DIR.parent / ".env")
 
 from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus, JiraPushResult
+from core.errors import ErrorClass, classify_exception
 from core.guardrails import PushGate, PushBlocked
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
@@ -145,6 +146,9 @@ class ProcessingStatus(BaseModel):
     message: str = "Idle"
     progress: float = 0.0
     error: Optional[str] = None
+    # How the UI should react to `error`: transient (retry), user_fixable
+    # (fix credentials/config), or terminal. Set at the pipeline/push boundary.
+    error_class: Optional[ErrorClass] = None
     run_id: Optional[str] = None
     kind: str = "pipeline"
     logs: List[str] = []
@@ -297,6 +301,7 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
             import traceback
             traceback.print_exc()
             status.error = str(e)
+            status.error_class = classify_exception(e)
             status.message = f"Error: {str(e)}"
         finally:
             status.is_running = False
@@ -733,6 +738,9 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
             overall_success = total_failed == 0
 
             first_error = next((r.error for r in results if not r.success and r.error), None)
+            first_error_class = next(
+                (r.error_class for r in results if not r.success and r.error_class), None
+            )
             message = f"Push complete. {total_passed} passed, {total_failed} failed."
             if first_error:
                 message += f" First error: {first_error[:100]}..."
@@ -743,8 +751,10 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
             status.is_running = False
             if not overall_success:
                 status.error = first_error or "Push completed with failures"
+                status.error_class = first_error_class
         except Exception as e:
             status.error = str(e)
+            status.error_class = classify_exception(e)
             status.message = f"Error: {str(e)}"
             _append_status_log(status, f"Error: {str(e)}")
             status.is_running = False

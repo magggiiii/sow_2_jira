@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.errors import ErrorClass
 from integrations.jira_client import JiraClient
 from models.schemas import (
     JiraHierarchy,
@@ -416,6 +417,43 @@ def test_first_try_success_does_not_sleep(make_client, _no_real_sleep):
     assert results[0].success
     assert fake.create_issue.call_count == 1
     assert not _no_real_sleep, "first-try success must not back off"
+
+
+def test_push_failure_classifies_auth_as_user_fixable(make_client, _no_real_sleep):
+    """A 401 push failure is surfaced with error_class=USER_FIXABLE so the UI can
+    tell the user to fix their credentials (behavior otherwise unchanged)."""
+    client, fake = make_client(hierarchy=JiraHierarchy.FLAT)
+    fake.create_issue.side_effect = _FakeServerError(status_code=401, text="Unauthorized")
+
+    results = client.push_tasks([_task("Forbidden")])
+
+    assert results[0].success is False
+    assert results[0].error  # error string still present (unchanged contract)
+    assert results[0].error_class is ErrorClass.USER_FIXABLE
+
+
+def test_push_failure_classifies_persistent_429_as_transient(make_client, _no_real_sleep):
+    """A push that exhausts its retry budget against a 429 is TRANSIENT — the UI
+    can offer a retry-later even though this attempt failed."""
+    client, fake = make_client(hierarchy=JiraHierarchy.FLAT)
+    fake.create_issue.side_effect = _FakeRateLimit(status_code=429)
+
+    results = client.push_tasks([_task("AlwaysRateLimited")])
+
+    assert results[0].success is False
+    assert results[0].error_class is ErrorClass.TRANSIENT
+
+
+def test_push_failure_classifies_bad_request_as_terminal(make_client, _no_real_sleep):
+    """A 422 push failure is TERMINAL — a retry won't help and there's nothing
+    the user can flip in settings to fix it."""
+    client, fake = make_client(hierarchy=JiraHierarchy.FLAT)
+    fake.create_issue.side_effect = _FakeServerError(status_code=422, text="Unprocessable Entity")
+
+    results = client.push_tasks([_task("BadRequest")])
+
+    assert results[0].success is False
+    assert results[0].error_class is ErrorClass.TERMINAL
 
 
 # ---------------------------------------------------------------------------

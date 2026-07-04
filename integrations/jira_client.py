@@ -15,6 +15,7 @@ from models.schemas import (
     TaskFlag,
 )
 from audit.logger import AuditLogger
+from core.errors import classify_exception
 from pipeline.observability import logger, tracer, trace_span
 
 # Module-level sleep hook so tests can patch backoff to be instant
@@ -235,7 +236,15 @@ class JiraClient:
             self._validate_project()
         except ValueError as e:
             logger.error(str(e))
-            return [JiraPushResult(task_id=t.id, success=False, error=str(e)) for t in tasks]
+            return [
+                JiraPushResult(
+                    task_id=t.id,
+                    success=False,
+                    error=str(e),
+                    error_class=classify_exception(e),
+                )
+                for t in tasks
+            ]
 
         logger.info(f"Pushing {len(tasks)} tasks to Jira with hierarchy {self.hierarchy.value}")
         results = []
@@ -651,7 +660,10 @@ class JiraClient:
                     except Exception as e2:
                         logger.error(f"Fallback failed too: {e2}")
                         return JiraPushResult(
-                            task_id=task.id, success=False, error=str(e2)
+                            task_id=task.id,
+                            success=False,
+                            error=str(e2),
+                            error_class=classify_exception(e2),
                         )
 
                 logger.error(f"Permanent push failure: {error_str}")
@@ -662,7 +674,12 @@ class JiraClient:
                     task_id=str(task.id),
                     detail=error_str,
                 )
-                return JiraPushResult(task_id=task.id, success=False, error=error_str)
+                return JiraPushResult(
+                    task_id=task.id,
+                    success=False,
+                    error=error_str,
+                    error_class=classify_exception(e),
+                )
 
     @trace_span("JIRA_CREATE_CONTAINER", agent="JiraClient")
     def _create_container(self, section_title: str, issue_type: str) -> str | None:

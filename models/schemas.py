@@ -8,6 +8,8 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, BeforeValidator, Field, field_validator
 import datetime
 
+from core.errors import ErrorClass
+
 
 # ─── Confidence / score bounding (CONF-1, audit data_model "bound confidence") ─
 
@@ -406,6 +408,10 @@ class JiraPushResult(BaseModel):
     jira_issue_key: Optional[str] = None  # e.g. "PROJ-42"
     jira_issue_url: Optional[str] = None
     error: Optional[str] = None
+    # How a caller/UI should react to `error` when success is False: transient
+    # (retry-able), user_fixable (fix credentials/config), or terminal. None on
+    # success. Set at the push boundary via core.errors.classify_exception.
+    error_class: Optional[ErrorClass] = None
     warning: Optional[str] = None
     # JIRA-4 (audit H-11): set True when an Epic/Story container create failed
     # and this child was created flat (parentless) instead of under its intended

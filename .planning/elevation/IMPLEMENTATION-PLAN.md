@@ -1023,6 +1023,170 @@ new `PipelineRunner` path.
 
 ---
 
+## WAVE 6 — UI/UX rework (Foundation → Components → Flows)
+
+> Goal: turn the half-finished dark SPA (`ui/index.html` / `ui/app.js` 979-line IIFE / `ui/styles.css`) into a
+> trustworthy, keyboard-operable, error-aware SOW review tool — fix the broken theme toggle, consume the new
+> `error_class` taxonomy, harden the review/edit/approve loop, and give it real responsive + a11y behavior —
+> WITHOUT abandoning the zero-dependency vanilla stack (add only a light Vite build + a ~1KB store).
+> **Offline-buildable** except two live-backend *verification* passes (UI.3, UI.5) that need a real
+> transient/user-fixable/terminal failure to observe. Design language: commit to the single "Executive
+> Elegance Dark" theme (delete the dead light path), honest tokens, single-accent orange, error-severity
+> chips, status-never-color-only, 3-tier button hierarchy. Derived from the 4-lens frontend audit +
+> synthesis + adversarial critique (2026-07-05). Change-id prefix `ui-`.
+
+### STEP UI.1 — Token & theme foundation + safety hotfixes (no deps; offline; effort S)
+- **Goal:** every later phase builds on tokens that actually resolve, no hero control lies, and the live
+  polling/UX correctness bugs are fixed up-front (pulled early per critique — they need no build step).
+- **Changes:**
+  - `ui-1` · `ui/index.html` + `ui/app.js` + `ui/styles.css` · **modify** — delete the theme toggle button
+    (`index.html:18-30`) + theme JS (`app.js:79-89`, `localStorage 'theme'`) + empty `[data-theme]` blocks
+    (`styles.css:58-60,79-81`); commit to one dark theme (the toggle switched to a light theme that does not
+    exist — audit BLOCKER).
+  - `ui-2` · `ui/styles.css` + `ui/index.html` · **modify** — make tokens honest: fix undefined `--surface-2`
+    (`index.html:205`) → `.code-chip{var(--bg-surface-hover)}`; add `--text-3xl/4xl` and route `h1`/`h2`
+    through the scale (`styles.css:84,86`); add `--status-*` (one per `TaskStatus` — PENDING renders colorless
+    today, `styles.css:422-425`) + `--sev-transient/fixable/terminal` (amber/orange/red) tokens.
+  - `ui-3` · `ui/app.js` · **modify** — polling-lifecycle hardening (offline, dependency-free): guard
+    `startStatusPolling` against double-start (`visibilitychange` re-fires it, `app.js:954-958`); `await` the
+    cancel fetch before resetting (`app.js:360`); capture `sessionId` at dispatch + ignore stale responses;
+    error backoff + a "reconnecting" state (silent catch today, `app.js:619-621`).
+  - `ui-4` · `ui/app.js` · **modify** — quick correctness: persistent error toasts (skip 3s auto-remove for
+    `type==='error'`, `app.js:937-940`); guard the empty-state branch (`app.js:765`) with an `is-loading`
+    flag so "No SOW Loaded" never flashes mid-fetch; drop the wrong `/6` denominator (render "Step N" — there
+    is NO `total_steps` field on `ProcessingStatus`, verified `server.py:143-155`); neutralize the "Parsing
+    PDF" overlay title during a push (`index.html:148`).
+- **Acceptance:** grep shows no `data-theme`/`theme` refs; every `TaskStatus` dot has a color; a running poll
+  never double-starts and survives a transient network blip; no empty-state flash. Suite unaffected (frontend).
+- **Depends on:** none. **Offline:** yes.
+
+### STEP UI.2a — Vite build seam (deps UI.1; offline; effort M)
+- **Goal:** the ONE stack change, de-risked: add the build step and prove the serve path green BEFORE touching
+  the god file.
+- **Changes:**
+  - `ui-5` · `vite.config.js` + `package.json` + `ui/server.py` · **create/modify** — Vite dev server proxies
+    `/api` → `ui/server.py`; production `build` emits static assets the existing FastAPI static mount + the
+    Dockerfile Gunicorn path serve unchanged. `app.js` stays monolithic on day one (zero behavior change).
+- **Acceptance:** `make ui` (dev) and the prod image both serve the built UI; happy path unchanged.
+- **Depends on:** UI.1. **Offline:** yes. **Watch (risk):** get the dev-proxy + prod-build + Dockerfile story
+  right before splitting the god file, or `make ui`/the prod image break.
+
+### STEP UI.2b — Module split + tiny reactive store (deps UI.2a; offline; effort L)
+- **Goal:** kill the 979-line IIFE and the hand-synced globals so later phases touch small files.
+- **Changes:**
+  - `ui-6` · `ui/app.js` → `ui/src/*` · **modify** — split into ES modules (`state.js`, `api.js`, `render.js`,
+    `modals.js`, `polling.js`).
+  - `ui-7` · `ui/src/state.js` · **create** — one ~1KB store (nanostores — framework-agnostic, no JSX) for the
+    three hand-synced atoms (`activeSessionId`, `taskData`, poll status; `app.js:369-370/394-395/527/594`).
+  - `ui-8` · `ui/src/api.js` · **create** — API adapter/view-model centralizing the status-enum strings
+    duplicated 4× (`app.js:739-742,752-756,872-874,897,908`); delete dead `showSpinner/#globalSpinner`
+    (`app.js:943-951`) + duplicate provider refs (`app.js:45-46`).
+- **Acceptance:** each screen renders from the store; a backend field rename is one edit; suite unaffected.
+- **Depends on:** UI.2a. **Offline:** yes.
+
+### STEP UI.3 — error_class-aware failure UX (deps UI.2b; needs live-backend verify; effort M)
+- **Goal:** consume the new `error_class` so transient/user-fixable/terminal failures each get the right
+  recovery, ending the dead-end "Dismiss" state every lens flagged (the #1 cross-lens finding).
+- **Changes:**
+  - `ui-9` · `ui/src/polling.js` · **modify** — in the SHARED polling error branch (`app.js:595-602`; push
+    failures surface here too — the `/api/push` endpoint returns async and NEVER emits `error_class`
+    synchronously, verified `server.py:762-777`), read `status.error_class`: TRANSIENT → primary "Retry"
+    (re-POST same config); USER_FIXABLE → "Open Settings"; TERMINAL → Dismiss that calls `resetToNewSession()`.
+  - `ui-10` · `ui/index.html` + `ui/styles.css` · **modify** — a severity CHIP above the message using the
+    `--sev-*` tokens ("Retryable"/"Check credentials"/"Failed") so failures stop looking interchangeable.
+- **Acceptance:** a mocked TRANSIENT/USER_FIXABLE/TERMINAL status renders the right chip + action; live pass
+  against a real rate-limit, bad API key, and terminal parse error.
+- **Depends on:** UI.2b. **Offline:** partial (mock the 3 shapes; live-verify the real emissions).
+
+### STEP UI.4a — Review flow structural core (deps UI.2b; offline; effort L)
+- **Goal:** fix the core value loop's structure — no expand-collapse on save, accessible collapsibles, no XSS.
+- **Changes:**
+  - `ui-11` · `ui/src/render.js` · **modify** — optimistic in-place card patch instead of
+    `taskListEl.innerHTML=''` + full refetch on every save/approve/reject (`app.js:762,673`) so expanded state
+    survives. Do it at ALL ~5 render call sites atomically (half-migration reintroduces the bug).
+  - `ui-12` · `ui/index.html` + `ui/src/render.js` · **modify** — accessible collapsibles: `role="button"`,
+    `tabindex=0`, `aria-expanded/controls`, Enter/Space mirroring click (`app.js:815,846`); status text label
+    beside the dot on the collapsed header (WCAG 1.4.1).
+  - `ui-13` · `ui/src/render.js` · **modify** — escape `section_title` via `textContent`, not `innerHTML`
+    interpolation (`app.js:797-810`) — stored-XSS vector; **security-relevant given the SaaS pivot**, land early.
+- **Acceptance:** editing a card keeps it open; keyboard toggles every collapsible; a `<script>`-titled section
+  renders inert. Suite unaffected.
+- **Depends on:** UI.2b. **Offline:** yes.
+
+### STEP UI.4b — Triage velocity (deps UI.4a; offline; effort M)
+- **Goal:** make triaging many tasks fast.
+- **Changes:**
+  - `ui-14` · `ui/src/render.js` · **modify** — keyboard triage (a/r approve/reject, j/k or arrows, e expand)
+    SCOPED to a focused card and NOT when an input/textarea has focus; confidence badge on the collapsed header
+    + "Sort by confidence"; styled (non-native) confirm on Approve All (`app.js:683-694`).
+  - `ui-15` · `ui/src/render.js` + `ui/index.html` · **modify** — reconcile the filter/stat taxonomy: one
+    `status→bucket` map drives `shouldShow` + `updateStats` (today "Pending" label maps to `CLOSED`,
+    `app.js:752` vs residual `:742`); add the missing "Pushed" filter. Confirm against the real `TaskStatus`
+    enum in `models/schemas.py`.
+- **Acceptance:** a/r/j/k/e triage works and never fires while typing; filters/stats agree; sort surfaces
+  low-confidence first.
+- **Depends on:** UI.4a. **Offline:** yes.
+
+### STEP UI.5 — Flow integrity: pre-flight guards, session truth, loading states (deps UI.3; needs live verify; effort L)
+- **Goal:** close the gaps that let users push empty/misconfigured runs, land in stale state, or see flashes.
+- **Changes:**
+  - `ui-16` · `ui/src/*` · **modify** — Push pre-flight: disable Push to Jira unless `activeSessionId` set AND
+    `approved>0` AND Jira creds saved (tooltip why) + confirm ("Push N approved tasks to PROJ?"); this also
+    absorbs the sync `{success:false,"No approved tasks"}` return (`server.py:772`) so it never round-trips.
+  - `ui-17` · `ui/src/state.js` · **modify** — one canonical `activeSessionId` mirrored to `sessionSwitcher`
+    (end the `.value` vs `activeSessionId` divergence, `app.js:382` vs `:552-554`); persist last-viewed session
+    in `localStorage` independent of the running flag so a mid-review refresh stays put (`app.js:594`).
+  - `ui-18` · `ui/src/polling.js` · **modify** — session switch respects running state: GET `/api/status`
+    first; if `is_running`, reopen the progress overlay + poll instead of rendering a stale empty list
+    (`app.js:452-463`).
+  - `ui-19` · `ui/src/render.js` + `ui/index.html` · **modify** — real loading/skeleton states around
+    `loadData`/`loadSessions`/settings; upload validation in BOTH change AND drop handlers (drop has none,
+    `app.js:333-342`) + a clear-file affordance; guard `uploadRes.ok` before `/api/process` (`app.js:503-510`).
+- **Acceptance:** Push disabled until valid + confirmed; switching to a running session reopens progress;
+  refresh mid-review keeps place; no empty-flash; drop-upload validates. Live pass on a real running run.
+- **Depends on:** UI.3. **Offline:** partial (session/loading offline; running-run reopen needs a live run).
+
+### STEP UI.6 — Responsive layout + modal accessibility (deps UI.1; offline; effort M; **parallelizable**)
+- **Goal:** fix the single-breakpoint prototype smell (1 `@media` in 619 lines) + bring modals to WCAG dialog
+  baseline. Runs in PARALLEL with the UI.2→UI.3→UI.5 chain (CSS/markup only, no store/build).
+- **Changes:**
+  - `ui-20` · `ui/styles.css` · **modify** — tablet breakpoint (~1024px, sidebar ~240px, main padding
+    `--space-64`→`--space-24`); mobile: sidebar → collapsible drawer / task list first (source order stacks
+    config above tasks today, `styles.css:616`); stack `.metrics-grid`/`.task-actions` on small screens.
+  - `ui-21` · `ui/index.html` + `ui/src/modals.js` + `ui/styles.css` · **modify** — real dialogs:
+    `role="dialog" aria-modal aria-labelledby`, focus-trap + move-in-on-open + restore-on-close, Escape closes
+    topmost, guarded backdrop click; `.progress-card{max-height:90vh;overflow:auto;width:min(600px,100vw-2rem)}`;
+    `role="log" aria-live="polite"` on `#logConsole` (`index.html:155`).
+- **Acceptance:** usable at 375/768/1024/1440px; modals trap focus + Escape-close; SR announces progress.
+- **Depends on:** UI.1. **Offline:** yes.
+
+### STEP UI.7 — Onboarding, push-results panel & style-system cleanup (deps UI.4a; offline; effort L)
+- **Goal:** the polish that makes it feel finished.
+- **Changes:**
+  - `ui-22` · `ui/src/render.js` + `ui/styles.css` · **modify** — genuine first-run state (zero sessions AND
+    tasks): de-emphasize Filters/Global Actions, centered icon-led empty pane with a primary "Upload SOW" CTA
+    pointing at the upload zone (`app.js:766-769`); fix copy "Upload a PDF or text document" → "Upload a SOW
+    PDF" (input is `accept=".pdf"`, `index.html:54`).
+  - `ui-23` · `ui/src/render.js` · **create** — push-completion panel: each pushed task with its Jira key as a
+    clickable link (`jira_server_url`+key) + per-task failure chips via `error_class` (backend already
+    aggregates, `server.py:741-742`) — the reviewer payoff is a bare toast today (`app.js:606-607`).
+  - `ui-24` · `ui/index.html` + `ui/styles.css` · **modify** — 3-tier button hierarchy (`.btn-secondary`;
+    Push=sole primary, Approve All=secondary, Collapse/Settings=ghost; drop emoji chrome, `index.html:136-139`);
+    promote recurring inline styles to classes (`.btn-icon`, `.log-console`, `.modal-field`, `.is-hidden`,
+    `.text-success/error`) so the token system is the single source of truth; provider/model sidebar badge +
+    a "Test connection" for LLM + Jira, deep-linking USER_FIXABLE errors into settings.
+- **Acceptance:** first-run points at upload; a successful push lists clickable Jira issues; no inline styles
+  for repeated patterns; single primary button.
+- **Depends on:** UI.4a. **Offline:** yes.
+
+**Wave-6 notes:** keep-vanilla + light build is the deliberate call (nanostores + Vite, no JSX framework) —
+right-sized for a solo, local-first, ~6-endpoint single-screen tool pivoting to SaaS; it kills the response-
+shape coupling + manual state sync without React/router overkill, and lands the build seam before Wave-2 auth/
+routing. **Offline fast lane:** UI.1 + UI.6 need no backend/build and can ship immediately. Per CLAUDE.md, kick
+off each UI.x through a GSD command so planning artifacts stay in sync.
+
+---
+
 ## Dependency graph
 
 ```mermaid

@@ -130,7 +130,7 @@
     <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
     <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
     <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
-    <p class="updated reveal"><b>Last updated:</b> 2026-06-22 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 &nbsp;·&nbsp; <b>main:</b> untouched</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-07-04 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (pushed → GitHub + GitLab, PR #7 open) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
       <div class="metric"><div class="num">36</div><div class="lab">Upgrades shipped &amp; verified</div></div>
@@ -498,7 +498,7 @@
     <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
     <div class="plist">
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, and the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested) shipped.</s> Remaining: run the recorder against a real 103-node SOW (live gemini), remap dedup decisions' run-fresh task UUIDs at replay time, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run + UUID remap</span></div></div>
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Inverted Jira issue-link direction, push idempotency (skip already-pushed), typed exception classification, and removing dead local-first code (Ollama/Bifrost/MCP). Independent, low-risk, testable bug fixes.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p>Remaining: inverted Jira issue-link direction + typed exception classification. <s>Push idempotency (skip already-pushed) shipped via PushGate; the dead MCP client was deleted.</s> Independent, low-risk, testable bug fixes. Note: removing Ollama/Bifrost (STEP 5.1) is <b>locked — out of scope</b>.</p><span class="need">buildable now</span></div></div>
     </div>
   </section>
 
@@ -518,7 +518,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-06-22 · branch elevation/wave-0 · 554 tests green
+    Updated 2026-07-04 · branch elevation/wave-0 (pushed → GitHub + GitLab, PR #7) · 554 tests green
   </footer>
 
 </div>

@@ -12,6 +12,15 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 
+# Frontend build (UI.2a): compile the Vite bundle into ui/dist
+FROM node:20-slim AS uibuilder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY vite.config.js ./
+COPY ui/ ./ui/
+RUN npm run build
+
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.source="https://github.com/magggiiii/sow_2_jira"
@@ -26,6 +35,8 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /install /usr/local
 COPY . .
+# Overlay the built frontend (ui/dist is gitignored, so absent from the context above)
+COPY --from=uibuilder /app/ui/dist ./ui/dist
 
 RUN useradd -m -u 1000 sow \
     && mkdir -p /app/data \

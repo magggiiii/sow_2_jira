@@ -1,4 +1,4 @@
-.PHONY: help venv install clean run ui verify
+.PHONY: help venv install clean run ui ui-dev ui-build verify
 
 # Default python command to use inside the venv
 PYTHON = venv/bin/python
@@ -23,13 +23,21 @@ venv:
 install: venv
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
-	@echo "Dependencies installed successfully."
+	npm install
+	@echo "Dependencies installed successfully (Python venv + Node/Vite frontend)."
 
 run:
 	$(PYTHON) main.py
 
-ui:
+ui: ui-build
 	$(UVICORN) ui.server:app --reload --port 8000
+
+ui-build:
+	npm run build
+
+# HMR dev: Vite (:5173, proxies /api -> :8000) + the API server. Open :5173.
+ui-dev:
+	$(UVICORN) ui.server:app --reload --port 8000 & npm run dev
 
 verify:
 	$(PYTHON) -c "import opendataloader_pdf, fastapi, uvicorn, jira, pageindex, sentence_transformers, pydantic, openai; print('All imports successful!')"

@@ -49,3 +49,6 @@ htmlcov/
 repo/.github_token
 test_sow_tmp.pdf
 graphify-out/
+
+# Node / Vite frontend build (UI.2a)
+node_modules/

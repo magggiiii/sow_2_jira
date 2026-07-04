@@ -1,0 +1,15 @@
+{
+  "name": "sow-to-jira-ui",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Frontend build for the SOW-to-Jira review UI (Vite). The Python/FastAPI backend serves the built output from ui/dist under its /static mount.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^8.1.3"
+  }
+}

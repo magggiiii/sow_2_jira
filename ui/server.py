@@ -136,8 +136,13 @@ FastAPIInstrumentor.instrument_app(app)
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
+# Mount static files. UI.2a: serve the Vite build output (ui/dist) when it exists
+# (prod / after `npm run build`), else the raw ui/ source (only usable via the
+# Vite dev server, `make ui-dev`). The built index.html references hashed assets
+# under /static/, matching this mount.
+UI_DIST = UI_DIR / "dist"
+FRONTEND_DIR = UI_DIST if (UI_DIST / "index.html").exists() else UI_DIR
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # Global status tracking (Concurrent state dictionary)
 class ProcessingStatus(BaseModel):
@@ -179,7 +184,7 @@ def get_session_path(session_id: str) -> Path:
 
 @app.get("/")
 def read_root():
-    return FileResponse(UI_DIR / "index.html")
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 def load_data(session_id: str = None):
     path = get_session_path(session_id)

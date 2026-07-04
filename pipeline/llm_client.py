@@ -100,6 +100,15 @@ def _extract_headers(err: Exception) -> dict[str, str]:
     return headers
 
 
+# Read a 3-digit code from a message ONLY when it is clearly an HTTP status —
+# anchored to a "status"/"HTTP" cue. A bare number (token count, JSON column,
+# list index) must not be mistaken for a status and drive a wrong retry decision.
+# (Same rationale/pattern as core.errors._STATUS_IN_MESSAGE — kept in lockstep.)
+_STATUS_IN_MESSAGE = re.compile(
+    r"(?:status(?:[ _]?code)?|http)\D{0,4}(4\d\d|5\d\d)\b", re.IGNORECASE
+)
+
+
 def _extract_status_code(err: Exception) -> Optional[int]:
     code = getattr(err, "status_code", None)
     if isinstance(code, int):
@@ -108,7 +117,7 @@ def _extract_status_code(err: Exception) -> Optional[int]:
     response_code = getattr(response, "status_code", None)
     if isinstance(response_code, int):
         return response_code
-    match = re.search(r"\b(4\d\d|5\d\d)\b", str(err))
+    match = _STATUS_IN_MESSAGE.search(str(err))
     return int(match.group(1)) if match else None
 
 

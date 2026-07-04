@@ -75,6 +75,33 @@ def test_retryable_remote_classification():
     assert not llm_mod.is_retryable_remote_error(Exception("invalid api key"))
 
 
+def test_bare_number_in_message_not_misread_as_retryable_status():
+    # A bare 3-digit number in a terminal error message (token count / JSON
+    # column / list index) must NOT be mistaken for a 5xx HTTP status and
+    # retried — the status regex is anchored to a status/HTTP cue.
+    assert not llm_mod.is_retryable_remote_error(
+        Exception("Expecting value: line 1 column 512 (char 511)")
+    )
+    assert not llm_mod.is_retryable_remote_error(Exception("index 500 out of range"))
+    assert not llm_mod.is_retryable_remote_error(
+        Exception("Chunk of 512 tokens exceeds context window")
+    )
+    # A genuine status expressed only in the message is still retryable (anchored).
+    assert llm_mod.is_retryable_remote_error(Exception("upstream returned HTTP 503"))
+    # Attribute-borne status still works (guard against over-correction).
+    assert llm_mod.is_retryable_remote_error(DummyHTTPError("boom", status_code=503))
+
+
+def test_pageindex_status_extraction_anchored_in_parity_with_llm_client():
+    # PageIndex mirrors llm_client's retry classifier; its status extraction must
+    # be anchored the same way so a bare number isn't misread as a 5xx and retried.
+    assert not pageindex_utils.is_retryable_remote_error(
+        Exception("Expecting value: line 1 column 512 (char 511)")
+    )
+    assert not pageindex_utils.is_retryable_remote_error(Exception("index 500 out of range"))
+    assert pageindex_utils.is_retryable_remote_error(Exception("upstream returned HTTP 503"))
+
+
 def test_remote_budget_enforced(monkeypatch):
     client = _build_client()
     monkeypatch.setenv("LLM_REMOTE_MAX_ATTEMPTS", "2")

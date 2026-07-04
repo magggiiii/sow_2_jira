@@ -112,6 +112,13 @@ def _extract_headers(err: Exception) -> dict[str, str]:
     return headers
 
 
+# Anchored status-in-message extraction (parity with llm_client / core.errors):
+# a bare 3-digit number must not be mistaken for an HTTP status and retried.
+_STATUS_IN_MESSAGE = re.compile(
+    r"(?:status(?:[ _]?code)?|http)\D{0,4}(4\d\d|5\d\d)\b", re.IGNORECASE
+)
+
+
 def _extract_status_code(err: Exception) -> Optional[int]:
     code = getattr(err, "status_code", None)
     if isinstance(code, int):
@@ -120,7 +127,7 @@ def _extract_status_code(err: Exception) -> Optional[int]:
     response_code = getattr(response, "status_code", None)
     if isinstance(response_code, int):
         return response_code
-    match = re.search(r"\b(4\d\d|5\d\d)\b", str(err))
+    match = _STATUS_IN_MESSAGE.search(str(err))
     return int(match.group(1)) if match else None
 
 

@@ -6,7 +6,7 @@
 // #settingsModal shape (a `.progress-overlay` backdrop wrapping a
 // `.progress-card` with a heading + focusable controls).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { openModal, closeModal, isModalOpen } from './modals.js'
+import { openModal, closeModal, isModalOpen, showConfirm } from './modals.js'
 
 function buildFixture() {
   document.body.innerHTML = `
@@ -117,5 +117,45 @@ describe('modal a11y helpers', () => {
     openModal(modal, { onClose })
     closeModal(modal)
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ui-14/ui-16 — styled showConfirm (replaces native confirm)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+  })
+
+  it('renders a themed dialog with the given title + labels', async () => {
+    const p = showConfirm({ title: 'Push to Jira?', message: 'Push 3 tasks?', confirmLabel: 'Push' })
+    const overlay = document.querySelector('.progress-overlay')
+    expect(overlay).not.toBeNull()
+    expect(overlay.querySelector('h2').textContent).toBe('Push to Jira?')
+    expect(overlay.querySelector('.confirm-message').textContent).toBe('Push 3 tasks?')
+    const confirmBtn = Array.from(overlay.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Push'
+    )
+    expect(confirmBtn).toBeTruthy()
+    confirmBtn.click()
+    await expect(p).resolves.toBe(true)
+    // dialog is torn down after resolution.
+    expect(document.querySelector('.progress-overlay')).toBeNull()
+  })
+
+  it('resolves false when Cancel is clicked and removes the dialog', async () => {
+    const p = showConfirm({ title: 'Delete?', confirmLabel: 'Delete', cancelLabel: 'Cancel' })
+    const overlay = document.querySelector('.progress-overlay')
+    const cancelBtn = Array.from(overlay.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Cancel'
+    )
+    cancelBtn.click()
+    await expect(p).resolves.toBe(false)
+    expect(document.querySelector('.progress-overlay')).toBeNull()
+  })
+
+  it('resolves false on Escape (cancel), never double-resolving', async () => {
+    const p = showConfirm({ title: 'Sure?' })
+    pressKey(document, 'Escape')
+    await expect(p).resolves.toBe(false)
+    expect(document.querySelector('.progress-overlay')).toBeNull()
   })
 })

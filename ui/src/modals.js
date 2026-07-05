@@ -201,6 +201,71 @@ export function closeModal(overlay) {
   if (typeof state.onClose === 'function') state.onClose()
 }
 
+// --- ui-14 / ui-16: styled (non-native) confirm ----------------------------
+//
+// Replaces the browser `confirm()` on destructive/bulk actions (Approve All,
+// Push) with a themed dialog that reuses the same a11y layer (focus trap,
+// Escape, backdrop, focus restore). Returns a Promise<boolean>. Built entirely
+// in JS so it needs no new index.html markup. Escape / backdrop / Cancel resolve
+// false; Confirm resolves true.
+export function showConfirm({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') {
+      resolve(false)
+      return
+    }
+    const overlay = document.createElement('div')
+    overlay.className = 'progress-overlay'
+    overlay.style.display = 'none'
+
+    const card = document.createElement('div')
+    card.className = 'progress-card confirm-card'
+
+    const h = document.createElement('h2')
+    h.textContent = title
+    card.appendChild(h)
+
+    if (message) {
+      const p = document.createElement('p')
+      p.className = 'confirm-message'
+      p.textContent = message
+      card.appendChild(p)
+    }
+
+    const actions = document.createElement('div')
+    actions.className = 'confirm-actions'
+    const cancelBtn = document.createElement('button')
+    cancelBtn.className = 'btn btn-secondary'
+    cancelBtn.textContent = cancelLabel
+    const confirmBtn = document.createElement('button')
+    confirmBtn.className = danger ? 'btn btn-danger' : 'btn btn-primary'
+    confirmBtn.textContent = confirmLabel
+    actions.append(cancelBtn, confirmBtn)
+    card.appendChild(actions)
+
+    overlay.appendChild(card)
+    document.body.appendChild(overlay)
+
+    let settled = false
+    const finish = (val) => {
+      if (settled) return
+      settled = true
+      closeModal(overlay) // restores focus + tears down listeners
+      overlay.remove()
+      resolve(val)
+    }
+
+    cancelBtn.addEventListener('click', () => finish(false))
+    confirmBtn.addEventListener('click', () => finish(true))
+    // openModal's onClose fires on Escape / backdrop / programmatic close →
+    // treat any of those as a cancel (unless a button already settled).
+    openModal(overlay, { onClose: () => finish(false) })
+    // Prefer the confirm button as the initial focus for fast keyboard action,
+    // but only if it landed on something inside the card.
+    if (card.contains(document.activeElement)) confirmBtn.focus()
+  })
+}
+
 async function loadProviders() {
   providerRegistry = await fetchProviders()
   const providerSelect = getEl('providerSelect')

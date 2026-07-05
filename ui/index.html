@@ -20,13 +20,13 @@
             <div class="divider"></div>
 
             <div class="form-group" id="sessionListContainer">
-                <button class="btn btn-primary" id="btnNewSession" style="width: 100%; margin-bottom: var(--space-16);">➕ Start New Extraction</button>
+                <button class="btn btn-secondary btn-block btn-mb-16" id="btnNewSession">Start New Extraction</button>
                 <h3>Recent SOWs</h3>
-                <div style="display: flex; gap: var(--space-8); align-items: flex-start;">
-                    <select id="sessionSwitcher" class="input-field" style="margin-bottom: var(--space-8); flex: 1;">
+                <div class="session-switcher-row">
+                    <select id="sessionSwitcher" class="input-field session-select">
                         <option value="">-- Active Sessions --</option>
                     </select>
-                    <button id="btnDeleteSession" class="btn btn-outline" title="Delete this session" style="padding: 10px; border-color: var(--error); color: var(--error);">
+                    <button id="btnDeleteSession" class="btn btn-ghost btn-icon btn-danger-ghost" title="Delete this session" aria-label="Delete this session">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6"></path>
                         </svg>
@@ -43,8 +43,8 @@
                     <p id="uploadLabel">Click or drop SOW PDF here</p>
                 </div>
                 
-                <div id="processConfig" style="display: flex; gap: var(--space-12); flex-direction: column;">
-                    <div class="form-group" style="display: none;">
+                <div id="processConfig" class="process-config">
+                    <div class="form-group is-hidden">
                         <label class="metric-label">LLM Provider</label>
                         <select id="llmMode" class="input-field">
                             <option value="custom" selected>Custom (Provider string via .env)</option>
@@ -81,15 +81,15 @@
                     </div>
                     <div class="metric-card">
                         <span class="metric-label">Approved</span>
-                        <span class="metric-value" style="color: var(--success);" id="statsApproved">0</span>
+                        <span class="metric-value text-success" id="statsApproved">0</span>
                     </div>
                     <div class="metric-card">
                         <span class="metric-label">Rejected</span>
-                        <span class="metric-value" id="statsRejected" style="color: var(--error);">0</span>
+                        <span class="metric-value text-error" id="statsRejected">0</span>
                     </div>
                     <div class="metric-card">
                         <span class="metric-label">Pending</span>
-                        <span class="metric-value" id="statsPending" style="color: var(--warning);">0</span>
+                        <span class="metric-value text-warning" id="statsPending">0</span>
                     </div>
                     <div class="metric-card">
                         <span class="metric-label">Pushed</span>
@@ -100,7 +100,7 @@
 
             <div class="divider"></div>
 
-            <div class="form-group">
+            <div class="form-group" id="filtersSection">
                 <h3>Filters</h3>
                 <label class="checkbox-group">
                     <input type="checkbox" id="filterPending" checked> Pending
@@ -112,18 +112,29 @@
                     <input type="checkbox" id="filterRejected"> Rejected
                 </label>
                 <label class="checkbox-group">
+                    <input type="checkbox" id="filterPushed" checked> Pushed
+                </label>
+                <label class="checkbox-group">
                     <input type="checkbox" id="filterFlagged"> Flagged only
                 </label>
+                <label class="metric-label sort-label" for="sortConfidence">Sort</label>
+                <select id="sortConfidence" class="input-field">
+                    <option value="none">Section order</option>
+                    <option value="asc" selected>Confidence: low first</option>
+                    <option value="desc">Confidence: high first</option>
+                </select>
             </div>
 
             <div class="divider"></div>
 
-            <div class="form-group">
+            <div class="form-group" id="globalActionsSection">
                 <h3>Global Actions</h3>
-                <button class="btn btn-primary" id="btnPushJira" style="width: 100%;">🚀 Push to Jira</button>
-                <button class="btn btn-outline" id="btnApproveAll" style="width: 100%;">Approve All Pending</button>
-                <button class="btn btn-outline" id="btnCollapseAll" style="width: 100%;">↔️ Collapse All</button>
-                <button class="btn btn-outline" id="btnSettings" style="width: 100%; margin-top: var(--space-8);">⚙️ Settings</button>
+                <!-- ui-24: 3-tier button hierarchy. Push = the sole PRIMARY action;
+                     Approve All = SECONDARY; Collapse/Settings = GHOST (btn-ghost). -->
+                <button class="btn btn-primary btn-block" id="btnPushJira" title="Push to Jira">Push to Jira</button>
+                <button class="btn btn-secondary btn-block" id="btnApproveAll">Approve All Pending</button>
+                <button class="btn btn-ghost btn-block" id="btnCollapseAll">Collapse All</button>
+                <button class="btn btn-ghost btn-block btn-mt-8" id="btnSettings">Settings</button>
             </div>
         </aside>
 
@@ -133,79 +144,79 @@
             <div id="progressOverlay" class="progress-overlay" style="display: none;">
                 <div class="progress-card">
                     <h2 id="progressStepTitle">Preparing…</h2>
-                    <p id="progressMessage" style="margin-bottom: var(--space-16);">Initializing pipeline...</p>
+                    <p id="progressMessage" class="progress-message">Initializing pipeline...</p>
                     <div class="progress-bar-bg">
-                        <div id="progressBarFill" class="progress-bar-fill" style="width: 0%;"></div>
+                        <div id="progressBarFill" class="progress-bar-fill"></div>
                     </div>
-                    <p class="metric-label" style="margin-top: var(--space-8); text-align: right;" id="progressPercentage">0%</p>
-                    
-                    <div class="log-console" id="logConsole" role="log" aria-live="polite" aria-label="Extraction progress log" style="margin-top: var(--space-24); height: 150px; overflow-y: auto; background: var(--bg-app); padding: var(--space-12); border-radius: var(--radius-sm); font-family: monospace; font-size: var(--text-xs); border: 1px solid var(--border-strong);">
+                    <p class="metric-label progress-percentage" id="progressPercentage">0%</p>
+
+                    <div class="log-console" id="logConsole" role="log" aria-live="polite" aria-label="Extraction progress log">
                         <!-- Logs will be inserted here -->
                     </div>
 
-                    <div style="margin-top: var(--space-24); display: flex; justify-content: flex-end; gap: var(--space-12);">
-                        <button id="btnDismissProgress" class="btn btn-primary" style="display: none;">Dismiss</button>
-                        <button id="btnCancelProcess" class="btn btn-outline" style="border-color: var(--error); color: var(--error);">Stop Extraction</button>
+                    <div class="modal-actions">
+                        <button id="btnDismissProgress" class="btn btn-primary is-hidden">Dismiss</button>
+                        <button id="btnCancelProcess" class="btn btn-ghost btn-danger-ghost">Stop Extraction</button>
                     </div>
                 </div>
             </div>
 
             <!-- Settings Modal -->
             <div id="settingsModal" class="progress-overlay" style="display: none;">
-                <div class="progress-card" style="max-width: 600px;">
-                    <h2 style="margin-bottom: var(--space-24);">LLM & Environment Settings</h2>
-                    
-                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                <div class="progress-card settings-card">
+                    <h2 class="settings-title">LLM &amp; Environment Settings</h2>
+
+                    <div class="form-group modal-field">
                         <label class="metric-label">Select Provider</label>
                         <select id="providerSelect" class="input-field"></select>
                     </div>
 
-                    <div class="form-group" id="apiKeyGroup" style="margin-bottom: var(--space-16);">
+                    <div class="form-group modal-field" id="apiKeyGroup">
                         <label class="metric-label">API Key</label>
                         <input type="password" id="providerApiKey" class="input-field" placeholder="sk-...">
                     </div>
 
-                    <div class="form-group" id="baseUrlGroup" style="margin-bottom: var(--space-16);">
+                    <div class="form-group modal-field" id="baseUrlGroup">
                         <label class="metric-label">API Base URL</label>
                         <input type="text" id="providerBaseUrl" class="input-field" placeholder="https://api.openai.com/v1">
                     </div>
 
-                    <div id="azureFields" style="display: none;">
-                        <div class="form-group" style="margin-bottom: var(--space-16);">
+                    <div id="azureFields" class="is-hidden">
+                        <div class="form-group modal-field">
                             <label class="metric-label">Azure Deployment Name</label>
                             <input type="text" id="azureDeploymentName" class="input-field" placeholder="my-deployment">
                         </div>
-                        <div class="form-group" style="margin-bottom: var(--space-16);">
+                        <div class="form-group modal-field">
                             <label class="metric-label">Azure API Version</label>
                             <input type="text" id="azureApiVersion" class="input-field" placeholder="2024-02-15-preview">
                         </div>
                     </div>
 
-                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                    <div class="form-group modal-field">
                         <label class="metric-label">Model</label>
                         <select id="providerModelSelect" class="input-field"></select>
-                        <div style="display: flex; gap: var(--space-12); align-items: center; margin-top: var(--space-8);">
-                            <button class="btn btn-outline" id="btnFetchModels">Fetch Models</button>
+                        <div class="model-fetch-row">
+                            <button class="btn btn-ghost" id="btnFetchModels">Fetch Models</button>
                             <span id="modelFetchStatus" class="metric-label"></span>
                         </div>
-                        <small id="openrouterModelHelp" class="metric-label" style="display: none; margin-top: var(--space-8); line-height: 1.5;">
-                            <div>Recommended for SOW extraction: <code style="background: var(--bg-surface-hover); padding: 0 4px; border-radius: 3px;">google/gemini-2.5-flash</code> — best quality-per-dollar on this pipeline (~$0.49/run). <button type="button" id="btnUseRecommendedModel" class="btn btn-outline" style="padding: 2px 8px; font-size: 0.85em; margin-left: 4px;">Use it</button></div>
-                            <div style="margin-top: 4px;">Browse the full catalogue at <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.</div>
+                        <small id="openrouterModelHelp" class="metric-label openrouter-help is-hidden">
+                            <div>Recommended for SOW extraction: <code class="inline-code">google/gemini-2.5-flash</code> — best quality-per-dollar on this pipeline (~$0.49/run). <button type="button" id="btnUseRecommendedModel" class="btn btn-ghost btn-inline">Use it</button></div>
+                            <div class="openrouter-help-link">Browse the full catalogue at <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.</div>
                         </small>
                     </div>
 
-                    <div class="form-group" style="margin-bottom: var(--space-16);">
+                    <div class="form-group modal-field">
                         <label class="metric-label">Jira Server URL</label>
                         <input type="text" id="jiraServerUrl" class="input-field" placeholder="https://your-domain.atlassian.net">
                     </div>
-                    
-                    <div class="form-group" style="margin-bottom: var(--space-24);">
+
+                    <div class="form-group modal-field modal-field-last">
                         <label class="metric-label">Jira API Token (or PAT / Password)</label>
                         <input type="password" id="jiraApiToken" class="input-field" placeholder="Your API Token...">
                     </div>
-                    
-                    <div style="display: flex; gap: var(--space-12); justify-content: flex-end;">
-                        <button class="btn btn-outline" id="btnCancelSettings">Cancel</button>
+
+                    <div class="modal-actions">
+                        <button class="btn btn-ghost" id="btnCancelSettings">Cancel</button>
                         <button class="btn btn-primary" id="btnSaveSettings">Save Settings</button>
                     </div>
                 </div>
@@ -214,7 +225,7 @@
             <header class="page-header">
                 <h1>SOW Task Review</h1>
                 <p>Review and refine deliverables extracted from your Statement of Work.</p>
-                <p style="margin-top: var(--space-8);" id="showingCount">Showing 0 tasks</p>
+                <p class="showing-count" id="showingCount">Showing 0 tasks</p>
             </header>
 
             <div class="task-list" id="taskList">
@@ -279,7 +290,7 @@
                         <button class="btn btn-danger btn-reject">Reject</button>
                         <button class="btn btn-outline btn-save">Save Edits</button>
                         
-                        <div class="task-status-text" style="font-size: var(--text-sm); font-weight: 500;"></div>
+                        <div class="task-status-text"></div>
                     </div>
                 </div>
             </div>

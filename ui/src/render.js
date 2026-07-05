@@ -60,6 +60,61 @@ export function markTasksLoaded() {
   hasLoadedTasks = true
 }
 
+// --- ui-14: keyboard triage dispatch ---------------------------------------
+//
+// Pure + unit-testable. Maps a keydown into a triage action, but ONLY when the
+// user is NOT typing into a form control (input/textarea/select/contentEditable)
+// — otherwise `a` in a title field would reject the card. Returns one of
+// 'approve' | 'reject' | 'expand' | 'next' | 'prev' | null.
+//
+// `ctx` = { key, isTyping }. Arrow keys mirror j/k so both muscle memories work.
+export function resolveTriageAction({ key, isTyping } = {}) {
+  if (isTyping) return null
+  switch (key) {
+    case 'a':
+    case 'A':
+      return 'approve'
+    case 'r':
+    case 'R':
+      return 'reject'
+    case 'e':
+    case 'E':
+      return 'expand'
+    case 'j':
+    case 'J':
+    case 'ArrowDown':
+      return 'next'
+    case 'k':
+    case 'K':
+    case 'ArrowUp':
+      return 'prev'
+    default:
+      return null
+  }
+}
+
+// True when focus is in a text-entry control, so triage keys must NOT fire.
+export function isTypingTarget(el) {
+  if (!el) return false
+  const tag = el.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (el.isContentEditable) return true
+  return false
+}
+
+// --- ui-14: confidence sort ------------------------------------------------
+//
+// Returns a NEW array (does not mutate). `direction` 'asc' = lowest-confidence
+// first (the useful triage default — surface the risky ones). 'none' preserves
+// the original order. Missing confidence sorts as 0 (treated as most-uncertain).
+export function sortTasksByConfidence(tasks, direction = 'none') {
+  const list = [...(tasks || [])]
+  if (direction === 'none') return list
+  const conf = (t) => (typeof t.confidence === 'number' ? t.confidence : 0)
+  list.sort((a, b) => (direction === 'asc' ? conf(a) - conf(b) : conf(b) - conf(a)))
+  return list
+}
+
 // --- Toast -----------------------------------------------------------------
 
 export function showToast(message, type = 'info') {
@@ -86,6 +141,128 @@ export function showToast(message, type = 'info') {
   }
 }
 
+// --- ui-22: first-run de-emphasis ------------------------------------------
+//
+// On a genuine first run (no sessions, no tasks) the Filters and Global Actions
+// blocks are noise — there's nothing to filter or act on. Toggle a body class so
+// the stylesheet can dim/disable them and steer the eye to Upload. Idempotent.
+export function applyFirstRunState(isFirstRun) {
+  if (typeof document === 'undefined' || !document.body) return
+  document.body.classList.toggle('is-first-run', !!isFirstRun)
+}
+
+// --- ui-23: push-completion results panel ----------------------------------
+//
+// After a push completes and the task data reloads, show a real results panel
+// instead of a bare toast: every PUSHED task links to its Jira issue
+// (`jira_server`/browse/KEY), and any failure is surfaced with a severity chip.
+//
+// Backend reality (server.py :: run_push_task): per-task success is persisted by
+// flipping status→PUSHED + jira_issue_key on disk, but per-task FAILURE detail
+// is NOT — only an aggregate first_error / first_error_class rides the polling
+// status. So the panel renders PUSHED tasks as clickable links, and shows the
+// aggregate failure (count + first error chip) when the push wasn't fully clean.
+//
+// Renders into #pushResultsPanel (created lazily above the task list). `opts` =
+// { tasks, jiraServerUrl, failedCount, firstError, errorChip } — errorChip is
+// { label, className } from errorRecovery (so the WCAG text-label chip matches
+// the failure UX). Returns the panel element (or null if there's nothing to show).
+function jiraBrowseUrl(server, key) {
+  if (!server || !key) return null
+  const s = String(server).trim()
+  // Only http(s): reject javascript:/data:/etc so a malicious or fat-fingered
+  // Jira-server SETTING (user-supplied, unvalidated server-side) can't inject an
+  // executable href into the results link — matters for the multi-user pivot
+  // where one user's setting is clicked by another. Falls back to plain text.
+  if (!/^https?:\/\//i.test(s)) return null
+  return `${s.replace(/\/+$/, '')}/browse/${encodeURIComponent(key)}`
+}
+
+export function renderPushResults(opts = {}) {
+  const { tasks = [], jiraServerUrl = '', failedCount = 0, firstError = '', errorChip } = opts
+  const pushed = (tasks || []).filter((t) => t.status === TASK_STATUS.PUSHED && t.jira_issue_key)
+
+  const taskListEl = getEl('taskList')
+  if (!taskListEl) return null
+
+  // Idempotent: replace any prior panel.
+  const prior = getEl('pushResultsPanel')
+  if (prior) prior.remove()
+
+  if (pushed.length === 0 && failedCount === 0) return null
+
+  const panel = document.createElement('section')
+  panel.id = 'pushResultsPanel'
+  panel.className = 'push-results-panel'
+  panel.setAttribute('role', 'status')
+  panel.setAttribute('aria-live', 'polite')
+
+  const head = document.createElement('div')
+  head.className = 'push-results-head'
+  const title = document.createElement('h3')
+  title.textContent = 'Jira Push Results'
+  const summary = document.createElement('span')
+  summary.className = 'push-results-summary'
+  summary.textContent = `${pushed.length} pushed${failedCount ? `, ${failedCount} failed` : ''}`
+  const close = document.createElement('button')
+  close.className = 'btn-icon push-results-close'
+  close.setAttribute('aria-label', 'Dismiss push results')
+  close.textContent = '×'
+  close.addEventListener('click', () => panel.remove())
+  head.append(title, summary, close)
+  panel.appendChild(head)
+
+  // Aggregate failure chip (per-task failure detail isn't persisted server-side).
+  if (failedCount > 0) {
+    const fail = document.createElement('div')
+    fail.className = 'push-results-failure'
+    if (errorChip && errorChip.label) {
+      const chip = document.createElement('span')
+      chip.className = `sev-chip ${errorChip.className || 'sev-terminal'}`
+      chip.textContent = errorChip.label
+      fail.appendChild(chip)
+    }
+    const msg = document.createElement('span')
+    msg.className = 'text-error'
+    msg.textContent = firstError
+      ? `${failedCount} task(s) failed — ${firstError}`
+      : `${failedCount} task(s) failed to push.`
+    fail.appendChild(msg)
+    panel.appendChild(fail)
+  }
+
+  if (pushed.length > 0) {
+    const ul = document.createElement('ul')
+    ul.className = 'push-results-list'
+    pushed.forEach((t) => {
+      const li = document.createElement('li')
+      const name = document.createElement('span')
+      name.className = 'push-results-title'
+      name.textContent = t.title || t.jira_issue_key
+      const url = jiraBrowseUrl(jiraServerUrl, t.jira_issue_key)
+      if (url) {
+        const a = document.createElement('a')
+        a.className = 'push-results-key text-success'
+        a.href = url
+        a.target = '_blank'
+        a.rel = 'noopener'
+        a.textContent = t.jira_issue_key
+        li.append(name, a)
+      } else {
+        const key = document.createElement('span')
+        key.className = 'push-results-key text-success'
+        key.textContent = t.jira_issue_key
+        li.append(name, key)
+      }
+      ul.appendChild(li)
+    })
+    panel.appendChild(ul)
+  }
+
+  taskListEl.parentNode.insertBefore(panel, taskListEl)
+  return panel
+}
+
 // --- Stats -----------------------------------------------------------------
 
 export function updateStats() {
@@ -103,11 +280,15 @@ function currentFilters() {
   const fPending = getEl('filterPending')
   const fApproved = getEl('filterApproved')
   const fRejected = getEl('filterRejected')
+  const fPushed = getEl('filterPushed')
   const fFlagged = getEl('filterFlagged')
   return {
     pending: fPending ? fPending.checked : true,
     approved: fApproved ? fApproved.checked : true,
     rejected: fRejected ? fRejected.checked : false,
+    // ui-15: dedicated Pushed filter. Default ON so pushed tasks stay visible
+    // (they're the audit trail of what shipped) unless explicitly hidden.
+    pushed: fPushed ? fPushed.checked : true,
     flagged: fFlagged ? fFlagged.checked : false,
   }
 }
@@ -120,20 +301,63 @@ export function renderTasks(onSave) {
   taskListEl.innerHTML = ''
 
   const taskData = $taskData.get()
+  const allTasks = taskData.tasks || []
   const filters = currentFilters()
-  const visibleTasks = (taskData.tasks || []).filter((t) => shouldShowTask(t, filters))
+  const sortSel = getEl('sortConfidence')
+  const sortDir = sortSel ? sortSel.value : 'none'
+  const visibleTasks = sortTasksByConfidence(
+    allTasks.filter((t) => shouldShowTask(t, filters)),
+    sortDir
+  )
+
+  // ui-22: genuine first-run state — zero sessions AND zero tasks. A centered,
+  // icon-led empty pane with a primary CTA that points at the upload zone. Only
+  // shown once the first load has resolved (no flash) AND nothing exists.
+  applyFirstRunState(allTasks.length === 0 && hasLoadedTasks)
 
   if (visibleTasks.length === 0 && hasLoadedTasks) {
     const emptyEl = document.createElement('div')
     emptyEl.className = 'empty-state'
-    emptyEl.innerHTML =
-      '<h2>No Statement of Work Loaded</h2><p>Upload a SOW PDF to extract Jira tasks.</p>'
+    if (allTasks.length === 0) {
+      // First-run: a real onboarding pane (icon + CTA), not a terse line.
+      emptyEl.classList.add('empty-state-onboarding')
+      const heading = document.createElement('h2')
+      heading.textContent = 'No Statement of Work loaded yet'
+      const sub = document.createElement('p')
+      sub.textContent = 'Upload a SOW PDF and the pipeline will extract review-ready Jira tasks.'
+      const cta = document.createElement('button')
+      cta.className = 'btn btn-primary'
+      cta.id = 'emptyUploadCta'
+      cta.textContent = 'Upload SOW'
+      cta.addEventListener('click', () => {
+        const zone = getEl('uploadZone')
+        if (zone) {
+          zone.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          zone.classList.add('upload-zone-highlight')
+          setTimeout(() => zone.classList.remove('upload-zone-highlight'), 1600)
+          zone.click()
+        }
+      })
+      const icon = document.createElement('div')
+      icon.className = 'empty-state-icon'
+      icon.setAttribute('aria-hidden', 'true')
+      icon.innerHTML =
+        '<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="12" y1="18" x2="12" y2="12"></line><polyline points="9 15 12 12 15 15"></polyline></svg>'
+      emptyEl.append(icon, heading, sub, cta)
+    } else {
+      // Tasks exist but all are filtered out — a filter-scoped message.
+      const heading = document.createElement('h2')
+      heading.textContent = 'No tasks match the current filters'
+      const sub = document.createElement('p')
+      sub.textContent = 'Adjust the filters in the sidebar to see more tasks.'
+      emptyEl.append(heading, sub)
+    }
     taskListEl.appendChild(emptyEl)
   }
 
   if (getEl('showingCount')) {
     getEl('showingCount').textContent =
-      `Showing ${visibleTasks.length} of ${taskData.tasks.length} tasks`
+      `Showing ${visibleTasks.length} of ${allTasks.length} tasks`
   }
 
   // Group tasks by SOW section.
@@ -223,7 +447,19 @@ export function buildTaskCard(t, onSave) {
     ind.insertAdjacentElement('afterend', statusLabel)
   }
 
+  // ui-14: confidence badge on the collapsed header (before the flag badges so
+  // the risk signal reads first). Text-labelled ("Conf 62%") + a severity class
+  // by band — never colour alone (WCAG 1.4.1).
   const badgesEl = card.querySelector('.task-badges')
+  if (typeof t.confidence === 'number') {
+    const pct = Math.round(t.confidence * 100)
+    const conf = document.createElement('span')
+    const band = pct < 60 ? 'conf-low' : pct < 80 ? 'conf-mid' : 'conf-high'
+    conf.className = `badge conf-badge ${band}`
+    conf.textContent = `Conf ${pct}%`
+    conf.title = 'Extraction confidence'
+    badgesEl.appendChild(conf)
+  }
   ;(t.flags || []).forEach((f) => {
     const b = document.createElement('span')
     b.className = 'badge'
@@ -265,7 +501,7 @@ export function buildTaskCard(t, onSave) {
     const ref = t.source_refs[0]
     const conf = (t.confidence * 100).toFixed(0)
     card.querySelector('.source-ref').textContent =
-      `📄 Pages ${ref.page_start}-${ref.page_end} | Confidence: ${conf}%`
+      `Pages ${ref.page_start}-${ref.page_end} · Confidence: ${conf}%`
   }
 
   card.querySelector('.task-edit-title').value = t.title || ''
@@ -310,14 +546,23 @@ export function buildTaskCard(t, onSave) {
   const btnApprove = card.querySelector('.btn-approve')
   const btnReject = card.querySelector('.btn-reject')
 
+  const approve = () => {
+    const dt = getUpdatedData()
+    dt.status = TASK_STATUS.APPROVED
+    onSave(dt)
+  }
+  const reject = () => {
+    const dt = getUpdatedData()
+    dt.status = TASK_STATUS.REJECTED
+    onSave(dt)
+  }
+
   if (isApproved(t)) {
     btnApprove.style.display = 'none'
   } else {
     btnApprove.addEventListener('click', (e) => {
       e.stopPropagation()
-      const dt = getUpdatedData()
-      dt.status = TASK_STATUS.APPROVED
-      onSave(dt)
+      approve()
     })
   }
 
@@ -326,13 +571,55 @@ export function buildTaskCard(t, onSave) {
   } else {
     btnReject.addEventListener('click', (e) => {
       e.stopPropagation()
-      const dt = getUpdatedData()
-      dt.status = TASK_STATUS.REJECTED
-      onSave(dt)
+      reject()
     })
   }
 
+  // ui-14: the card is keyboard-focusable and exposes its triage verbs so the
+  // document-level triage handler (main.js) can act on the FOCUSED card without
+  // reaching into card internals. Approve/reject no-op when already actioned.
+  card.setAttribute('tabindex', '0')
+  card._triage = {
+    approve: isApproved(t) ? null : approve,
+    reject: isRejected(t) ? null : reject,
+    expand: toggle,
+  }
+
   return card
+}
+
+// ui-14: run a triage verb on a card node. Returns true if it did something.
+// Centralized so the keydown handler in main.js stays declarative.
+export function triageCard(action, card) {
+  if (!card || !card._triage) return false
+  const fn = card._triage[action]
+  if (typeof fn !== 'function') return false
+  fn()
+  return true
+}
+
+// ui-14: the ordered, currently-rendered task cards for j/k focus navigation.
+export function orderedTaskCards() {
+  const list = getEl('taskList')
+  if (!list) return []
+  return Array.from(list.querySelectorAll('.task-card'))
+}
+
+// ui-14: given the current activeElement, move focus to the next/prev card.
+// If nothing is focused yet, the first card takes focus. Wraps at the ends.
+export function moveCardFocus(direction, activeEl) {
+  const cards = orderedTaskCards()
+  if (cards.length === 0) return null
+  const current = activeEl && activeEl.closest ? activeEl.closest('.task-card') : null
+  let idx = current ? cards.indexOf(current) : -1
+  if (idx === -1) {
+    idx = direction === 'prev' ? cards.length - 1 : 0
+  } else {
+    idx = direction === 'next' ? (idx + 1) % cards.length : (idx - 1 + cards.length) % cards.length
+  }
+  const target = cards[idx]
+  if (target && typeof target.focus === 'function') target.focus()
+  return target
 }
 
 // --- Optimistic in-place patch (ui-11) -------------------------------------

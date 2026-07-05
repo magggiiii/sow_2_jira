@@ -681,3 +681,251 @@ textarea.input-field { resize: vertical; min-height: 100px; }
   .main-content { padding: var(--space-12); }
   .btn { width: 100%; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WAVE 6 Round 3 — UI.4b (triage velocity) · UI.5 (flow integrity) ·
+   UI.7 (onboarding, push results, style-system cleanup)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* --- ui-24: token/utility classes (promote recurring inline styles) -------- */
+.is-hidden { display: none !important; }
+.btn-block { width: 100%; }
+.btn-mt-8 { margin-top: var(--space-8); }
+.btn-mb-16 { margin-bottom: var(--space-16); }
+.text-success { color: var(--success); }
+.text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
+
+/* --- ui-24: 3-tier button hierarchy ---------------------------------------
+   Primary (Push) already exists (.btn-primary). Secondary = a filled-but-quiet
+   surface button (Approve All, New Session). Ghost = borderless/low-chrome
+   (Collapse, Settings, Cancel, icon buttons). */
+.btn-secondary {
+  background-color: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.btn-secondary:hover {
+  background-color: var(--border-strong);
+  border-color: var(--border-focus);
+}
+
+.btn-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+.btn-ghost:hover {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+/* A ghost button tinted for a destructive action (delete / stop). */
+.btn-danger-ghost { color: var(--error); }
+.btn-danger-ghost:hover { background-color: var(--error-bg); color: var(--error); }
+
+/* --- ui-24: icon button (small, square, low chrome) ------------------------ */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--space-8);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  transition: all var(--transition-ease);
+}
+.btn-icon:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.btn-inline { min-height: 0; padding: 2px 8px; font-size: 0.85em; margin-left: 4px; }
+
+/* --- ui-24: settings/session/upload layout classes ------------------------ */
+.session-switcher-row { display: flex; gap: var(--space-8); align-items: stretch; }
+.session-select { flex: 1; margin-bottom: var(--space-8); }
+.session-select.is-loading { opacity: 0.6; }
+.process-config { display: flex; gap: var(--space-12); flex-direction: column; }
+.showing-count { margin-top: var(--space-8); }
+.sort-label { margin-top: var(--space-12); }
+
+/* --- ui-24: modal field + action row classes ------------------------------ */
+.modal-field { margin-bottom: var(--space-16); }
+.modal-field-last { margin-bottom: var(--space-24); }
+.settings-card { max-width: 600px; }
+.settings-title { margin-bottom: var(--space-24); }
+.modal-actions {
+  margin-top: var(--space-24);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-12);
+}
+.model-fetch-row {
+  display: flex;
+  gap: var(--space-12);
+  align-items: center;
+  margin-top: var(--space-8);
+}
+.openrouter-help { margin-top: var(--space-8); line-height: 1.5; }
+.openrouter-help-link { margin-top: 4px; }
+.inline-code { background: var(--bg-surface-hover); padding: 0 4px; border-radius: 3px; }
+
+/* --- ui-24: progress card inline styles → classes ------------------------- */
+.progress-message { margin-bottom: var(--space-16); }
+.progress-percentage { margin-top: var(--space-8); text-align: right; }
+.log-console {
+  margin-top: var(--space-24);
+  height: 150px;
+  overflow-y: auto;
+  background: var(--bg-app);
+  padding: var(--space-12);
+  border-radius: var(--radius-sm);
+  font-family: monospace;
+  font-size: var(--text-xs);
+  border: 1px solid var(--border-strong);
+}
+
+/* --- ui-24: card status text (was inline) --------------------------------- */
+.task-status-text { font-size: var(--text-sm); font-weight: 500; }
+
+/* --- ui-14: confidence badge on the collapsed card header ------------------
+   Text-labelled ("Conf 62%"); the band colour is a REINFORCEMENT, never the
+   sole signal (WCAG 1.4.1 — the % text carries the meaning). */
+.conf-badge {
+  font-variant-numeric: tabular-nums;
+  border-color: var(--border-strong);
+}
+.conf-badge.conf-low  { color: var(--error);   border-color: var(--error); }
+.conf-badge.conf-mid  { color: var(--warning); border-color: var(--warning); }
+.conf-badge.conf-high { color: var(--success); border-color: var(--success); }
+
+/* --- ui-14: focused card ring (keyboard triage target) -------------------- */
+.task-card:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* --- ui-14 / ui-16: styled confirm dialog --------------------------------- */
+.confirm-card { max-width: 440px; }
+.confirm-message { margin-bottom: var(--space-24); color: var(--text-secondary); }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-12);
+}
+
+/* --- ui-19: upload zone states + clear affordance ------------------------- */
+.upload-zone { position: relative; }
+.upload-zone.drag-over {
+  border-color: var(--accent-primary);
+  background-color: var(--bg-surface-hover);
+}
+.upload-zone p.has-file { color: var(--accent-primary); font-weight: 600; }
+.upload-zone-highlight {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 0 3px var(--border-focus);
+  animation: pulseBorder 0.8s ease-in-out 2;
+}
+@keyframes pulseBorder {
+  0%, 100% { box-shadow: 0 0 0 3px var(--border-focus); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+.clear-file-btn {
+  position: absolute;
+  top: var(--space-8);
+  right: var(--space-8);
+  color: var(--text-tertiary);
+}
+
+/* --- ui-19: skeleton loading states --------------------------------------- */
+.skeleton-list { display: flex; flex-direction: column; gap: var(--space-16); }
+.skeleton-card {
+  height: 72px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--bg-surface) 25%,
+    var(--bg-surface-hover) 50%,
+    var(--bg-surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border: 1px solid var(--border-subtle);
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* --- ui-22: first-run de-emphasis + onboarding empty pane ------------------ */
+body.is-first-run #filtersSection,
+body.is-first-run #globalActionsSection {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(0.4);
+  transition: opacity var(--transition-ease);
+}
+
+.empty-state-onboarding {
+  text-align: center;
+  align-items: center;
+  border-style: dashed;
+  padding: var(--space-64) var(--space-32);
+  gap: var(--space-16);
+}
+.empty-state-onboarding .btn { min-width: 180px; }
+.empty-state-icon { color: var(--accent-primary); line-height: 0; }
+
+/* --- ui-23: push-completion results panel --------------------------------- */
+.push-results-panel {
+  border: 1px solid var(--success);
+  background: var(--success-bg);
+  border-radius: var(--radius-md);
+  padding: var(--space-16) var(--space-24);
+  margin-bottom: var(--space-24);
+}
+.push-results-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+}
+.push-results-head h3 { margin: 0; color: var(--text-primary); }
+.push-results-summary {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.push-results-close { margin-left: auto; }
+.push-results-failure {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-12);
+  flex-wrap: wrap;
+}
+.push-results-list {
+  list-style: none;
+  margin: var(--space-12) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.push-results-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: var(--space-8) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.push-results-list li:first-child { border-top: none; }
+.push-results-title { color: var(--text-primary); font-size: var(--text-sm); }
+.push-results-key {
+  font-family: monospace;
+  font-weight: 600;
+  text-decoration: none;
+}
+a.push-results-key:hover { text-decoration: underline; }

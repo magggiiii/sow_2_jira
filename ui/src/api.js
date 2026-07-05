@@ -20,28 +20,53 @@ export const TASK_STATUS = {
   PUSHED: 'PUSHED',
 }
 
-// --- Pure view-model helpers ----------------------------------------------
-
-// Sidebar overview counts. `pending` is everything not in a terminal bucket.
-export function computeStats(tasks) {
-  const list = tasks || []
-  const total = list.length
-  const approved = list.filter((t) => t.status === TASK_STATUS.APPROVED).length
-  const rejected = list.filter((t) => t.status === TASK_STATUS.REJECTED).length
-  const pushed = list.filter((t) => t.status === TASK_STATUS.PUSHED).length
-  const pending = total - approved - rejected - pushed
-  return { total, approved, rejected, pushed, pending }
+// --- ui-15: ONE status→bucket map — the single source of truth for BOTH the
+// filter (shouldShowTask) AND the sidebar stats (computeStats). Previously the
+// two disagreed: stats counted PUSHED in its own bucket while the filter leaked
+// PUSHED into approved/pending, and "Pending" mapped to CLOSED in one place and
+// something else in another. Now every TaskStatus resolves to exactly one of the
+// four review buckets, verified against models/schemas.py :: TaskStatus.
+//
+//   pending  — OPEN, CLOSED, MERGED  (still under review / not human-actioned)
+//   approved — APPROVED
+//   rejected — REJECTED
+//   pushed   — PUSHED  (has its own filter now, ui-15)
+export const STATUS_BUCKET = {
+  [TASK_STATUS.OPEN]: 'pending',
+  [TASK_STATUS.CLOSED]: 'pending',
+  [TASK_STATUS.MERGED]: 'pending',
+  [TASK_STATUS.APPROVED]: 'approved',
+  [TASK_STATUS.REJECTED]: 'rejected',
+  [TASK_STATUS.PUSHED]: 'pushed',
 }
 
-// Filter predicate. `filters` = { pending, approved, rejected, flagged } booleans.
-// Preserves the exact behaviour of the old `shouldShow` (CLOSED == pending
-// bucket; PUSHED hidden only when both approved AND pending are off).
+// The bucket a task falls in. Unknown/blank statuses fall back to `pending` so a
+// stray value is still visible + counted rather than silently dropped.
+export function bucketOf(status) {
+  return STATUS_BUCKET[String(status || '').toUpperCase()] || 'pending'
+}
+
+// --- Pure view-model helpers ----------------------------------------------
+
+// Sidebar overview counts. Driven by the same STATUS_BUCKET map as the filter,
+// so a status can never be counted in one bucket but filtered as another.
+export function computeStats(tasks) {
+  const list = tasks || []
+  const counts = { total: list.length, pending: 0, approved: 0, rejected: 0, pushed: 0 }
+  list.forEach((t) => {
+    counts[bucketOf(t.status)] += 1
+  })
+  return counts
+}
+
+// Filter predicate. `filters` = { pending, approved, rejected, pushed, flagged }
+// booleans — one flag per review bucket, driven by the SAME STATUS_BUCKET map as
+// computeStats so filter + stats can never disagree. `flagged` is an extra
+// AND-constraint (flagged-only) layered on top of the bucket toggles.
 export function shouldShowTask(t, filters) {
   const f = filters || {}
-  if (t.status === TASK_STATUS.CLOSED && !f.pending) return false
-  if (t.status === TASK_STATUS.APPROVED && !f.approved) return false
-  if (t.status === TASK_STATUS.REJECTED && !f.rejected) return false
-  if (t.status === TASK_STATUS.PUSHED && !f.approved && !f.pending) return false
+  const bucket = bucketOf(t.status)
+  if (f[bucket] === false) return false
   if (f.flagged && (!t.flags || t.flags.length === 0)) return false
   return true
 }
@@ -59,6 +84,34 @@ export function statusDisplay(status) {
     default:
       return null
   }
+}
+
+// --- ui-16: Push pre-flight predicate --------------------------------------
+//
+// Pure so it can drive both the disabled state AND the tooltip. Push is only
+// valid when a session is active, at least one task is approved, and Jira creds
+// are saved. Returns { enabled, reason } — `reason` is the tooltip explaining a
+// disabled button (empty when enabled). This absorbs the backend's synchronous
+// `{success:false,"No approved tasks"}` return so it never round-trips.
+export function pushPreflight({ activeSessionId, approvedCount, jiraConfigured } = {}) {
+  if (!activeSessionId) return { enabled: false, reason: 'Select or run a session first' }
+  if (!approvedCount || approvedCount <= 0) {
+    return { enabled: false, reason: 'Approve at least one task before pushing' }
+  }
+  if (!jiraConfigured) {
+    return { enabled: false, reason: 'Add Jira server + API token in Settings first' }
+  }
+  return { enabled: true, reason: '' }
+}
+
+// --- ui-18: session-switch running-state decision --------------------------
+//
+// Pure: given the /api/status payload for the session being switched to, decide
+// whether to reopen the progress overlay + resume polling ('resume') or just
+// load + render its tasks ('load'). Prevents rendering a stale empty list over a
+// run that's still in flight.
+export function decideSessionSwitch(status) {
+  return status && status.is_running ? 'resume' : 'load'
 }
 
 // A task is "already actioned" — its Approve/Reject buttons are hidden.

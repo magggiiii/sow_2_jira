@@ -130,13 +130,13 @@
     <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
     <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
     <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
-    <p class="updated reveal"><b>Last updated:</b> 2026-07-05 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (pushed → GitHub + GitLab; PR #7 updated, OPEN) &nbsp;·&nbsp; <b>main:</b> untouched</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-07-05 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (local commits ahead of pushed <code>063cf5f</code> — this session's batch not yet pushed; PR #7 OPEN) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">42</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;604</div><div class="lab">Tests passing (was red on checkout)</div></div>
-      <div class="metric"><div class="num">50</div><div class="lab">Clean commits on the branch</div></div>
-      <div class="metric"><div class="num">5<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
+      <div class="metric"><div class="num">52</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;667</div><div class="lab">Python tests passing (+46 UI vitest)</div></div>
+      <div class="metric"><div class="num">58</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">6<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
 
@@ -150,11 +150,11 @@
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.45)"></i></div><div class="wpct">45%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.22)"></i></div><div class="wpct">22%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.65)"></i></div><div class="wpct">65%</div></div>
     </div>
   </section>
 
@@ -163,6 +163,60 @@
     <div class="sec-no reveal">01 — Shipped &amp; verified</div>
     <h2 class="reveal">What's done so far.</h2>
     <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+
+    <!-- WAVE 1 (offline data platform — this session) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 1 — Data platform, behind the seams</h3><span class="sha">ddb60c2</span></div>
+      <div class="inc-sub reveal">The offline half of the hosted-data pivot: crypto, object store, tz-aware time, full-UUID identity, ORM + migration baseline, dev targets. All additive behind seams — app behavior unchanged, suite green. (DB/R2 runtime wiring waits on provisioned Postgres/R2.) Each landed test-first with an adversarial review.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Env-driven secret encryption with key rotation</h4><span class="tag">1.1</span></div>
+        <p class="what">A MultiFernet crypto seam keyed purely from the environment, with zero-downtime rotation.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Secrets were encrypted with an on-disk <code>data/.keyfile</code>; no rotation path.</div><div class="cell after"><span class="lbl">After</span><code>config/crypto.py</code> encrypts/decrypts/rotates over <code>APP_ENC_KEY</code> (+ <code>APP_ENC_KEY_OLD</code>); errors never leak keys or ciphertext. 9 tests.</div></div>
+        <p class="why"><span class="wl">Better</span>Keys live in the platform's secret store and rotate without downtime — a prerequisite for multi-tenant hosting.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Path-traversal-safe object store + one composition root</h4><span class="tag">1.4</span></div>
+        <p class="what">A single hardened <code>LocalObjectStore</code> for run artifacts, ready to swap for R2/S3.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Two <code>LocalObjectStore</code> copies; the one wired into <code>build_container()</code> did no key validation — a crafted key or symlink could read/write outside the store.</div><div class="cell after"><span class="lbl">After</span>One store in <code>integrations/object_store.py</code>: rejects <code>..</code>/absolute/symlink escapes (resolves + asserts within base). 26 tests incl. a reproduced escape.</div></div>
+        <p class="why"><span class="wl">Better</span>User-influenced artifact keys can't escape their tenant prefix — closed before the SaaS pivot exposes it.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Timezone-aware timestamps + full-UUID run identity</h4><span class="tag">1.3 · 1.5</span></div>
+        <p class="what">Every timestamp is tz-aware UTC; every run/criterion id is a full UUID.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Naive <code>datetime.utcnow()</code> everywhere (deprecated; aware/naive comparison bugs); run ids were an 8-char <code>uuid4()[:8]</code> slug.</div><div class="cell after"><span class="lbl">After</span>One <code>utcnow()</code> helper, zero naive datetimes repo-wide; <code>core/domain/ids.make_run_id()</code> mints full UUIDs (filename kept as a display label).</div></div>
+        <p class="why"><span class="wl">Better</span>Correct across regions and collision-safe as a database primary key.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>ORM models + Alembic baseline + dev targets</h4><span class="tag">1.2 · 1.7</span></div>
+        <p class="what">The 7-table tenant schema and migration baseline, authored behind the seam.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No database layer; runs persisted only as JSON under <code>data/sessions/</code>.</div><div class="cell after"><span class="lbl">After</span><code>pipeline/db.py</code> (async engine + SQLAlchemy 2.0 models, per-tenant <code>user_id</code>) + Alembic <code>0001</code> baseline; <code>make migrate/worker/lock/test</code>. Author-only — migrations run once Postgres is provisioned.</div></div>
+        <p class="why"><span class="wl">Better</span>The data model exists and is reviewable now; only the runtime cutover waits on infra.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 6 Round 1+2 (frontend — this session) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 6 — UI/UX rework: module split + components</h3><span class="sha">118653b</span></div>
+      <div class="inc-sub reveal">Killed the 979-line god-file, added a real test harness, then shipped three review-loop upgrades in parallel. Verified by 46 vitest tests + a clean production build.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The 979-line UI monolith becomes testable modules</h4><span class="tag">UI.2b</span></div>
+        <p class="what">Split the single IIFE into ES modules with a tiny reactive store and a real test runner.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>One 979-line <code>app.js</code> IIFE, three hand-synced globals, status strings duplicated ~4×, and no frontend tests at all.</div><div class="cell after"><span class="lbl">After</span><code>ui/src/{state,api,render,modals,polling,main}.js</code> + a ~1KB nanostores store + vitest (20 tests to start).</div></div>
+        <p class="why"><span class="wl">Better</span>Every later UI change is small, isolated, and test-covered.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Failures now guide recovery instead of dead-ending</h4><span class="tag">UI.3</span></div>
+        <p class="what">The previously-unused <code>error_class</code> taxonomy finally drives the UI.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every failure showed the same "Dismiss" dead-end, regardless of cause.</div><div class="cell after"><span class="lbl">After</span>A severity chip (text, not color-only) + the right action per class: TRANSIENT→Retry, USER_FIXABLE→Open Settings, TERMINAL→Dismiss.</div></div>
+        <p class="why"><span class="wl">Better</span>Users can actually recover from the common failure modes.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Accessible, XSS-safe review cards + responsive layout</h4><span class="tag">UI.4a · UI.6</span></div>
+        <p class="what">Hardened the core review loop and brought the layout + modals to an a11y baseline.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Editing a card collapsed it (full re-render); collapsibles had no keyboard/ARIA; section titles were interpolated into <code>innerHTML</code> (stored-XSS); one breakpoint; modals had no focus trap.</div><div class="cell after"><span class="lbl">After</span>Optimistic in-place patch preserves expanded state; role/tabindex/aria + Enter/Space + a status text label; titles escaped via <code>textContent</code>; 1024/768/400 breakpoints; dialog focus-trap + Escape + focus-restore.</div></div>
+        <p class="why"><span class="wl">Better</span>The core value loop is fast, keyboard-operable, screen-reader-friendly, and safe from injected markup.</p>
+      </div>
+    </div>
 
     <!-- WAVE 0 -->
     <div class="increment">

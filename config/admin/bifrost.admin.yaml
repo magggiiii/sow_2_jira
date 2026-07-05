@@ -15,9 +15,11 @@ providers:
     base_url: "http://host.docker.internal:11434/v1"
     api_key: "ollama"
 
-# Sample Virtual Keys for Remote Instances
+# Sample Virtual Keys for Remote Instances.
+# The remote/backbone key is injected from the environment (ARGUS_BACKBONE_TOKEN);
+# never commit a live credential here. Rotate the old literal — it is in git history.
 virtual_keys:
-  - name: "42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
+  - name: "env.ARGUS_BACKBONE_TOKEN"
     routing:
       strategy: "priority"
       targets:

@@ -13,9 +13,12 @@ NC='\033[0m'
 
 # Argus Identity
 SOW_INSTANCE_ID="sow-$(date +%s)-${RANDOM}"
+# Argus observability is opt-in. Do NOT ship secrets in the installer: these are
+# env-driven and default to empty. Set ARGUS_HQ_URL / ARGUS_BACKBONE_TOKEN in the
+# environment (or the generated .env) to enable backbone sync.
 # otlp gRPC exporter expects host:port (no scheme)
-ARGUS_HQ_URL="hz8nuthhmt.loclx.io:443"
-ARGUS_BACKBONE_TOKEN="42e389e1f820e7f52c55aa35b8592552bf0d83ca5e82a62d"
+ARGUS_HQ_URL="${ARGUS_HQ_URL:-}"
+ARGUS_BACKBONE_TOKEN="${ARGUS_BACKBONE_TOKEN:-}"
 
 # Utility: Confirm with user
 confirm() {
@@ -178,7 +181,11 @@ else
     DOCKER_HOST_INTERNAL=${DOCKER_HOST_INTERNAL:-"host.docker.internal"}
 fi
 
-ARGUS_HQ_URL="$(normalize_host_port "$ARGUS_HQ_URL")"
+# Only normalize when a URL was actually provided; an empty (opt-out) value must
+# stay empty rather than becoming a stray ":443".
+if [ -n "$ARGUS_HQ_URL" ]; then
+    ARGUS_HQ_URL="$(normalize_host_port "$ARGUS_HQ_URL")"
+fi
 
 # 3.8 Fetch Latest Version
 if [ -f "VERSION" ]; then
@@ -252,6 +259,10 @@ S2J_VERSION=$S2J_VERSION
 SOW_DATA_DIR=data
 EOF
 fi
+
+# The .env may hold a real ARGUS_BACKBONE_TOKEN (and later API keys); restrict it
+# to the owner so a supplied secret is never group/other-readable.
+chmod 600 "$GLOBAL_ENV" 2>/dev/null || true
 
 # Always refresh upgrade-sensitive runtime values on reinstall/update.
 upsert_env_var "$GLOBAL_ENV" "DOCKER_HOST_INTERNAL" "$DOCKER_HOST_INTERNAL"

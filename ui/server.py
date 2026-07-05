@@ -10,7 +10,18 @@ from typing import List, Optional
 from datetime import datetime, timezone
 import uuid
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    UploadFile,
+    File,
+    BackgroundTasks,
+    Depends,
+    Request,
+    Cookie,
+    Header,
+    Response,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +50,8 @@ from audit.logger import AuditLogger
 from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
 from integrations.jira_client import JiraClient
 from jira import JIRA
+
+from auth.deps import SESSION_COOKIE_NAME, current_user, get_session_store
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pipeline.observability import trace_span, logger
@@ -159,6 +172,9 @@ class ProcessingStatus(BaseModel):
     # (fix credentials/config), or terminal. Set at the pipeline/push boundary.
     error_class: Optional[ErrorClass] = None
     run_id: Optional[str] = None
+    # SERVER-B 2.6a: creator's user id, stamped at run creation so data routes
+    # can resolve ownership. In single-user mode this is the default user's id.
+    owner_id: Optional[str] = None
     kind: str = "pipeline"
     logs: List[str] = []
 
@@ -186,9 +202,198 @@ def get_session_path(session_id: str) -> Path:
         return Path("data/pipeline_output.json")  # fallback for legacy
     return Path(f"data/sessions/{session_id}/pipeline_output.json")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SERVER-B multi-tenant hardening (2.5c / 2.6a / 2.6b / 2.6c)
+#
+# THE OVERRIDING CONSTRAINT: hardening ACTIVATES ONLY WHEN AUTH IS CONFIGURED.
+# The 780 existing tests hit routes WITHOUT auth cookies and MUST stay green, so
+# every check below is gated on ``auth_enabled()``. When OFF (the default):
+#   - current_user resolves to a fixed DEFAULT/local user
+#   - IDOR ownership never 404s (everything is owned by the default user)
+#   - CSRF is not enforced
+# When ON (a SessionStore wired via app.state.session_store or a dependency
+# override): real per-user auth + IDOR + CSRF enforcement.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Stable identity for single-user / local mode. Every run created while auth is
+# OFF is owned by this id, so ownership checks are transparently satisfied.
+DEFAULT_USER_ID = "local-default-user"
+DEFAULT_USER_EMAIL = "local@localhost"
+
+
+class _DefaultUser:
+    """Fixed principal used when auth is not configured (single-user mode)."""
+
+    id = DEFAULT_USER_ID
+    email = DEFAULT_USER_EMAIL
+    is_active = True
+
+
+_DEFAULT_USER = _DefaultUser()
+
+# CSRF double-submit cookie/header names (2.6c). A state-changing request in
+# hardened mode must send an ``X-CSRF-Token`` header matching the CSRF cookie.
+CSRF_COOKIE_NAME = "sow_csrf"
+CSRF_HEADER_NAME = "x-csrf-token"
+
+# Upload hardening (2.6b): max upload size, overridable via env.
+SOW_MAX_UPLOAD_MB = int(os.environ.get("SOW_MAX_UPLOAD_MB", "50"))
+_PDF_MAGIC = b"%PDF-"
+
+
+def auth_enabled() -> bool:
+    """Return True iff per-user auth is configured for this app.
+
+    Auth is considered ON when a ``SessionStore`` has been wired onto
+    ``app.state.session_store`` OR the ``get_session_store`` dependency has been
+    overridden (the path tests use). Default is OFF so existing single-user
+    behavior — and the 780 existing tests — are byte-for-byte unchanged.
+    """
+    if getattr(app.state, "session_store", None) is not None:
+        return True
+    if get_session_store in app.dependency_overrides:
+        return True
+    return False
+
+
+def get_current_user(
+    request: Request,
+    sow_session: Optional[str] = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+):
+    """Resolve the acting principal for a request.
+
+    - Auth OFF  → the fixed default local user (no 401, no cookie needed).
+    - Auth ON   → delegate to ``auth.deps.current_user`` (401 on missing/forged/
+      expired cookie).
+    """
+    if not auth_enabled():
+        return _DEFAULT_USER
+
+    # Resolve the store the same way auth_enabled() detected it: prefer an
+    # explicit dependency override (tests), else the app-state store.
+    store_provider = app.dependency_overrides.get(get_session_store)
+    store = store_provider() if store_provider else app.state.session_store
+    return current_user(sow_session=sow_session, store=store)
+
+
+def enforce_csrf(
+    request: Request,
+    sow_csrf: Optional[str] = Cookie(default=None, alias=CSRF_COOKIE_NAME),
+    x_csrf_token: Optional[str] = Header(default=None, alias=CSRF_HEADER_NAME),
+):
+    """CSRF double-submit check for state-changing routes (2.6c).
+
+    ENFORCED ONLY in hardened mode, so existing POST tests (which send no token)
+    still pass. In hardened mode the ``X-CSRF-Token`` header must be present and
+    equal to the ``sow_csrf`` cookie; otherwise HTTP 403.
+    """
+    if not auth_enabled():
+        return
+    if not sow_csrf or not x_csrf_token or not secrets.compare_digest(
+        str(sow_csrf), str(x_csrf_token)
+    ):
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+
+
+# ── run/session ownership metadata (2.6a) ────────────────────────────────────
+#
+# Ownership lives in two places kept in sync: the in-memory ``active_runs`` entry
+# (ProcessingStatus.owner_id) AND the persisted metadata.json. These helpers wrap
+# the on-disk metadata so tests can inject an in-memory store via monkeypatch.
+
+
+def _run_meta_path(run_id: str) -> Path:
+    return Path(f"data/sessions/{run_id}/metadata.json")
+
+
+def _read_run_meta(run_id: str) -> Optional[dict]:
+    if not run_id or ".." in run_id or "/" in run_id or "\\" in run_id:
+        return None
+    p = _run_meta_path(run_id)
+    if not p.exists():
+        return None
+    try:
+        with open(p, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError, OSError):
+        return None
+
+
+def _write_run_meta(run_id: str, meta: dict) -> None:
+    p = _run_meta_path(run_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w") as f:
+        json.dump(meta, f)
+
+
+def _list_run_meta() -> list[dict]:
+    sessions_dir = Path("data/sessions")
+    if not sessions_dir.exists():
+        return []
+    out = []
+    for d in sessions_dir.iterdir():
+        if d.is_dir():
+            meta = _read_run_meta(d.name)
+            if meta is not None:
+                out.append(meta)
+    return out
+
+
+def _run_owner_id(run_id: str) -> Optional[str]:
+    """Return the owner id for ``run_id`` from active_runs or persisted metadata.
+
+    Returns None when the run does not exist at all.
+    """
+    st = active_runs.get(run_id)
+    if st is not None and getattr(st, "owner_id", None):
+        return st.owner_id
+    meta = _read_run_meta(run_id)
+    if meta is not None:
+        # Legacy runs (pre-hardening) have no owner_id — treat as default-owned so
+        # single-user data stays reachable.
+        return meta.get("owner_id", DEFAULT_USER_ID)
+    if st is not None:
+        # Live run with no persisted meta yet and no stamped owner → default.
+        return getattr(st, "owner_id", None) or DEFAULT_USER_ID
+    return None
+
+
+def _assert_owned_or_404(run_id: Optional[str], user) -> None:
+    """Ownership guard for data routes (2.6a).
+
+    Only enforces when auth is ON. Raises 404 (NOT 403 — do not leak existence)
+    when the run exists but is owned by someone else, or when it does not exist.
+    A falsy ``run_id`` (no session selected) is left to the route's own handling.
+    """
+    if not auth_enabled():
+        return
+    if not run_id:
+        return
+    owner = _run_owner_id(run_id)
+    if owner is None or owner != getattr(user, "id", None):
+        raise HTTPException(status_code=404, detail="Not found")
+
 @app.get("/")
 def read_root():
     return FileResponse(FRONTEND_DIR / "index.html")
+
+@app.get("/api/csrf")
+def get_csrf_token(response: Response, user=Depends(get_current_user)):
+    """2.6c: mint a CSRF token and set it as a readable double-submit cookie.
+
+    The browser echoes this value back in the ``X-CSRF-Token`` header on
+    state-changing requests. In single-user (auth OFF) mode a token is still
+    issued for symmetry, but CSRF is not enforced so it is a no-op.
+    """
+    token = secrets.token_urlsafe(32)
+    # Not HttpOnly on purpose: JS must read it to echo it in the header
+    # (double-submit pattern). Secure/SameSite left to the deployment/proxy.
+    response.set_cookie(
+        CSRF_COOKIE_NAME, token, samesite="strict", httponly=False
+    )
+    return {"csrf_token": token}
+
 
 @app.get("/healthz")
 def healthz():
@@ -219,11 +424,22 @@ def save_data(data, session_id: str = None):
         json.dump(data, f, indent=2, default=str)
 
 @app.get("/api/sessions")
-def get_sessions():
+def get_sessions(user=Depends(get_current_user)):
+    if auth_enabled():
+        # 2.6a: only surface runs owned by the caller (legacy runs w/o owner_id
+        # belong to the default user, which is not a real principal when auth is
+        # ON, so they are excluded here).
+        sessions = [
+            m for m in _list_run_meta()
+            if m.get("owner_id") == getattr(user, "id", None)
+        ]
+        sessions.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return sessions
+
     sessions_dir = Path("data/sessions")
     if not sessions_dir.exists():
         return []
-        
+
     sessions = []
     for d in sessions_dir.iterdir():
         if d.is_dir():
@@ -239,7 +455,8 @@ def get_sessions():
     return sessions
 
 @app.get("/api/tasks")
-def get_tasks(session_id: Optional[str] = None):
+def get_tasks(session_id: Optional[str] = None, user=Depends(get_current_user)):
+    _assert_owned_or_404(session_id, user)
     data = load_data(session_id)
     # Add current environment defaults to help UI
     data["env_defaults"] = {
@@ -249,9 +466,10 @@ def get_tasks(session_id: Optional[str] = None):
     return data
 
 @app.get("/api/status")
-def get_status(session_id: Optional[str] = None):
+def get_status(session_id: Optional[str] = None, user=Depends(get_current_user)):
     if not session_id:
         return ProcessingStatus().model_dump()
+    _assert_owned_or_404(session_id, user)
     return active_runs.get(session_id, ProcessingStatus()).model_dump()
 
 class ProcessRequest(BaseModel):
@@ -262,12 +480,14 @@ class ProcessRequest(BaseModel):
     skip_indexing: bool = False
     max_nodes: int = 200
 
-def run_pipeline_task(req: ProcessRequest, run_id: str):
+def run_pipeline_task(req: ProcessRequest, run_id: str, owner_id: str = DEFAULT_USER_ID):
     status = ProcessingStatus()
     status.is_running = True
     status.run_id = run_id
+    # 2.6a: stamp the creator so data routes can resolve ownership.
+    status.owner_id = owner_id
     active_runs[run_id] = status
-    
+
     # Save session metadata safely
     session_dir = Path(f"data/sessions/{run_id}")
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -276,6 +496,7 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
             "run_id": run_id,
             "filename": req.pdf_filename,
             "llm_mode": req.llm_mode,
+            "owner_id": owner_id,
             "created_at": datetime.now(timezone.utc).isoformat()
         }, f)
         
@@ -327,7 +548,12 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
                 del active_orchestrators[run_id]
 
 @app.post("/api/cancel/{run_id}")
-async def cancel_run(run_id: str):
+async def cancel_run(
+    run_id: str,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    _assert_owned_or_404(run_id, user)
     if run_id in active_orchestrators:
         active_orchestrators[run_id].stop_event.set()
         if run_id in active_runs:
@@ -336,7 +562,12 @@ async def cancel_run(run_id: str):
     raise HTTPException(status_code=404, detail="Active run not found")
 
 @app.delete("/api/sessions/{run_id}")
-async def delete_session(run_id: str):
+async def delete_session(
+    run_id: str,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    _assert_owned_or_404(run_id, user)
     session_dir = Path(f"data/sessions/{run_id}")
     if session_dir.exists():
         # Stop if running
@@ -349,16 +580,55 @@ async def delete_session(run_id: str):
         return {"message": f"Session {run_id} deleted"}
     raise HTTPException(status_code=404, detail="Session not found")
 
+def _safe_upload_basename(raw_name: Optional[str]) -> str:
+    """2.6b: sanitize an uploaded filename to a safe basename.
+
+    Strips any directory components (both / and \\) and rejects traversal so a
+    crafted name like ``../../etc/evil.pdf`` cannot escape UPLOAD_DIR. Returns
+    just the final path segment (e.g. ``evil.pdf``).
+    """
+    name = (raw_name or "").replace("\\", "/")
+    # Take the final path segment only — drops any leading dirs / traversal.
+    base = os.path.basename(name).strip()
+    # Defensive: after basename there should be no separators or traversal left.
+    base = base.replace("/", "").replace("\\", "")
+    if not base or base in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return base
+
+
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf"):
+async def upload_file(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    # 2.6b upload hardening (applies in BOTH modes — safe for valid PDFs):
+    #   1. sanitize the filename to a safe basename (no path traversal)
+    #   2. reject by extension AND content sniff (must be a real PDF) -> 400
+    #   3. reject oversize uploads (> SOW_MAX_UPLOAD_MB) -> 413
+    safe_name = _safe_upload_basename(file.filename)
+    if not safe_name.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
-    
-    file_path = UPLOAD_DIR / file.filename
+
+    contents = await file.read()
+
+    max_bytes = SOW_MAX_UPLOAD_MB * 1024 * 1024
+    if len(contents) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {SOW_MAX_UPLOAD_MB} MB)",
+        )
+
+    # Content sniff: a genuine PDF starts with the %PDF- magic marker.
+    if not contents.startswith(_PDF_MAGIC):
+        raise HTTPException(status_code=400, detail="File is not a valid PDF")
+
+    file_path = UPLOAD_DIR / safe_name
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    return {"filename": file.filename}
+        buffer.write(contents)
+
+    return {"filename": safe_name}
 
 @app.get("/api/providers")
 def get_providers():
@@ -391,7 +661,12 @@ def _extract_models_from_response(provider_id: str, data: dict) -> list[str]:
     wait=wait_exponential(multiplier=1, min=2, max=10),
     retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException))
 )
-async def get_provider_models(provider_id: str, req: ModelDiscoveryRequest):
+async def get_provider_models(
+    provider_id: str,
+    req: ModelDiscoveryRequest,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
     if provider_id not in PROVIDER_REGISTRY:
         raise HTTPException(status_code=404, detail="Unknown provider")
 
@@ -492,7 +767,11 @@ def get_settings():
     }
 
 @app.post("/api/settings")
-def save_settings(req: SettingsConfig):
+def save_settings(
+    req: SettingsConfig,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
     try:
         settings = settings_manager.load()
     except RuntimeError as e:
@@ -552,13 +831,21 @@ def save_settings(req: SettingsConfig):
     return {"message": "Settings saved successfully"}
 
 @app.post("/api/process")
-async def start_processing(req: ProcessRequest, background_tasks: BackgroundTasks):
+async def start_processing(
+    req: ProcessRequest,
+    background_tasks: BackgroundTasks,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
     # Full-UUID run id (W1 1.5). The friendly filename is preserved separately in
     # the session metadata (see run_pipeline_task), so the UI still shows a
     # readable name; old timestamp-slug session dirs remain readable by id.
     run_id = make_run_id()
 
-    background_tasks.add_task(run_pipeline_task, req, run_id)
+    # 2.6a: the created run is owned by the caller (default user in single-user
+    # mode), stamped into both active_runs and the persisted metadata.
+    owner_id = getattr(user, "id", DEFAULT_USER_ID)
+    background_tasks.add_task(run_pipeline_task, req, run_id, owner_id)
     return {"message": "Processing started", "run_id": run_id}
 
 class TaskUpdate(BaseModel):
@@ -573,7 +860,13 @@ class TaskUpdate(BaseModel):
     status: str
 
 @app.post("/api/tasks")
-def update_task(task_update: TaskUpdate, session_id: Optional[str] = None):
+def update_task(
+    task_update: TaskUpdate,
+    session_id: Optional[str] = None,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    _assert_owned_or_404(session_id, user)
     data = load_data(session_id)
     tasks = data.get("tasks", [])
     
@@ -595,7 +888,13 @@ class AddTaskRequest(BaseModel):
     short_description: str
 
 @app.post("/api/tasks/add")
-def add_task(req: AddTaskRequest, session_id: Optional[str] = None):
+def add_task(
+    req: AddTaskRequest,
+    session_id: Optional[str] = None,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    _assert_owned_or_404(session_id, user)
     data = load_data(session_id)
     if "tasks" not in data:
         data["tasks"] = []
@@ -617,7 +916,12 @@ def add_task(req: AddTaskRequest, session_id: Optional[str] = None):
     return {"message": "Task added successfully", "task": new_task}
 
 @app.post("/api/tasks/approve_all")
-def approve_all(session_id: Optional[str] = None):
+def approve_all(
+    session_id: Optional[str] = None,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    _assert_owned_or_404(session_id, user)
     data = load_data(session_id)
     tasks = data.get("tasks", [])
     count = 0
@@ -780,7 +1084,13 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
             status.is_running = False
 
 @app.post("/api/push")
-def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = None):
+def push_to_jira(
+    req: Optional[PushRequest] = None,
+    session_id: Optional[str] = None,
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
+    _assert_owned_or_404(session_id, user)
     if session_id and session_id in active_runs and active_runs[session_id].is_running:
         raise HTTPException(status_code=409, detail="A task is already running for this session")
 
@@ -797,7 +1107,10 @@ def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = 
     return {"success": True, "started": True, "run_id": run_id, "message": "Push started"}
 
 @app.post("/api/jira/test")
-def test_jira_connection():
+def test_jira_connection(
+    user=Depends(get_current_user),
+    _csrf=Depends(enforce_csrf),
+):
     """BE-3: read-only Jira connection test.
 
     Validates credentials and reaches the configured server WITHOUT creating any

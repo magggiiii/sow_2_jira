@@ -5,10 +5,10 @@ import json
 from pathlib import Path
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import time
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.ports import LLMProvider
+    from core.ports import LLMProvider, ObjectStore, RunRepository, TaskRepository
 
 from models.schemas import (
     RunConfig, ManagedTask, TaskStatus, SourceRef, JiraHierarchy, current_provider_config
@@ -68,9 +68,52 @@ def cap_nodes(nodes: list[dict], max_nodes: int, strategy: str = "degraded") -> 
     return nodes[:max_nodes], True, reason
 
 
+class _CancelSignal:
+    """2.3-d: a ``threading.Event``-shaped cancel bridge.
+
+    The indexer and LLMClient only consult ``stop_event.is_set()`` to decide
+    whether to bail / raise. A durable worker injects a custom ``cancel_check``
+    (e.g. a Redis ``cancel:{run_id}`` probe) that does NOT flip the local
+    ``stop_event``. This bridge reports ``is_set() == True`` when EITHER the local
+    stop_event is set OR the injected cancel_check fires, so cancellation
+    propagates into the indexer + any in-flight LLM call without touching their
+    code. A misbehaving probe must never crash a run, so a probe exception is
+    treated as 'not cancelled' (matching :meth:`PipelineOrchestrator._cancelled`).
+    ``set()`` forwards to the real stop_event so anything already holding it keeps
+    working.
+    """
+
+    def __init__(self, stop_event, cancel_check):
+        self._stop_event = stop_event
+        self._cancel_check = cancel_check
+
+    def is_set(self) -> bool:
+        if self._stop_event is not None and self._stop_event.is_set():
+            return True
+        try:
+            return bool(self._cancel_check())
+        except Exception:
+            return False
+
+    def set(self) -> None:
+        if self._stop_event is not None:
+            self._stop_event.set()
+
+    def clear(self) -> None:
+        if self._stop_event is not None:
+            self._stop_event.clear()
+
+    def wait(self, timeout=None):
+        # Best-effort: delegate to the underlying event's wait so callers that
+        # block on it keep their timeout semantics.
+        if self._stop_event is not None:
+            return self._stop_event.wait(timeout)
+        return self.is_set()
+
+
 class PipelineOrchestrator:
 
-    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None, cancel_check=None):
+    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None, cancel_check=None, object_store: "ObjectStore | None" = None, run_repo: "Optional[RunRepository]" = None, task_repo: "Optional[TaskRepository]" = None):
         self.config = config
         self.app_config = app_config
         self.audit = audit
@@ -81,13 +124,39 @@ class PipelineOrchestrator:
         # probe. Consulted between nodes so a run cancels cleanly mid-loop.
         self.cancel_check = cancel_check or self.stop_event.is_set
 
+        # 2.3-d: a stop-event-shaped bridge that reports cancelled when EITHER the
+        # local stop_event fires OR the injected cancel_check probe does. Handed
+        # to the indexer + LLMClient below so a durable-worker cancel propagates
+        # into the indexer (it bails) and any in-flight LLM call (it raises),
+        # without either component needing to know about cancel_check.
+        self._cancel_signal_obj = _CancelSignal(self.stop_event, self.cancel_check)
+
+        # WAVE-0 1.6a: persistence seams. ``object_store`` is the run-artifact blob
+        # store (pipeline_output.json, checkpoints, node_index, tree cache); when
+        # omitted it DEFAULTS to a LocalObjectStore rooted at the existing data dir
+        # so every current call site (main.py, ui/server.py) constructs the
+        # orchestrator unchanged and behavior is byte-preserved. ``run_repo`` /
+        # ``task_repo`` are the OPTIONAL DB write-through seam (1.6c) — no-op when
+        # absent. Import the concrete LocalObjectStore lazily so this low-level
+        # module keeps importing even before the durable stack is wired.
+        if object_store is None:
+            from integrations.object_store import LocalObjectStore
+            object_store = LocalObjectStore(base_dir="data")
+        self._object_store: "ObjectStore" = object_store
+        self._run_repo: "Optional[RunRepository]" = run_repo
+        self._task_repo: "Optional[TaskRepository]" = task_repo
+
         # LLM seam (HARNESS-4): use the injected provider when supplied,
         # otherwise construct today's default LLMClient with identical args.
+        # 2.3-d: wire the cancel-aware signal (not the bare stop_event) as the
+        # LLMClient's stop_event so a durable-worker cancel_check aborts in-flight
+        # calls too — the client's existing ``self.stop_event.is_set()`` guard
+        # then trips on either signal.
         self.llm: "LLMProvider" = llm if llm is not None else LLMClient(
             mode=config.llm_mode,
             audit_logger=audit,
             run_id=config.run_id,
-            stop_event=self.stop_event
+            stop_event=self._cancel_signal_obj
         )
 
         # Build agents. STEP 5.4: each tuning knob resolves as
@@ -210,24 +279,75 @@ class PipelineOrchestrator:
         except Exception:
             return False
 
+    def _cancel_signal(self):
+        """2.3-d: the stop-event-shaped bridge handed to the indexer + LLMClient.
+        Reports ``is_set()`` True when the local stop_event OR the injected
+        cancel_check fires, so a durable-worker cancel propagates into both."""
+        return self._cancel_signal_obj
+
+    # ─── WAVE-0 1.6b: run-artifact persistence via the ObjectStore ───────────
+    # All run-artifact I/O (status, tree cache, checkpoints, node_index,
+    # pipeline_output, coverage_reports) goes through these helpers so the
+    # orchestrator never does a direct open()/Path.write on data/sessions. Keys
+    # are the stable session-relative paths (``sessions/<run_id>/<name>``), which
+    # under the default LocalObjectStore(base_dir="data") resolve to the exact
+    # same on-disk files as before — behavior-preserving for the local adapter.
+
+    def _artifact_key(self, name: str) -> str:
+        """Stable object key for a per-run artifact ``name``."""
+        return f"sessions/{self.config.run_id}/{name}"
+
+    def _put_artifact(self, key: str, data: bytes) -> str:
+        """Persist ``data`` (bytes) under ``key`` through the object store."""
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        return self._object_store.put(key, data)
+
+    def _put_json_artifact(self, key: str, obj, *, indent=None, default=None) -> str:
+        """Serialize ``obj`` to JSON and persist it under ``key`` via the store."""
+        text = json.dumps(obj, indent=indent, default=default)
+        return self._put_artifact(key, text.encode("utf-8"))
+
+    def _get_artifact(self, key: str) -> bytes:
+        """Fetch the raw bytes stored under ``key`` (raises KeyError if absent)."""
+        return self._object_store.get(key)
+
+    def _artifact_exists(self, key: str) -> bool:
+        """Return True if an artifact exists at ``key`` (store-backed)."""
+        exists = getattr(self._object_store, "exists", None)
+        if callable(exists):
+            return bool(exists(key))
+        try:
+            self._object_store.get(key)
+            return True
+        except Exception:
+            return False
+
+    def _delete_artifact(self, key: str) -> None:
+        """Best-effort delete of the artifact at ``key`` through the store."""
+        # The ObjectStore Protocol only guarantees put/get/exists; a delete is
+        # optional (LocalObjectStore.delete_run_prefix handles a single key too).
+        deleter = getattr(self._object_store, "delete_run_prefix", None)
+        if callable(deleter):
+            try:
+                deleter(key)
+            except Exception:
+                pass
+
     def _status_path(self) -> Path:
         return Path(f"data/sessions/{self.config.run_id}/status.json")
 
     def _mirror_status(self, step: int, message: str, progress: float) -> None:
-        """C2: mirror live run status to a filesystem JSON so partial progress is
+        """C2: mirror live run status to the object store so partial progress is
         observable across a process restart even before the durable worker (C3).
-        Best-effort — a write failure never affects the run."""
+        Best-effort — a write failure never affects the run. Routes through the
+        store (1.6b) rather than a direct filesystem write."""
         try:
-            path = self._status_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            with open(tmp, "w") as f:
-                json.dump(
-                    {"run_id": self.config.run_id, "step": step,
-                     "message": message, "progress": progress, "ts": time.time()},
-                    f,
-                )
-            os.replace(tmp, path)
+            self._put_json_artifact(
+                self._artifact_key("status.json"),
+                {"run_id": self.config.run_id, "step": step,
+                 "message": message, "progress": progress, "ts": time.time()},
+            )
         except Exception:
             pass
 
@@ -237,22 +357,23 @@ class PipelineOrchestrator:
         self._mirror_status(step, message, progress)
 
     def _build_or_load_tree(self, pdf_path: str) -> list[dict]:
-        cache_path = Path(f"data/sessions/{self.config.run_id}/document_tree.json")
-        if self.config.skip_indexing and cache_path.exists():
-            logger.info(f"› loading tree from cache: {cache_path}")
-            with open(cache_path) as f:
-                tree = json.load(f)
+        # 1.6b: tree cache read/write routes through the object store.
+        cache_key = self._artifact_key("document_tree.json")
+        if self.config.skip_indexing and self._artifact_exists(cache_key):
+            logger.info(f"› loading tree from cache: {cache_key}")
+            tree = json.loads(self._get_artifact(cache_key).decode("utf-8"))
             self.indexer.last_tree = tree
             return self.indexer.flatten_tree(tree)
 
         with console.status("[bold blue]› Building document tree via PageIndex..."):
-            nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self.stop_event, run_id=self.config.run_id)
+            # 2.3-d: pass the cancel-aware signal so an injected cancel_check
+            # (e.g. a durable-worker probe) makes the indexer bail, not only the
+            # local stop_event.
+            nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self._cancel_signal(), run_id=self.config.run_id)
 
         # Cache for future skip-indexing runs
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
         if hasattr(self.indexer, "last_tree") and self.indexer.last_tree:
-            with open(cache_path, "w") as f:
-                json.dump(self.indexer.last_tree, f, indent=2)
+            self._put_json_artifact(cache_key, self.indexer.last_tree, indent=2)
 
         return nodes
 
@@ -508,19 +629,42 @@ class PipelineOrchestrator:
     def _extraction_checkpoint_path(self) -> Path:
         return Path(f"data/sessions/{self.config.run_id}/extraction_checkpoint.json")
 
+    def _extraction_checkpoint_key(self) -> str:
+        """Store key for the extraction checkpoint, derived from
+        :meth:`_extraction_checkpoint_path` so a subclass/test override that
+        redirects the path also redirects the store key. Returns ``None`` when the
+        path resolves OUTSIDE the store's base dir (an override to e.g. tmp), in
+        which case the caller falls back to a direct filesystem write at that
+        literal path — preserving the legacy override contract."""
+        return self._store_key_for_path(self._extraction_checkpoint_path())
+
+    def _store_key_for_path(self, path: Path):
+        """Return the store key for ``path`` if it lives under the object store's
+        base dir, else ``None``. Only the default LocalObjectStore exposes a
+        ``base_dir``; for any other store we assume the artifact key is the
+        session-relative form and route through the store."""
+        base = getattr(self._object_store, "base_dir", None)
+        if base is None:
+            # Non-filesystem store: use the stable session-relative key.
+            return f"sessions/{self.config.run_id}/{Path(path).name}"
+        try:
+            rel = Path(path).resolve().relative_to(Path(base).resolve())
+            return rel.as_posix()
+        except (ValueError, OSError):
+            return None  # path is outside the store base → legacy direct I/O
+
     def _write_extraction_checkpoint(self, nodes, last_index, all_closed_tasks, open_tasks, coverage) -> None:
         """
-        Persist resume state after node ``last_index`` (atomic temp+replace). Holds
-        the node-id list (for node-set validation on resume), the closed/open task
-        sets, and coverage state. Best-effort: a checkpoint write failure must
-        never abort the run — durability is a safety net, not a hard dependency.
-        No-op when resumption is disabled (legacy single end-of-run checkpoint).
+        Persist resume state after node ``last_index`` through the object store
+        (1.6b). Holds the node-id list (for node-set validation on resume), the
+        closed/open task sets, and coverage state. Best-effort: a checkpoint write
+        failure must never abort the run — durability is a safety net, not a hard
+        dependency. No-op when resumption is disabled (legacy single end-of-run
+        checkpoint).
         """
         if not getattr(self.config, "enable_resumption", True):
             return
         try:
-            path = self._extraction_checkpoint_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "node_ids": [n["node_id"] for n in nodes],
                 "last_index": last_index,
@@ -532,15 +676,28 @@ class PipelineOrchestrator:
                 "section_coverage_reports": dict(self.section_coverage_reports),
                 "ts": time.time(),
             }
-            tmp = path.with_suffix(".tmp")
-            with open(tmp, "w") as f:
-                json.dump(payload, f, default=str)
-            os.replace(tmp, path)
+            key = self._extraction_checkpoint_key()
+            if key is not None:
+                self._put_json_artifact(key, payload, default=str)
+            else:
+                # Override points outside the store base → legacy direct write.
+                path = self._extraction_checkpoint_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp")
+                with open(tmp, "w") as f:
+                    json.dump(payload, f, default=str)
+                os.replace(tmp, path)
         except Exception as e:
             logger.warning(f"Could not write extraction checkpoint: {e}")
 
     def _load_extraction_checkpoint(self) -> dict | None:
         try:
+            key = self._extraction_checkpoint_key()
+            if key is not None:
+                if not self._artifact_exists(key):
+                    return None
+                return json.loads(self._get_artifact(key).decode("utf-8"))
+            # Legacy direct read (path overridden outside the store base).
             path = self._extraction_checkpoint_path()
             if not path.exists():
                 return None
@@ -552,7 +709,11 @@ class PipelineOrchestrator:
 
     def _delete_extraction_checkpoint(self) -> None:
         try:
-            self._extraction_checkpoint_path().unlink(missing_ok=True)
+            key = self._extraction_checkpoint_key()
+            if key is not None:
+                self._delete_artifact(key)
+            else:
+                self._extraction_checkpoint_path().unlink(missing_ok=True)
         except Exception as e:
             logger.warning(f"Could not delete extraction checkpoint: {e}")
 
@@ -806,8 +967,6 @@ class PipelineOrchestrator:
         # Persist node hierarchy lookup so downstream consumers (JiraClient,
         # Wave-2 agents) can resolve parent titles without re-walking the tree.
         try:
-            node_index_path = Path(f"data/sessions/{self.config.run_id}/node_index.json")
-            node_index_path.parent.mkdir(parents=True, exist_ok=True)
             node_index_payload = {
                 n["node_id"]: {
                     "title": n.get("title", ""),
@@ -820,8 +979,10 @@ class PipelineOrchestrator:
                 }
                 for n in nodes if n.get("node_id")
             }
-            with open(node_index_path, "w") as f:
-                json.dump(node_index_payload, f, indent=2)
+            # 1.6b: route through the object store (was a direct data/sessions write).
+            self._put_json_artifact(
+                self._artifact_key("node_index.json"), node_index_payload, indent=2
+            )
         except Exception as e:
             # Non-fatal: JiraClient has a fallback path when this artifact is absent.
             logger.warning(f"Could not persist node_index.json: {e}")
@@ -956,6 +1117,61 @@ class PipelineOrchestrator:
             "node_total": len(ctx.nodes),
         })
 
+    def _write_through_repos(self, tasks, report) -> None:
+        """WAVE-0 1.6c: mirror the run + task records into the injected DB repos.
+
+        No-op when neither repo is injected (the default local path). NEVER
+        persists a plaintext api_key/token: the run config is sanitized before it
+        is handed to the run repo. Best-effort — a repo write failure must never
+        abort a run whose artifacts already persisted to the object store.
+        """
+        if self._run_repo is None and self._task_repo is None:
+            return
+
+        run_id = self.config.run_id
+        if self._run_repo is not None:
+            try:
+                run_data = {
+                    "run_id": run_id,
+                    "config": self._sanitized_config_dict(),
+                    "coverage_report": report,
+                    "health": self.health_report.to_dict(),
+                    "task_count": len(tasks),
+                }
+                self._run_repo.create(run_id, run_data)
+            except Exception as e:
+                logger.warning(f"Run repo write-through failed: {e}")
+
+        if self._task_repo is not None:
+            for task in tasks:
+                try:
+                    self._task_repo.add(run_id, task)
+                except Exception as e:
+                    logger.warning(f"Task repo write-through failed: {e}")
+
+    def _sanitized_config_dict(self) -> dict:
+        """Return the run config as a dict with all secret material stripped.
+
+        The only credential-bearing field on RunConfig is
+        ``provider_config.api_key`` (see models.schemas.ProviderConfig); we scrub
+        it (plus any defensively-named token/secret/password keys) so a plaintext
+        credential is NEVER handed to the persistence repo. The object-store
+        artifact keeps its own (already local-only) copy unchanged."""
+        data = self.config.model_dump(mode="json")
+        _SECRET_KEYS = {"api_key", "api_token", "token", "secret", "password"}
+
+        def _scrub(obj):
+            if isinstance(obj, dict):
+                return {
+                    k: ("" if k in _SECRET_KEYS else _scrub(v))
+                    for k, v in obj.items()
+                }
+            if isinstance(obj, list):
+                return [_scrub(v) for v in obj]
+            return obj
+
+        return _scrub(data)
+
     def _stage_save(self, ctx: PipelineContext) -> None:
         deduplicated = ctx.deduplicated
         report = ctx.report
@@ -964,29 +1180,36 @@ class PipelineOrchestrator:
             step_start = time.time()
             self._update_status(5, "Saving pipeline output...", 0.95)
             logger.info("› Step 5/5: Saving pipeline output...")
-            checkpoint_path = Path(f"data/sessions/{self.config.run_id}/pipeline_output.json")
-            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+            checkpoint_key = self._artifact_key("pipeline_output.json")
 
-            with open(checkpoint_path, "w") as f:
-                json.dump(
-                    {
-                        "run_id": self.config.run_id,
-                        "config": self.config.model_dump(mode="json"),
-                        "tasks": [t.model_dump(mode="json") for t in deduplicated],
-                        "coverage_report": report,
-                        # Additive key — existing consumers ignore it.
-                        "health": self.health_report.to_dict(),
-                    },
-                    f,
+            # 1.6b: pipeline output routes through the object store (was a direct
+            # data/sessions write).
+            self._put_json_artifact(
+                checkpoint_key,
+                {
+                    "run_id": self.config.run_id,
+                    "config": self.config.model_dump(mode="json"),
+                    "tasks": [t.model_dump(mode="json") for t in deduplicated],
+                    "coverage_report": report,
+                    # Additive key — existing consumers ignore it.
+                    "health": self.health_report.to_dict(),
+                },
+                indent=2,
+                default=str,
+            )
+
+            # Semantic coverage reports (Improvement #2) — sibling artifact
+            if self.section_coverage_reports:
+                self._put_json_artifact(
+                    self._artifact_key("coverage_reports.json"),
+                    self.section_coverage_reports,
                     indent=2,
                     default=str,
                 )
 
-            # Semantic coverage reports (Improvement #2) — sibling artifact
-            if self.section_coverage_reports:
-                sem_path = checkpoint_path.parent / "coverage_reports.json"
-                with open(sem_path, "w") as f:
-                    json.dump(self.section_coverage_reports, f, indent=2, default=str)
+            # 1.6c: mirror the run + task records into the DB repos (no-op when
+            # they aren't injected). Never persists a plaintext api_key/token.
+            self._write_through_repos(deduplicated, report)
 
             # C1: the run completed — the per-node resume checkpoint is no longer
             # needed, so a re-run starts fresh rather than resuming a finished run.
@@ -1000,7 +1223,7 @@ class PipelineOrchestrator:
             })
 
         logger.success(f"✓ Pipeline complete! {len(deduplicated)} tasks ready.")
-        logger.info(f"Checkpoint saved: {checkpoint_path}")
+        logger.info(f"Checkpoint saved: {checkpoint_key}")
         self.telemetry.emit("run.completed", {
             "run_id": self.config.run_id,
             "duration_ms": int((time.time() - ctx.run_start) * 1000),

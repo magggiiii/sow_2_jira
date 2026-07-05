@@ -270,25 +270,58 @@ REDACTED = "***REDACTED***"
 
 # key=value / key: value where key looks sensitive (api_key, token, secret,
 # password, authorization, etc.). Captures the value after the delimiter.
+#
+# Two deliberate design choices, each fixing a prior redaction defect:
+#
+#   1. The key may carry an arbitrary word-char PREFIX joined by [-_] (e.g.
+#      JIRA_API_TOKEN, LITELLM_API_KEY, client_secret). The old `\b(token)`
+#      anchor could not match inside API_TOKEN because the '_' before 'token'
+#      is a word char, so no word boundary existed — the value leaked. We now
+#      allow `(?:[A-Za-z0-9]+[-_])*` before the sensitive keyword so the whole
+#      env-var name matches and its value gets scrubbed.
+#
+#   2. The delimiter is a REQUIRED ':' or '=' (with optional surrounding
+#      whitespace). A bare space is NOT a delimiter. The old `|\s+` alternative
+#      meant any trigger word followed by a space redacted the next token,
+#      corrupting ordinary prose ("auth failed for user bob") and, worse,
+#      UUID run_id/session_id correlation keys ("session <uuid> started").
 _SECRET_KV_RE = re.compile(
     r"(?i)\b("
-    r"api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|secret|"
-    r"password|passwd|pwd|authorization|auth|bearer|client[-_]?secret|"
-    r"private[-_]?key"
+    r"(?:[a-z0-9]+[-_])*"
+    r"(?:api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|secret|"
+    r"password|passwd|pwd|authorization|auth|client[-_]?secret|"
+    r"private[-_]?key)"
     r")"
-    r"(\s*[:=]\s*|\s+)"
-    r"(\"?)([^\s,;\"']+)"
+    # Delimiter tolerates quotes around the key and the value so JSON/dict forms
+    # ("api_key": "v", 'password'='v') are matched, not just bare key=value.
+    r"([\"']?\s*[:=]\s*[\"']?)"
+    r"([^\s,;\"']+)"
 )
 
-# Long high-entropy-ish blobs (>= 20 chars of base64/hex/token characters).
+# HTTP auth schemes: scrub the credential after Bearer/Basic — covers a bare
+# "Bearer <jwt>" and the value of an "Authorization: Bearer <jwt>" header. The
+# {12,}-char floor keeps ordinary prose ("bearer of good news") intact.
+_AUTH_SCHEME_RE = re.compile(r"(?i)\b(bearer|basic)\s+([A-Za-z0-9._~+/=-]{12,})")
+
+# Long high-entropy-ish blobs (>= 32 chars of base64/hex/token characters).
 # Deliberately conservative so ordinary words/UUIDs-in-prose survive.
 _HIGH_ENTROPY_RE = re.compile(r"\b[A-Za-z0-9_\-]{32,}\b")
+
+# Canonical UUID (run_id / session_id — the primary debugging correlation key).
+# These are hex+hyphen and would otherwise trip the high-entropy heuristic
+# (lowercase hex letters + digits = 2 char classes). Never redact them.
+_UUID_RE = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 
 
 def _looks_high_entropy(token: str) -> bool:
     """Heuristic: mixes character classes and is long enough to be a key/token,
-    not an English word or a dotted path."""
+    not an English word, a dotted path, or a UUID correlation id."""
     if len(token) < 32:
+        return False
+    # Preserve UUID run_id/session_id — the primary debugging correlation key.
+    if _UUID_RE.match(token):
         return False
     has_lower = any(c.islower() for c in token)
     has_upper = any(c.isupper() for c in token)
@@ -302,11 +335,17 @@ def _redact_text(value: str) -> str:
     if not value or REDACTED in value:
         return value
 
-    def _kv_sub(m):
-        key, delim, quote = m.group(1), m.group(2), m.group(3)
-        return f"{key}{delim}{quote}{REDACTED}"
+    # 1) HTTP auth schemes first, so the token after Bearer/Basic is scrubbed
+    #    before the key=value pass could grab only the scheme word and leave the
+    #    credential behind.
+    redacted = _AUTH_SCHEME_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", value)
 
-    redacted = _SECRET_KV_RE.sub(_kv_sub, value)
+    # 2) key=value / key: value, tolerating quotes (JSON/dict secret forms).
+    redacted = _SECRET_KV_RE.sub(
+        lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", redacted
+    )
+
+    # 3) long high-entropy fallback (UUID correlation ids preserved).
     redacted = _HIGH_ENTROPY_RE.sub(
         lambda m: REDACTED if _looks_high_entropy(m.group(0)) else m.group(0),
         redacted,

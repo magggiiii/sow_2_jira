@@ -53,8 +53,7 @@ from jira import JIRA
 
 from auth.deps import SESSION_COOKIE_NAME, current_user, get_session_store
 
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pipeline.observability import trace_span, logger
+from pipeline.observability import trace_span, logger, SYNC_ENABLED
 
 app = FastAPI(title="SOW to Jira Pipeline")
 
@@ -147,8 +146,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Instrument FastAPI
-FastAPIInstrumentor.instrument_app(app)
+# Instrument FastAPI — lazy + optional, mirroring pipeline.observability.init_argus.
+# OpenTelemetry is an optional dependency: only instrument when remote sync is
+# enabled AND the OTel FastAPI instrumentation is importable. When OTel is absent
+# (or sync is off), this is a no-op so ui.server imports and runs without it.
+if SYNC_ENABLED:
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+    except ImportError as exc:
+        logger.debug(
+            f"OpenTelemetry FastAPI instrumentation not installed ({exc}); "
+            "skipping FastAPI instrumentation."
+        )
+else:
+    logger.debug("Argus remote sync disabled; skipping FastAPI instrumentation.")
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

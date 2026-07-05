@@ -270,6 +270,137 @@ def _suppress_litellm_output():
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         yield
 
+
+# ---------------------------------------------------------------------------
+# Langfuse observability wrapper (optional dependency, strictly fail-open).
+#
+# Every generation MAY be reported to Langfuse (model, prompt/response, token
+# usage, cost when available), keyed by run_id/agent. The import is lazy and
+# guarded so langfuse stays optional, and DEFAULT OFF when unconfigured.
+#
+# Hard requirement: tracing NEVER affects the pipeline. If langfuse is missing,
+# not configured (no LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY), or raises at
+# any point, the LLM call proceeds and returns normally — no exception escapes.
+#
+# This block is intentionally self-contained: it does not touch provider/model
+# routing, BIFROST_* handling, or os.environ credential writes.
+# ---------------------------------------------------------------------------
+
+# Module-level client cache. A truthy client means "configured + built OK";
+# False is a sticky "not configured / build failed — don't retry" marker.
+_LANGFUSE_CLIENT = None
+
+
+def _reset_langfuse_client_cache() -> None:
+    """Clear the cached Langfuse client (used by tests and reconfiguration)."""
+    global _LANGFUSE_CLIENT
+    _LANGFUSE_CLIENT = None
+
+
+def _langfuse_is_configured() -> bool:
+    """True only when both Langfuse keys are present in the environment.
+
+    Default OFF: with either key missing, tracing is disabled entirely.
+    """
+    return bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_SECRET_KEY")
+    )
+
+
+def _get_langfuse_client():
+    """Lazily import langfuse and build a cached client, or return None.
+
+    Returns None when langfuse is absent, unconfigured, or fails to build.
+    Never raises — resolution failures degrade to "tracing off".
+    """
+    global _LANGFUSE_CLIENT
+    if _LANGFUSE_CLIENT is not None:
+        # False is a sticky "unavailable" marker; a real client is truthy.
+        return _LANGFUSE_CLIENT or None
+
+    if not _langfuse_is_configured():
+        _LANGFUSE_CLIENT = False
+        return None
+
+    try:
+        from langfuse import Langfuse  # lazy/guarded optional import
+
+        client = Langfuse(
+            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
+            secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
+            host=os.environ.get("LANGFUSE_HOST") or None,
+        )
+        _LANGFUSE_CLIENT = client
+        return client
+    except Exception:
+        # Missing dep, bad config, network/init failure — stay silent, fail open.
+        _LANGFUSE_CLIENT = False
+        return None
+
+
+def _report_langfuse_generation(
+    *,
+    run_id: str,
+    agent_name: str,
+    model: str,
+    prompt: str,
+    system: str,
+    response_text: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    node_id: str = "",
+    cost: Optional[float] = None,
+) -> None:
+    """Report one LLM generation to Langfuse. Strictly fail-open.
+
+    No-ops (without building a client) when unconfigured, and swallows every
+    exception so tracing failures can never affect the LLM result.
+    """
+    try:
+        # Default OFF: don't even attempt to build a client when unconfigured.
+        if not _langfuse_is_configured():
+            return
+
+        client = _get_langfuse_client()
+        if not client:
+            return
+
+        usage_details = {
+            "input": int(prompt_tokens or 0),
+            "output": int(completion_tokens or 0),
+            "total": int(total_tokens or 0),
+        }
+        cost_details = {"total": float(cost)} if cost is not None else None
+
+        observation = client.start_observation(
+            name=f"llm.{agent_name}",
+            as_type="generation",
+            model=model,
+            input={"system": system, "prompt": prompt},
+            output=response_text,
+            usage_details=usage_details,
+            cost_details=cost_details,
+            metadata={
+                "run_id": run_id,
+                "agent": agent_name,
+                "node_id": node_id,
+            },
+        )
+
+        # Close the observation if the client returned a handle for it.
+        end = getattr(observation, "end", None)
+        if callable(end):
+            try:
+                end()
+            except Exception:
+                pass
+    except Exception:
+        # Tracing must NEVER surface — swallow everything and keep the pipeline
+        # result intact. Default OFF on any failure.
+        return
+
 class LLMClient:
     """
     Unified LLM client routing through LiteLLM.
@@ -420,6 +551,27 @@ class LLMClient:
                 detail=f"model={self.model} tokens={tokens}",
                 llm_tokens_used=tokens,
                 llm_model=self.model,
+            )
+
+            # Optional Langfuse generation trace. Strictly fail-open: this helper
+            # no-ops when unconfigured and swallows every exception, so tracing
+            # can never affect the returned content.
+            response_cost = getattr(response, "_hidden_params", None)
+            cost = None
+            if isinstance(response_cost, dict):
+                cost = response_cost.get("response_cost")
+            _report_langfuse_generation(
+                run_id=self.run_id,
+                agent_name=agent_name,
+                model=self.model,
+                prompt=prompt,
+                system=system,
+                response_text=content,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=tokens,
+                node_id=node_id,
+                cost=cost,
             )
 
             # A length/truncation finish_reason means the provider cut the

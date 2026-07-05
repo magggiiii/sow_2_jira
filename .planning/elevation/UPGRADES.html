@@ -150,8 +150,8 @@
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.60)"></i></div><div class="wpct">60%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.40)"></i></div><div class="wpct">40%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.75)"></i></div><div class="wpct">75%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.50)"></i></div><div class="wpct">50%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.25)"></i></div><div class="wpct">25%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
@@ -163,6 +163,24 @@
     <div class="sec-no reveal">01 — Shipped &amp; verified</div>
     <h2 class="reveal">What's done so far.</h2>
     <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+
+    <!-- R2a — hot-file backend routing -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 1/2 — Pipeline + server backend routed through the new seams</h3><span class="sha">7f3aa77</span></div>
+      <div class="inc-sub reveal">The two hot files re-plumbed onto the storage/persistence seams — single comprehensive agent each, TDD, suite green 780/2 (+27). (Adversarial-review workflow was cut off by a session usage limit; verified directly instead — full suite + regression + LOCKED grep.)</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The orchestrator persists only through the ObjectStore (+ optional DB write-through + real cancel)</h4><span class="tag">1.6a–c · 2.3-d · 6437b6a</span></div>
+        <p class="what">Run artifacts now flow through the storage seam, with optional DB write-through and a cancel that actually stops work.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The orchestrator wrote run artifacts straight to <code>data/sessions/&lt;run_id&gt;/*.json</code> with direct file I/O; cancel was a flag nothing honored mid-flight; no DB persistence.</div><div class="cell after"><span class="lbl">After</span>All 6 writes + 2 reads go through an injected <code>ObjectStore</code> (defaults to <code>LocalObjectStore</code> so behavior is preserved; proven — <code>open()</code> on <code>data/sessions</code> raises and <code>_stage_save</code> still completes via a fake store). Optional Run/Task repos get write-through with recursive secret-scrubbing (no plaintext api_key ever reaches a repo). <code>cancel_check</code> is bridged into the LLM client stop-event + indexer so a worker cancel bails the indexer and raises in-flight calls. <code>_stage_setup</code>/litellm routing untouched.</div></div>
+        <p class="why"><span class="wl">Better</span>The pipeline can now persist to R2/Postgres by swapping an adapter — no engine rewrite — and long runs are genuinely cancellable.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-task Jira push outcomes survive + a read-only connection test + deploy endpoints</h4><span class="tag">BE-1/2/3 · 4.2d/b · 7f3aa77</span></div>
+        <p class="what">Push results are persisted and surfaced, plus the endpoints a hosted deploy needs.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>push_results</code> was built then <em>discarded</em> before save — per-task push status was impossible to show; no connection test; no health endpoint; dev-only bind.</div><div class="cell after"><span class="lbl">After</span>Per-task <code>JiraPushResult</code> is persisted and exposed on <code>GET /api/tasks</code>; <code>POST /api/jira/test</code> validates creds read-only (401→user_fixable, 429→transient, never creates an issue); <code>GET /healthz</code>→200 (+ access-log filtered); <code>__main__</code> binds <code>0.0.0.0:$PORT</code>. Auth/CSRF hardening is the next sequenced lane; credential-write paths untouched.</div></div>
+        <p class="why"><span class="wl">Better</span>The frontend can finally render per-task push chips, and the service is health-checkable + container-bindable for Render.</p>
+      </div>
+    </div>
 
     <!-- WAVE 0/2/4 max-parallel session (SQLite-testable platform) -->
     <div class="increment">

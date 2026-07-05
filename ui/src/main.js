@@ -22,7 +22,7 @@ import {
   cancelRun,
   deleteSession,
 } from './api.js'
-import { getEl, showToast, updateStats, renderTasks, markTasksLoaded } from './render.js'
+import { getEl, showToast, updateStats, renderTasks, markTasksLoaded, patchTaskCard } from './render.js'
 import { startStatusPolling, stopPolling, showProgressOverlay } from './polling.js'
 import { initSettingsModal } from './modals.js'
 
@@ -55,6 +55,18 @@ document.addEventListener('DOMContentLoaded', () => {
     .forEach((el) => el.addEventListener('change', () => renderTasks(saveTask)))
 
   // Single dark theme (UI.1): no theme toggle, no data-theme.
+
+  // UI.3 — error_class-aware failure recovery callbacks, consumed in the shared
+  // polling error branch (TRANSIENT→Retry, USER_FIXABLE→Open Settings,
+  // TERMINAL→Dismiss). References hoisted functions + the progressOverlay const.
+  const pollRecovery = {
+    onRetry: () => startExtraction(), // re-POST the same config
+    onOpenSettings: () => getEl('btnSettings')?.click(),
+    onDismiss: () => {
+      if (progressOverlay) progressOverlay.style.display = 'none'
+      resetToNewSession()
+    },
+  }
 
   initSettingsModal()
 
@@ -259,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (sessionSwitcher) sessionSwitcher.value = $activeSessionId.get()
         if (newExtractionContainer) newExtractionContainer.style.display = 'none'
 
-        startStatusPolling(loadData)
+        startStatusPolling(loadData, pollRecovery)
       } else {
         const err = await processRes.json()
         showToast(err.detail || 'Failed to start process', 'error')
@@ -308,7 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await postTask($activeSessionId.get(), updatedTask)
       if (res.ok) {
         showToast('Task updated successfully', 'success')
-        await loadData()
+        patchTaskCard(updatedTask, saveTask) // optimistic in-place patch (UI.4a ui-11)
       } else {
         throw new Error()
       }
@@ -349,7 +361,7 @@ document.addEventListener('DOMContentLoaded', () => {
           showProgressOverlay()
           if (logConsole) logConsole.innerHTML = ''
           showToast(data.message || 'Jira push started', 'success')
-          startStatusPolling(loadData)
+          startStatusPolling(loadData, pollRecovery)
         } else if (data.success) {
           showToast('Pushed to Jira Successfully!', 'success')
           await loadData()
@@ -369,7 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && $activeSessionId.get()) {
       console.log('Tab focused, resuming status sync...')
-      startStatusPolling(loadData)
+      startStatusPolling(loadData, pollRecovery)
     }
   })
 
@@ -381,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setActiveSession(storedId)
       showProgressOverlay()
       if (newExtractionContainer) newExtractionContainer.style.display = 'none'
-      startStatusPolling(loadData)
+      startStatusPolling(loadData, pollRecovery)
     }
   }
 

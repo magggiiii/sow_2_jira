@@ -1,4 +1,4 @@
-.PHONY: help venv install clean run ui ui-dev ui-build verify
+.PHONY: help venv install clean run ui ui-dev ui-build verify test migrate worker lock
 
 # Default python command to use inside the venv
 PYTHON = venv/bin/python
@@ -14,6 +14,10 @@ help:
 	@echo "make ui      - Launch the FastAPI review UI"
 	@echo "make clean   - Remove the virtual environment and cached data/logs"
 	@echo "make verify  - Run a quick import check to ensure dependencies are installed"
+	@echo "make test    - Run the pytest suite"
+	@echo "make migrate - Apply Alembic migrations (needs DATABASE_URL / Postgres)"
+	@echo "make worker  - Run the background worker (arq) — lands in WAVE 2"
+	@echo "make lock    - Freeze the current venv into requirements.lock"
 
 venv:
 	python3 -m venv venv
@@ -40,7 +44,26 @@ ui-dev:
 	$(UVICORN) ui.server:app --reload --port 8000 & npm run dev
 
 verify:
-	$(PYTHON) -c "import opendataloader_pdf, fastapi, uvicorn, jira, pageindex, sentence_transformers, pydantic, openai; print('All imports successful!')"
+	$(PYTHON) -c "import opendataloader_pdf, fastapi, uvicorn, jira, pageindex, sentence_transformers, pydantic, openai, sqlalchemy, asyncpg; print('All imports successful!')"
+
+# Run the pytest suite (offline; LLM stubbed/replayed).
+test:
+	$(PYTHON) -m pytest tests/ -q
+
+# Apply DB migrations. Needs DATABASE_URL pointing at a reachable Postgres —
+# the ORM/baseline are authored (W1 1.2) but migrations are not run offline.
+migrate:
+	$(PYTHON) -m alembic upgrade head
+
+# Background job worker. The arq/Redis worker is wired in WAVE 2; this target
+# exists now so the dev surface is stable.
+worker:
+	@echo "Background worker (arq + Redis) lands in WAVE 2 — not yet wired."
+
+# Freeze the resolved environment into a lockfile (the repo ships none today).
+lock:
+	$(PIP) freeze > requirements.lock
+	@echo "Wrote requirements.lock"
 
 clean:
 	rm -rf venv

@@ -150,9 +150,9 @@
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.75)"></i></div><div class="wpct">75%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.50)"></i></div><div class="wpct">50%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.25)"></i></div><div class="wpct">25%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.70)"></i></div><div class="wpct">70%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.75)"></i></div><div class="wpct">75%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
     </div>
@@ -163,6 +163,30 @@
     <div class="sec-no reveal">01 — Shipped &amp; verified</div>
     <h2 class="reveal">What's done so far.</h2>
     <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+
+    <!-- R2b + R3 + R4 — hardening, frontend, de-OTel finalization -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 2/4 — Multi-tenant hardening, push chips, and OpenTelemetry retired</h3><span class="sha">e99aa58</span></div>
+      <div class="inc-sub reveal">Closing rounds of the max-parallel plan. Every increment TDD + 3-skeptic adversarial review (default-reject) — which caught real holes each round: two credential-exposing routes, a WCAG-4.1.2 focus bug, a vitest false-green, and a SECOND committed copy of the leaked Argus token. Suite 830/2 + vitest 96/96.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-user data isolation, CSRF, and upload hardening — gated so single-user stays unchanged</h4><span class="tag">2.5c/2.6a-c · 9874474</span></div>
+        <p class="what">The web layer becomes multi-tenant-safe when auth is configured, and byte-identical when it isn't.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Single-user server: no per-request identity, every run readable by anyone, no CSRF, uploads unvalidated.</div><div class="cell after"><span class="lbl">After</span>current_user dependency (401 on missing/forged/expired/inactive); every per-run route returns 404 for another tenant (no existence leak); CSRF double-submit (403 on mismatch); uploads traversal-safe / non-PDF 400 / oversize 413. All gated on auth_enabled() so the 780 existing tests stay green. Review found three credential-exposing routes (POST /api/settings, /api/jira/test, /api/providers/{id}/models) unguarded in hardened mode — all now carry auth+CSRF.</div></div>
+        <p class="why"><span class="wl">Better</span>The app is safe to expose to multiple orgs; the strangler seam keeps local dev untouched.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-task Jira push chips + a Test-Connection button + an auth-aware frontend</h4><span class="tag">FE-1/FE-2/2.6d · 09219ea</span></div>
+        <p class="what">The review UI now shows each task's push outcome and can validate Jira creds, and its fetch layer speaks CSRF.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>push_results were discarded, so no per-task status; no way to test Jira creds without a full push; fetches sent no CSRF/credentials.</div><div class="cell after"><span class="lbl">After</span>Each card shows a text-labelled push chip (WCAG 1.4.1, XSS-safe, success links to the issue); a Test-connection button hits the read-only endpoint and renders the classified result; the fetch wrapper attaches X-CSRF-Token + credentials and redirects on 401. Review caught a WCAG-4.1.2 focusable-descendant bug + a vitest stubGlobal false-green — both fixed.</div></div>
+        <p class="why"><span class="wl">Better</span>Reviewers see exactly what landed in Jira and can self-diagnose credential problems, over an auth-ready UI.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>OpenTelemetry retired; langfuse fail-open tracing; FS→Postgres migrator; Argus token scrubbed</h4><span class="tag">4.1b/d/f · 1.6e · e99aa58</span></div>
+        <p class="what">The observability stack is swapped for a hosted-friendly, fail-open path and the leaked secret is out of the tree.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Top-level OTel imports everywhere (removing OTel broke the app); no Langfuse; no FS→DB migration path; the Argus backbone token hardcoded in install.sh AND bifrost.admin.yaml.</div><div class="cell after"><span class="lbl">After</span>Every OTel import is lazy/guarded — proven: app entrypoints import with opentelemetry+traceloop blocked — so OTel is dropped from requirements. A langfuse wrapper reports generations but FAILS OPEN (never breaks a run). A repo-fake-tested migrate_fs_to_pg.py reconstructs runs/tasks + re-encrypts secrets. The token literal is gone from every tracked file + a role-aware Docker entrypoint (SOW_ROLE) ships. (History still holds the token → rotate out-of-band.)</div></div>
+        <p class="why"><span class="wl">Better</span>Observability no longer blocks deploy, tracing can't take down the pipeline, and there's a path from the old FS store to Postgres.</p>
+      </div>
+    </div>
 
     <!-- R2a — hot-file backend routing -->
     <div class="increment">

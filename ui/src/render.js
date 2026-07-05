@@ -419,6 +419,102 @@ export function renderTasks(onSave) {
   })
 }
 
+// --- FE-1: per-task push chip ----------------------------------------------
+//
+// The backend attaches `task.push_result` — a JiraPushResult dump — after a push
+// (server.py). Success carries jira_issue_key/jira_issue_url; failure carries
+// error + error_class (transient|user_fixable|terminal). It is ABSENT on tasks
+// that were never pushed — in that case NO chip is rendered (never fabricated).
+//
+// Every branch carries a TEXT label (WCAG 1.4.1 — status is never colour-only);
+// failure branches also add a severity class off the .sev-chip / --sev-* tokens
+// keyed to error_class. Mirrors polling.js :: errorRecovery so the two failure
+// UXes read consistently, with push-flavoured labels.
+function pushFailureSeverity(errorClass) {
+  const key = String(errorClass || '').toUpperCase()
+  if (key === 'TRANSIENT') return { label: 'Rate-limited', className: 'sev-transient' }
+  if (key === 'USER_FIXABLE') return { label: 'Auth error', className: 'sev-fixable' }
+  return { label: 'Failed', className: 'sev-terminal' } // TERMINAL / unknown / missing
+}
+
+// Resolve the Jira base URL from the store so buildTaskCard keeps its (t, onSave)
+// signature (patchTaskCard relies on it). env_defaults.jira_server is the only
+// place the server exposes the base URL; config.jira_server is the fallback.
+function jiraServerFromStore() {
+  const data = $taskData.get() || {}
+  return (data.env_defaults && data.env_defaults.jira_server) || (data.config && data.config.jira_server) || ''
+}
+
+// Returns a chip element for one task's push_result, or null when there's no
+// push_result to report (never fabricates a chip). All interpolated values are
+// escaped via textContent; any URL is scheme-checked (http/https) via
+// jiraBrowseUrl / the same guard used by the aggregate panel.
+export function buildPushChip(t, jiraServerUrl) {
+  const pr = t && t.push_result
+  if (!pr || typeof pr !== 'object') return null
+
+  const chip = document.createElement('span')
+  chip.className = 'task-push-chip'
+
+  if (pr.success) {
+    const key = pr.jira_issue_key || ''
+    // Prefer the backend-supplied issue URL, but scheme-check it; fall back to
+    // deriving from (server, key). Both paths reject non-http(s) schemes.
+    const direct = pr.jira_issue_url && /^https?:\/\//i.test(String(pr.jira_issue_url).trim())
+      ? String(pr.jira_issue_url).trim()
+      : null
+    const url = direct || jiraBrowseUrl(jiraServerUrl, key)
+
+    const label = document.createElement('span')
+    label.className = 'task-push-chip-label'
+    label.textContent = 'Pushed'
+    chip.appendChild(label)
+
+    if (key) {
+      if (url) {
+        const a = document.createElement('a')
+        a.className = 'task-push-chip-key'
+        a.href = url
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
+        a.textContent = key
+        // FE-1 fix: the chip lives inside the .task-header, which is role=button.
+        // A focusable interactive descendant inside a role=button violates WCAG
+        // 4.1.2, and its click would bubble up to the header's toggle handler.
+        // Remove it from the header's tab order (SRs then announce one button, not
+        // a button-containing-a-link) and stop the click from expanding the card —
+        // the mouse still opens the Jira issue in a new tab as expected.
+        a.setAttribute('tabindex', '-1')
+        a.addEventListener('click', (e) => e.stopPropagation())
+        chip.appendChild(a)
+      } else {
+        const span = document.createElement('span')
+        span.className = 'task-push-chip-key'
+        span.textContent = key
+        chip.appendChild(span)
+      }
+    }
+    if (key) chip.setAttribute('aria-label', `Pushed to Jira issue ${key}`)
+    else chip.setAttribute('aria-label', 'Pushed to Jira')
+    return chip
+  }
+
+  // Failure: severity chip keyed off error_class, with a TEXT label (WCAG 1.4.1)
+  // and the raw error surfaced only via aria-label/title (escaped attributes).
+  const sev = pushFailureSeverity(pr.error_class)
+  chip.classList.add('sev-chip', sev.className)
+  const label = document.createElement('span')
+  label.className = 'task-push-chip-label'
+  label.textContent = sev.label
+  chip.appendChild(label)
+
+  const detail = pr.error || pr.message || ''
+  const accessible = detail ? `Push failed: ${detail}` : 'Push failed'
+  chip.setAttribute('aria-label', accessible)
+  chip.setAttribute('title', accessible)
+  return chip
+}
+
 // Builds ONE task card DOM node from a task + the save callback. Shared by the
 // full render (renderTasks) and the in-place patch (patchTaskCard) so the two
 // paths can never drift. Returns null when the <template> is absent.
@@ -467,6 +563,11 @@ export function buildTaskCard(t, onSave) {
     badgesEl.appendChild(b)
   })
 
+  // FE-1: per-task Jira push chip, derived from task.push_result. Absent when the
+  // task was never pushed. Lives on the collapsed header beside the other badges.
+  const pushChip = buildPushChip(t, jiraServerFromStore())
+  if (pushChip) badgesEl.appendChild(pushChip)
+
   // ui-12: the header is an accessible disclosure button.
   const header = card.querySelector('.task-header')
   const body = card.querySelector('.task-body')
@@ -482,8 +583,14 @@ export function buildTaskCard(t, onSave) {
     const svg = card.querySelector('.chevron')
     if (svg) svg.style.transform = expanded ? 'rotate(180deg)' : ''
   }
+  // Interactive descendants whose own activation must NOT bubble to the header's
+  // disclosure toggle. 'A' is included so clicking the per-task Jira deep-link
+  // (FE-1) opens the issue without also expanding/collapsing the card.
   const isControl = (el) =>
-    el.tagName === 'BUTTON' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+    el.tagName === 'BUTTON' ||
+    el.tagName === 'INPUT' ||
+    el.tagName === 'TEXTAREA' ||
+    el.tagName === 'A'
 
   header.addEventListener('click', (e) => {
     if (!isControl(e.target)) toggle()

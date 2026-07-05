@@ -621,6 +621,32 @@ textarea.input-field { resize: vertical; min-height: 100px; }
 .sev-chip.sev-fixable   { background: var(--sev-fixable);   border-color: var(--sev-fixable); }
 .sev-chip.sev-terminal  { background: var(--sev-terminal);  border-color: var(--sev-terminal); }
 
+/* --- FE-1: per-task Jira push chip. The SUCCESS variant (no .sev-chip) is a
+   green-outlined text pill ("Pushed" + issue key); the FAILURE variant carries
+   .sev-chip and is fully styled by the rules above. Meaning is in the TEXT
+   label; colour is reinforcement only (WCAG 1.4.1). Scoped :not(.sev-chip) so
+   it never overrides the failure chip's fill. */
+.task-push-chip:not(.sev-chip) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4, 4px);
+  margin-bottom: var(--space-8);
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+.task-push-chip-label { text-transform: uppercase; }
+.task-push-chip-key {
+  color: inherit;
+  text-decoration: underline;
+  font-variant-numeric: tabular-nums;
+}
+.task-push-chip-key:hover { text-decoration: none; }
+
 /* --- UI.4a (ui-12) status text label beside the status dot (WCAG 1.4.1) --- */
 .status-label {
   font-size: var(--text-xs);

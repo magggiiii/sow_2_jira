@@ -33,3 +33,6 @@ opentelemetry-instrumentation-logging>=0.45b0
 sqlalchemy>=2.0
 alembic>=1.13
 asyncpg>=0.29
+# SQLite driver + greenlet bridge for offline async ORM tests (WAVE 2, W2-S0)
+aiosqlite>=0.19
+greenlet>=3.0

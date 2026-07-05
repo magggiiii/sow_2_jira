@@ -39,14 +39,69 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import DateTime, Float
+from sqlalchemy.types import DateTime, Float, JSON
+
+
+# ── SQLite compatibility shims (sqlite-only; Postgres DDL untouched) ──────────
+#
+# The ORM below is authored against Postgres types (``INET``, ``JSONB``,
+# ``UUID(as_uuid=False)``) so production DDL is unchanged. Offline tests run on
+# SQLite, which cannot render those types. We register ``@compiles(..., 'sqlite')``
+# hooks so the SAME ORM compiles on SQLite by substituting compatible column
+# types. These hooks fire ONLY for the sqlite dialect — the postgresql dialect
+# keeps emitting INET/JSONB/gen_random_uuid() verbatim.
+
+
+@compiles(INET, "sqlite")
+def _compile_inet_sqlite(type_, compiler, **kw):  # noqa: ANN001
+    """Render ``postgresql.INET`` as ``VARCHAR`` on SQLite."""
+    return "VARCHAR"
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ANN001
+    """Render ``postgresql.JSONB`` as SQLite's ``JSON`` for DDL."""
+    return compiler.visit_JSON(type_, **kw)
+
+
+@compiles(UUID, "sqlite")
+def _compile_uuid_sqlite(type_, compiler, **kw):  # noqa: ANN001
+    """Render ``postgresql.UUID`` as ``CHAR(36)`` on SQLite (canonical uuid str)."""
+    return "CHAR(36)"
+
+
+# ``@compiles`` only rewrites DDL type rendering — it does NOT give JSONB the
+# JSON (de)serialization behavior on SQLite, so dict/list columns would come
+# back as raw strings. We patch JSONB's bind/result processors so that, on the
+# sqlite dialect, it delegates to SQLAlchemy's generic ``JSON`` type (json.dumps
+# on write, json.loads on read). On any other dialect it defers to the real
+# postgresql implementation. This is a pure Python-side shim; it emits no DDL
+# and never touches Postgres behavior.
+_JSON_SQLITE = JSON()
+
+
+def _jsonb_bind_processor(self, dialect):  # noqa: ANN001
+    if dialect.name == "sqlite":
+        return _JSON_SQLITE.bind_processor(dialect)
+    return super(JSONB, self).bind_processor(dialect)
+
+
+def _jsonb_result_processor(self, dialect, coltype):  # noqa: ANN001
+    if dialect.name == "sqlite":
+        return _JSON_SQLITE.result_processor(dialect, coltype)
+    return super(JSONB, self).result_processor(dialect, coltype)
+
+
+JSONB.bind_processor = _jsonb_bind_processor
+JSONB.result_processor = _jsonb_result_processor
 
 
 # ── URL normalization ────────────────────────────────────────────────────────

@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from integrations.object_store import LocalObjectStore
 from models.schemas import JiraHierarchy, LLMMode
 
 if TYPE_CHECKING:  # imported lazily at runtime to keep import graph minimal
@@ -36,41 +36,11 @@ if TYPE_CHECKING:  # imported lazily at runtime to keep import graph minimal
     from pipeline.llm_client import LLMClient
 
 
-# ─── Local filesystem ObjectStore adapter ─────────────────────────────────────
-
-
-class LocalObjectStore:
-    """
-    Minimal local-filesystem implementation of the ``core.ports.ObjectStore``
-    port. Keys are opaque, slash-separated strings (e.g.
-    ``sessions/<run_id>/pipeline_output.json``) resolved relative to a base
-    directory (default ``data/``).
-
-    This is the default blob backend for the harness; a Cloudflare R2 / S3
-    adapter can later satisfy the same port without touching callers.
-    """
-
-    def __init__(self, base_dir: str = "data") -> None:
-        self.base_dir = Path(base_dir)
-
-    def _resolve(self, key: str) -> Path:
-        # Treat the key as a relative POSIX-style path under base_dir. Strip any
-        # leading slash so keys can't escape the base directory via absolute
-        # paths; ".." traversal is the caller's responsibility (keys are opaque
-        # but expected to be well-formed).
-        return self.base_dir / key.lstrip("/")
-
-    def put(self, key: str, data: bytes) -> str:
-        path = self._resolve(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        return str(path)
-
-    def get(self, key: str) -> bytes:
-        return self._resolve(key).read_bytes()
-
-    def exists(self, key: str) -> bool:
-        return self._resolve(key).exists()
+# The hardened, path-traversal-safe ``LocalObjectStore`` lives in
+# ``integrations.object_store`` (imported above) and is re-exported here for
+# back-compat (``from app.container import LocalObjectStore``). It is the default
+# blob backend for the harness; a Cloudflare R2 / S3 adapter can later satisfy
+# the same ``core.ports.ObjectStore`` port without touching callers.
 
 
 # ─── Container ────────────────────────────────────────────────────────────────

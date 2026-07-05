@@ -14,6 +14,8 @@ which we don't want in a unit test); the real ``AuditLogger`` is cheap (SQLite)
 and pointed at a temp DB so it never touches ``data/audit.db``.
 """
 
+import pytest
+
 from app.container import Container, LocalObjectStore, build_container
 from core.ports import AuditSink, LLMProvider, ObjectStore
 
@@ -97,3 +99,14 @@ def test_local_object_store_roundtrip_under_tmp_dir(tmp_path):
     assert store.get("a/b/c.bin") == b"\x00\x01\x02"
     # Written under the configured base dir, nowhere else.
     assert (tmp_path / "a" / "b" / "c.bin").read_bytes() == b"\x00\x01\x02"
+
+
+def test_wired_object_store_rejects_traversal(tmp_path, monkeypatch):
+    """Regression guard: the store returned by build_container() must be the
+    hardened, traversal-safe implementation — a crafted key cannot escape the
+    base dir (the earlier vuln was in an inline copy that only the wired path
+    used)."""
+    store = _build(tmp_path, monkeypatch).object_store
+    with pytest.raises(ValueError):
+        store.put("../escape.txt", b"pwned")
+    assert not (tmp_path / "escape.txt").exists()

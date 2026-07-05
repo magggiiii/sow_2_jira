@@ -133,9 +133,9 @@
     <p class="updated reveal"><b>Last updated:</b> 2026-07-05 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 (local commits ahead of pushed <code>063cf5f</code> — this session's batch not yet pushed; PR #7 OPEN) &nbsp;·&nbsp; <b>main:</b> untouched</p>
 
     <div class="metrics reveal">
-      <div class="metric"><div class="num">52</div><div class="lab">Upgrades shipped &amp; verified</div></div>
-      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;667</div><div class="lab">Python tests passing (+46 UI vitest)</div></div>
-      <div class="metric"><div class="num">58</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">55</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;667</div><div class="lab">Python tests passing (+76 UI vitest)</div></div>
+      <div class="metric"><div class="num">60</div><div class="lab">Clean commits on the branch</div></div>
       <div class="metric"><div class="num">6<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
     </div>
   </header>
@@ -154,7 +154,7 @@
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.65)"></i></div><div class="wpct">65%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
     </div>
   </section>
 
@@ -196,8 +196,8 @@
 
     <!-- WAVE 6 Round 1+2 (frontend — this session) -->
     <div class="increment">
-      <div class="inc-head reveal"><h3>Wave 6 — UI/UX rework: module split + components</h3><span class="sha">118653b</span></div>
-      <div class="inc-sub reveal">Killed the 979-line god-file, added a real test harness, then shipped three review-loop upgrades in parallel. Verified by 46 vitest tests + a clean production build.</div>
+      <div class="inc-head reveal"><h3>Wave 6 — UI/UX rework (all 9 phases complete)</h3><span class="sha">a1f3af6</span></div>
+      <div class="inc-sub reveal">Killed the 979-line god-file, added a real test harness, then shipped the whole review loop: error-class recovery, accessible XSS-safe cards, responsive + modal a11y, keyboard triage, flow-integrity guards, onboarding + push-results. Verified by 76 vitest tests, a clean production build, and a full Docker image build (node build stage → gunicorn). Every increment passed an adversarial review that caught real defects — a silent-data-loss stale listener, a symlink-style scheme XSS, and an op-aware-retry that silently no-op'd after a mid-push refresh — each fixed before landing.</div>
 
       <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The 979-line UI monolith becomes testable modules</h4><span class="tag">UI.2b</span></div>
         <p class="what">Split the single IIFE into ES modules with a tiny reactive store and a real test runner.</p>
@@ -215,6 +215,12 @@
         <p class="what">Hardened the core review loop and brought the layout + modals to an a11y baseline.</p>
         <div class="ba"><div class="cell before"><span class="lbl">Before</span>Editing a card collapsed it (full re-render); collapsibles had no keyboard/ARIA; section titles were interpolated into <code>innerHTML</code> (stored-XSS); one breakpoint; modals had no focus trap.</div><div class="cell after"><span class="lbl">After</span>Optimistic in-place patch preserves expanded state; role/tabindex/aria + Enter/Space + a status text label; titles escaped via <code>textContent</code>; 1024/768/400 breakpoints; dialog focus-trap + Escape + focus-restore.</div></div>
         <p class="why"><span class="wl">Better</span>The core value loop is fast, keyboard-operable, screen-reader-friendly, and safe from injected markup.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Fast triage, safe flows, and a finished-feeling first run</h4><span class="tag">UI.4b · UI.5 · UI.7</span></div>
+        <p class="what">The velocity + integrity + polish layer that makes the review loop feel complete.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No keyboard triage; filters and stats disagreed; Push could fire on an empty/misconfigured run; a mid-run refresh landed in stale state; failures offered a Retry that could re-run the wrong operation; first run and a successful push both dead-ended in a bare toast.</div><div class="cell after"><span class="lbl">After</span>a/r/e + j/k triage (scoped, never fires while typing); one status→bucket map so filters and stats always agree (+ a Pushed filter); Push pre-flight (needs a session, an approved task, and saved Jira creds) + confirm; op-aware Retry that re-pushes vs re-extracts and reloads-then-re-pushes after a refresh (never a silent no-op); session switch reopens a running run; a first-run Upload-SOW pane; and a push-results panel with clickable, scheme-validated Jira links.</div></div>
+        <p class="why"><span class="wl">Better</span>A reviewer can triage a large SOW quickly, can't push a broken run, never loses their place, and always has a next action on both success and failure.</p>
       </div>
     </div>
 

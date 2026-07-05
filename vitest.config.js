@@ -9,5 +9,10 @@ export default defineConfig({
     include: ['ui/**/*.test.js'],
     environment: 'jsdom',
     globals: true,
+    // Auto-restore vi.stubGlobal('fetch', ...) between tests. Without this,
+    // restoreAllMocks() does NOT reset stubbed globals, so a stubbed global
+    // fetch leaks across test files within a worker and can intermittently
+    // false-green the security-critical XSS-escaping / CSRF-header specs.
+    unstubGlobals: true,
   },
 })

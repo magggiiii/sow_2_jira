@@ -6,7 +6,7 @@
 // #settingsModal shape (a `.progress-overlay` backdrop wrapping a
 // `.progress-card` with a heading + focusable controls).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { openModal, closeModal, isModalOpen, showConfirm } from './modals.js'
+import { openModal, closeModal, isModalOpen, showConfirm, runJiraConnectionTest } from './modals.js'
 
 function buildFixture() {
   document.body.innerHTML = `
@@ -157,5 +157,74 @@ describe('ui-14/ui-16 — styled showConfirm (replaces native confirm)', () => {
     pressKey(document, 'Escape')
     await expect(p).resolves.toBe(false)
     expect(document.querySelector('.progress-overlay')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FE-2 — Jira "Test connection" button behaviour
+// ---------------------------------------------------------------------------
+describe('FE-2 — runJiraConnectionTest (button outcome rendering)', () => {
+  let statusEl
+  beforeEach(() => {
+    document.body.innerHTML = '<span id="jiraTestStatus"></span>'
+    statusEl = document.getElementById('jiraTestStatus')
+  })
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+  })
+
+  it('renders a success state with the server-echoed user (escaped)', async () => {
+    const testFn = vi.fn().mockResolvedValue({
+      success: true,
+      user: 'Ada <b>Lovelace</b>',
+      server: 'https://x.atlassian.net',
+    })
+    await runJiraConnectionTest({ statusEl, testFn })
+
+    expect(testFn).toHaveBeenCalledTimes(1)
+    // Success colour token.
+    expect(statusEl.style.color).toBe('var(--success)')
+    // Server-echoed name is escaped — no live <b> node injected.
+    expect(statusEl.querySelector('b')).toBeNull()
+    expect(statusEl.innerHTML).toContain('Ada &lt;b&gt;Lovelace&lt;/b&gt;')
+    expect(statusEl.textContent).toContain('Ada <b>Lovelace</b>')
+  })
+
+  it('renders a user_fixable failure state with escaped error text', async () => {
+    const testFn = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'bad creds <img src=x onerror=alert(1)>',
+      error_class: 'user_fixable',
+    })
+    await runJiraConnectionTest({ statusEl, testFn })
+
+    expect(statusEl.style.color).toBe('var(--error)')
+    // Echoed error text is escaped — no live img element injected.
+    expect(statusEl.querySelector('img')).toBeNull()
+    expect(statusEl.innerHTML).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(statusEl.textContent).toContain('bad creds <img src=x onerror=alert(1)>')
+  })
+
+  it('renders a transient failure distinctly (retryable)', async () => {
+    const testFn = vi.fn().mockResolvedValue({
+      success: false,
+      error: '503 Service Unavailable',
+      error_class: 'transient',
+    })
+    await runJiraConnectionTest({ statusEl, testFn })
+
+    // Transient failures are still an error colour, and the copy hints at retry.
+    expect(statusEl.style.color).toBe('var(--error)')
+    expect(statusEl.textContent.toLowerCase()).toMatch(/retry|temporar|again/)
+    expect(statusEl.textContent).toContain('503 Service Unavailable')
+  })
+
+  it('surfaces a thrown/network failure without crashing', async () => {
+    const testFn = vi.fn().mockRejectedValue(new Error('network down'))
+    await runJiraConnectionTest({ statusEl, testFn })
+
+    expect(statusEl.style.color).toBe('var(--error)')
+    expect(statusEl.textContent.length).toBeGreaterThan(0)
   })
 })

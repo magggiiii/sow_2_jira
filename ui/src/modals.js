@@ -8,8 +8,9 @@ import {
   fetchSettings,
   saveSettings,
   fetchModels as apiFetchModels,
+  testJiraConnection,
 } from './api.js'
-import { getEl, showToast } from './render.js'
+import { getEl, showToast, escapeHtml } from './render.js'
 
 let providerRegistry = {}
 let providerSettingsCache = {}
@@ -381,6 +382,44 @@ function scheduleModelFetch() {
   modelFetchTimer = setTimeout(fetchModels, 400)
 }
 
+// --- FE-2: Jira "Test connection" outcome rendering ------------------------
+//
+// Pure-ish + unit-testable: given the status element and a test function
+// (defaults to the api.testJiraConnection adapter), run the read-only check and
+// render the classified outcome into `statusEl`. ALL server-echoed text
+// (user/display name, error message) is escaped before it touches innerHTML —
+// the payload is credential-adjacent and can carry attacker-controlled strings.
+//
+// Outcomes:
+//   success            → var(--success), "✓ Connected as <user>"
+//   user_fixable       → var(--error),   "✗ <error>" (fix creds/config)
+//   transient          → var(--error),   "✗ <error> — temporary, retry"
+//   thrown/network     → var(--error),   generic failure copy
+export async function runJiraConnectionTest({ statusEl, testFn = testJiraConnection } = {}) {
+  if (!statusEl) return
+  statusEl.style.color = 'var(--text-secondary)'
+  statusEl.textContent = 'Testing…'
+  try {
+    const result = (await testFn()) || {}
+    if (result.success) {
+      const who = result.user ? escapeHtml(result.user) : 'Jira'
+      statusEl.style.color = 'var(--success)'
+      statusEl.innerHTML = `✓ Connected as ${who}`
+    } else {
+      const msg = escapeHtml(result.error || 'Connection failed')
+      statusEl.style.color = 'var(--error)'
+      if (result.error_class === 'transient') {
+        statusEl.innerHTML = `✗ ${msg} — temporary, please retry`
+      } else {
+        statusEl.innerHTML = `✗ ${msg}`
+      }
+    }
+  } catch (e) {
+    statusEl.style.color = 'var(--error)'
+    statusEl.innerHTML = `✗ ${escapeHtml((e && e.message) || 'Connection error')}`
+  }
+}
+
 export function initSettingsModal() {
   const btnSettings = getEl('btnSettings')
   const settingsModal = getEl('settingsModal')
@@ -471,6 +510,25 @@ export function initSettingsModal() {
   if (azureDeploymentName) azureDeploymentName.addEventListener('input', scheduleModelFetch)
   if (azureApiVersion) azureApiVersion.addEventListener('input', scheduleModelFetch)
   if (btnFetchModels) btnFetchModels.addEventListener('click', fetchModels)
+
+  // FE-2: Jira "Test connection" — read-only whoami against the configured
+  // server; renders the classified outcome (success / user_fixable / transient)
+  // beside the button with escaped, server-echoed text.
+  const btnTestJira = getEl('btnTestJira')
+  const jiraTestStatus = getEl('jiraTestStatus')
+  if (btnTestJira) {
+    btnTestJira.addEventListener('click', async () => {
+      const prevLabel = btnTestJira.textContent
+      btnTestJira.disabled = true
+      btnTestJira.textContent = 'Testing…'
+      try {
+        await runJiraConnectionTest({ statusEl: jiraTestStatus })
+      } finally {
+        btnTestJira.disabled = false
+        btnTestJira.textContent = prevLabel
+      }
+    })
+  }
 
   // "Use it" — set the OpenRouter recommended model directly. Works whether the
   // dropdown has been fetched or is empty; appends the option if missing.

@@ -213,6 +213,10 @@
                     <div class="form-group modal-field modal-field-last">
                         <label class="metric-label">Jira API Token (or PAT / Password)</label>
                         <input type="password" id="jiraApiToken" class="input-field" placeholder="Your API Token...">
+                        <div class="model-fetch-row">
+                            <button type="button" class="btn btn-ghost" id="btnTestJira">Test Connection</button>
+                            <span id="jiraTestStatus" class="metric-label" role="status" aria-live="polite"></span>
+                        </div>
                     </div>
 
                     <div class="modal-actions">

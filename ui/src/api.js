@@ -132,6 +132,99 @@ export function childLabelFor(hierarchy) {
   return hierarchy === 'story_subtask' ? 'Sub-task' : 'Task'
 }
 
+// --- FE-2 (2.6d): auth-aware fetch wrapper ---------------------------------
+//
+// A no-op-safe superset of `fetch`. Every request:
+//   (a) sends `credentials: 'same-origin'` so the session cookie rides along;
+//   (b) on a state-changing method (POST/PUT/DELETE/PATCH) attaches the
+//       `X-CSRF-Token` header from the double-submit token — read from the
+//       `sow_csrf` cookie, or minted once via GET /api/csrf and cached;
+//   (c) on a 401 response fires an injectable `onUnauthorized` handler (once)
+//       so the shell can redirect to login / re-auth.
+//
+// It MUST degrade gracefully: when there is no csrf cookie AND /api/csrf is
+// unavailable (auth OFF / not wired), state-changing requests still go through
+// WITHOUT the header — the server only enforces CSRF when auth is configured.
+// GET flows are byte-identical to the old behaviour (no token lookup at all).
+
+const CSRF_COOKIE = 'sow_csrf'
+const CSRF_HEADER = 'X-CSRF-Token'
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+// In-memory token cache so we mint at most once per page load.
+let _csrfToken = null
+// Single injectable re-auth handler (default no-op). FE-1's shell wires this.
+let _onUnauthorized = null
+
+// Register the 401 handler (redirect-to-login / re-auth). Injectable so the
+// fetch layer stays framework-agnostic and unit-testable.
+export function setOnUnauthorized(fn) {
+  _onUnauthorized = typeof fn === 'function' ? fn : null
+}
+
+// Test seam: drop the cached token between specs.
+export function __resetCsrfCache() {
+  _csrfToken = null
+}
+
+// Read the readable double-submit cookie the server sets on GET /api/csrf.
+function readCsrfCookie() {
+  if (typeof document === 'undefined' || !document.cookie) return null
+  const match = document.cookie
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(CSRF_COOKIE + '='))
+  if (!match) return null
+  return decodeURIComponent(match.slice(CSRF_COOKIE.length + 1)) || null
+}
+
+// Resolve a CSRF token for a state-changing request. Preference order:
+//   1. in-memory cache, 2. the sow_csrf cookie, 3. mint via GET /api/csrf.
+// Returns null (never throws) if none is obtainable — graceful degrade.
+async function ensureCsrfToken() {
+  if (_csrfToken) return _csrfToken
+  const fromCookie = readCsrfCookie()
+  if (fromCookie) {
+    _csrfToken = fromCookie
+    return _csrfToken
+  }
+  try {
+    const res = await fetch('/api/csrf', { credentials: 'same-origin' })
+    if (res && res.ok) {
+      const data = await res.json().catch(() => ({}))
+      _csrfToken = (data && data.csrf_token) || readCsrfCookie() || null
+      return _csrfToken
+    }
+  } catch (_e) {
+    // Network/endpoint failure — degrade to no token.
+  }
+  // Endpoint may have just set the cookie even on a non-JSON path.
+  _csrfToken = readCsrfCookie() || null
+  return _csrfToken
+}
+
+export async function apiFetch(url, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase()
+  const headers = new Headers(options.headers || {})
+
+  if (!SAFE_METHODS.has(method)) {
+    const token = await ensureCsrfToken()
+    if (token) headers.set(CSRF_HEADER, token)
+  }
+
+  const res = await fetch(url, {
+    ...options,
+    method,
+    headers,
+    credentials: options.credentials || 'same-origin',
+  })
+
+  if (res && res.status === 401 && _onUnauthorized) {
+    _onUnauthorized(res)
+  }
+  return res
+}
+
 // --- Fetch adapters --------------------------------------------------------
 //
 // Centralized so a route/field rename is one edit. `sessionQuery` mirrors the
@@ -153,7 +246,7 @@ export async function fetchSettings() {
 }
 
 export async function saveSettings(payload) {
-  return fetch('/api/settings', {
+  return apiFetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -161,7 +254,7 @@ export async function saveSettings(payload) {
 }
 
 export async function fetchModels(provider, payload) {
-  const res = await fetch(`/api/providers/${provider}/models`, {
+  const res = await apiFetch(`/api/providers/${provider}/models`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -169,6 +262,18 @@ export async function fetchModels(provider, payload) {
   const data = await res.json()
   if (!res.ok) throw new Error(data.detail || 'Model discovery failed')
   return data.models || []
+}
+
+// FE-2: read-only Jira connection test. Returns the server's classified JSON
+// payload as-is: { success:true, user, server } or
+// { success:false, error, error_class }. Routed through apiFetch so it carries
+// credentials + CSRF when auth is configured.
+export async function testJiraConnection() {
+  const res = await apiFetch('/api/jira/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  return res.json()
 }
 
 export async function fetchSessions() {
@@ -187,7 +292,7 @@ export async function fetchStatus(sessionId) {
 }
 
 export async function postTask(sessionId, task) {
-  return fetch('/api/tasks' + sessionQuery(sessionId), {
+  return apiFetch('/api/tasks' + sessionQuery(sessionId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(task),
@@ -195,19 +300,19 @@ export async function postTask(sessionId, task) {
 }
 
 export async function approveAll(sessionId) {
-  const res = await fetch('/api/tasks/approve_all' + sessionQuery(sessionId), { method: 'POST' })
+  const res = await apiFetch('/api/tasks/approve_all' + sessionQuery(sessionId), { method: 'POST' })
   return res.json()
 }
 
 export async function uploadFile(file) {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await fetch('/api/upload', { method: 'POST', body: formData })
+  const res = await apiFetch('/api/upload', { method: 'POST', body: formData })
   return res.json()
 }
 
 export async function startProcess(req) {
-  return fetch('/api/process', {
+  return apiFetch('/api/process', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -215,7 +320,7 @@ export async function startProcess(req) {
 }
 
 export async function pushToJira(sessionId, req) {
-  const res = await fetch('/api/push' + sessionQuery(sessionId), {
+  const res = await apiFetch('/api/push' + sessionQuery(sessionId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -224,9 +329,9 @@ export async function pushToJira(sessionId, req) {
 }
 
 export async function cancelRun(sessionId, signal) {
-  return fetch(`/api/cancel/${sessionId}`, { method: 'POST', signal })
+  return apiFetch(`/api/cancel/${sessionId}`, { method: 'POST', signal })
 }
 
 export async function deleteSession(sessionId) {
-  return fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+  return apiFetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
 }

@@ -150,9 +150,9 @@
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
       <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.45)"></i></div><div class="wpct">45%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="plan" style="transform:scaleX(.02)"></i></div><div class="wpct">Planned</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="ship" style="transform:scaleX(.08)"></i></div><div class="wpct">8%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.60)"></i></div><div class="wpct">60%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.40)"></i></div><div class="wpct">40%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.25)"></i></div><div class="wpct">25%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
     </div>
@@ -163,6 +163,36 @@
     <div class="sec-no reveal">01 — Shipped &amp; verified</div>
     <h2 class="reveal">What's done so far.</h2>
     <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+
+    <!-- WAVE 0/2/4 max-parallel session (SQLite-testable platform) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 2 — Offline platform lands: SQLite-testable ORM, auth core, job seams</h3><span class="sha">580f83e</span></div>
+      <div class="inc-sub reveal">Max-parallel multi-workflow session. Each increment shipped test-first behind a 3-skeptic adversarial review (default-reject) — which caught real defects: a secret-redaction leak (Bearer/JSON-quoted secrets) and a SessionStore Protocol gap (missing <code>get_user</code>). Suite green 745/2; all additive/offline (real Postgres/Redis/OIDC/Render stay walled).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The 7-table ORM now runs on SQLite for offline tests</h4><span class="tag">W2-S0 · 7849544</span></div>
+        <p class="what">SQLite-only type shims so the same Postgres ORM compiles and round-trips offline — the hard gate that unblocks every DB/repo/GC/migrator test.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>Base.metadata.create_all()</code> on SQLite raised <code>CompileError: can't render INET</code>; JSONB/UUID would follow — no offline DB test was possible.</div><div class="cell after"><span class="lbl">After</span><code>@compiles(INET/JSONB/UUID,'sqlite')</code> + a sqlite-only JSONB bind/result processor round-trips dict/list JSONB with app-supplied UUID ids. Postgres DDL byte-for-byte unchanged (INET+JSONB+gen_random_uuid() preserved, proven per-dialect). +aiosqlite/greenlet.</div></div>
+        <p class="why"><span class="wl">Better</span>The whole data layer is now testable in-memory offline while production Postgres semantics are untouched.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Observability survives OpenTelemetry removal + secrets no longer leak to logs</h4><span class="tag">4.1a · cb8f223</span></div>
+        <p class="what">De-OTel rewrite with working no-op shims, and a hardened secret-redaction pass.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Top-level <code>traceloop</code>/<code>opentelemetry</code> imports meant removing OTel would <code>ImportError</code> and kill all 11 importers; logs redacted no secrets.</div><div class="cell after"><span class="lbl">After</span>OTel imports are lazy/guarded; <code>tracer</code>/<code>trace_span</code>/<code>sync_telemetry</code>/<code>llm_token_usage</code>/… work as no-ops when OTel is absent. Redaction: an auth-scheme pass (Bearer/Basic) + a quote-tolerant key=value pass scrub JSON/dict/header secrets while preserving prose and UUID correlation ids. JSON audit log carries user_id+run_id.</div></div>
+        <p class="why"><span class="wl">Better</span>OTel becomes a removable dependency and secret leakage to stdout/audit.jsonl is closed — both prerequisites for hosted deploy.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Offline authentication core</h4><span class="tag">2.5a–c · 550390d</span></div>
+        <p class="what">Opaque session tokens, an org email domain gate, a SessionStore port + fake, and a <code>current_user</code> dependency.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No auth layer at all — a single-user local app.</div><div class="cell after"><span class="lbl">After</span><code>auth/*</code>: <code>secrets</code> tokens + sha256 hash (matching <code>db.Session.token_hash</code>) + constant-time compare; a domain allowlist; <code>current_user</code> 401s on missing/forged/expired/inactive. Session/User/SessionStore Protocols in <code>core/ports.py</code>. Google OIDC token exchange stays walled.</div></div>
+        <p class="why"><span class="wl">Better</span>The multi-tenant identity seam exists and is tested; only live OIDC wiring waits on secrets.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Async job + progress seams for the worker path</h4><span class="tag">2.3a/b/c/e · 580f83e</span></div>
+        <p class="what">Queue + progress ports with in-memory fakes and a testable job entrypoint.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The pipeline only ran inline in a request/CLI; no enqueue/worker seam, and progress lived in an in-memory dict.</div><div class="cell after"><span class="lbl">After</span><code>JobQueue</code>/<code>ProgressStore</code> Protocols + fakes; <code>pipeline/jobs.py</code> with a JSON-safe <code>JobPayload</code>, <code>enqueue_run()</code>, and a <code>run_pipeline_job()</code> worker entrypoint that emits progress through the port and takes an injected orchestrator factory (orchestrator imported lazily — import stays offline). <code>RunKind</code> enum added. Real arq/redis stays walled.</div></div>
+        <p class="why"><span class="wl">Better</span>The run can move to a background worker without rewriting the engine; the seam is proven with fakes today.</p>
+      </div>
+    </div>
 
     <!-- WAVE 1 (offline data platform — this session) -->
     <div class="increment">

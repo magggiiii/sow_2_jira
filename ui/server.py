@@ -38,9 +38,10 @@ from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
 from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
 from integrations.jira_client import JiraClient
+from jira import JIRA
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pipeline.observability import trace_span, sync_telemetry, logger
+from pipeline.observability import trace_span, logger
 
 app = FastAPI(title="SOW to Jira Pipeline")
 
@@ -69,7 +70,6 @@ def startup_event():
             }, f)
         logger.info(f"Migrated legacy data to session: {legacy_id}")
 
-    sync_telemetry()
     try:
         settings = settings_manager.load()
         if settings:
@@ -77,10 +77,13 @@ def startup_event():
     except Exception as e:
         logger.error(f"Failed to load settings on startup: {e}")
     
-    # Filter out frequent status polling from logs
+    # Filter out frequent status polling and liveness probes from logs.
+    # /healthz (4.2d) is hit by container/Render health checks on a tight
+    # interval, so keep it out of the access log alongside /api/status.
     class PollingFilter(logging.Filter):
         def filter(self, record):
-            return "/api/status" not in record.getMessage()
+            msg = record.getMessage()
+            return "/api/status" not in msg and "/healthz" not in msg
 
     logging.getLogger("uvicorn.access").addFilter(PollingFilter())
 
@@ -186,6 +189,15 @@ def get_session_path(session_id: str) -> Path:
 @app.get("/")
 def read_root():
     return FileResponse(FRONTEND_DIR / "index.html")
+
+@app.get("/healthz")
+def healthz():
+    """4.2d: lightweight liveness probe for containers / Render.
+
+    Deliberately does NO DB / settings / network work — it must stay fast and
+    dependency-free so an unhealthy backing store never fails the liveness check.
+    """
+    return {"status": "ok"}
 
 def load_data(session_id: str = None):
     path = get_session_path(session_id)
@@ -727,11 +739,16 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
             push_results = jira.push_tasks(pushable) if pushable else []
             results = push_results + gated_results
 
+            # BE-1: persist the per-task JiraPushResult onto its task so the
+            # outcome (issue key/url on success, error_class/message on failure)
+            # survives a reload — previously `push_results` was built then
+            # discarded, losing all per-task push detail on the next load.
             result_map = {str(r.task_id): r for r in results}
             for i, t in enumerate(tasks_data):
-                if t.get("status") == "APPROVED":
-                    res = result_map.get(str(t.get("id")))
-                    if res and res.success:
+                res = result_map.get(str(t.get("id")))
+                if res is not None:
+                    tasks_data[i]["push_result"] = res.model_dump(mode="json")
+                    if res.success:
                         tasks_data[i]["status"] = "PUSHED"
 
             save_data(data, session_id)
@@ -779,6 +796,46 @@ def push_to_jira(req: Optional[PushRequest] = None, session_id: Optional[str] = 
     thread.start()
     return {"success": True, "started": True, "run_id": run_id, "message": "Push started"}
 
+@app.post("/api/jira/test")
+def test_jira_connection():
+    """BE-3: read-only Jira connection test.
+
+    Validates credentials and reaches the configured server WITHOUT creating any
+    issue — it only calls the SDK's ``myself()`` (whoami). Failures are mapped to
+    the app ErrorClass taxonomy via ``classify_exception`` (401/403 →
+    user_fixable, 429/5xx/timeout → transient) so the UI can react appropriately.
+    Never raises: the outcome is returned as a classified JSON payload.
+    """
+    server = os.environ.get("JIRA_SERVER")
+    email = os.environ.get("JIRA_EMAIL")
+    token = os.environ.get("JIRA_API_TOKEN")
+
+    if not (server and email and token):
+        return {
+            "success": False,
+            "error": "Jira credentials are not configured (JIRA_SERVER / JIRA_EMAIL / JIRA_API_TOKEN).",
+            "error_class": ErrorClass.USER_FIXABLE.value,
+        }
+
+    try:
+        client = JIRA(server=server, basic_auth=(email, token))
+        me = client.myself()  # read-only whoami — validates creds, no writes
+        display = None
+        if isinstance(me, dict):
+            display = me.get("displayName") or me.get("emailAddress")
+        return {"success": True, "user": display, "server": server}
+    except Exception as e:
+        error_class = classify_exception(e)
+        logger.warning(f"Jira connection test failed ({error_class.value}): {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "error_class": error_class.value,
+        }
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("ui.server:app", host="127.0.0.1", port=8000, reload=True)
+    # 4.2b: bind all interfaces + honor $PORT so the container / Render can route
+    # to the app. reload is disabled here (dev reload uses `make ui` /
+    # `uvicorn ... --reload`); this __main__ path is the container entrypoint.
+    uvicorn.run("ui.server:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

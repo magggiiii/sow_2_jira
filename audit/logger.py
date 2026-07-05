@@ -11,7 +11,12 @@ class AuditLogger:
 
     DB_PATH = Path("data/audit.db")
 
-    def __init__(self):
+    def __init__(self, run_id: Optional[str] = None):
+        # ``run_id`` is accepted for back-compat with callers that construct a
+        # per-run logger positionally (e.g. scripts/run_eval_dataset.py). It is
+        # stored for reference only; ``.log()`` still takes run_id per call and
+        # the SQLite backend is unchanged (Postgres rewrite is WALLED, 1.6d).
+        self.run_id = run_id
         self.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.DB_PATH), check_same_thread=False)
         self._create_table()

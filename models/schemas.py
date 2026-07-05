@@ -153,6 +153,18 @@ class LLMMode(str, Enum):
     CUSTOM = "custom"    # Any litellm provider (e.g., anthropic, gpt, groq)
 
 
+class RunKind(str, Enum):
+    """What a queued/worker run does.
+
+    SEAM-A (async-job seam): a job payload carries a ``kind`` so the future
+    worker can route an enqueued run to the right entrypoint. EXTRACTION is the
+    full SOW→tasks pipeline; PUSH is the Jira-push-only path. Values are the
+    exact lowercase strings the payload uses.
+    """
+    EXTRACTION = "extraction"
+    PUSH = "push"
+
+
 class JiraHierarchy(str, Enum):
     """
     Output shape for Jira push. Container grouping is structural — driven by

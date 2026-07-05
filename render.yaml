@@ -1,0 +1,73 @@
+# Render Blueprint for SOW-to-Jira (hosted, multi-service topology)
+#
+# Topology:
+#   - web (Docker): FastAPI app served by Gunicorn/Uvicorn on $PORT, health at /api/status
+#   - databases:    Managed PostgreSQL, wired into the web service via DATABASE_URL
+#   - keyvalue:     Redis-compatible Key Value for the future queue / progress store
+#
+# Secrets are NEVER hardcoded here. APP_ENC_KEY is a sync:false secret that the
+# operator supplies in the Render Dashboard. No ARGUS_*/BIFROST_* tokens are included.
+#
+# Schema: https://render.com/schema/render.yaml.json
+
+databases:
+  - name: sow-to-jira-db
+    plan: basic-256mb
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Web service: the FastAPI app (Docker build from the repo Dockerfile).
+  # The Dockerfile CMD binds gunicorn to 0.0.0.0:${PORT}, so Render's injected
+  # $PORT is honored automatically.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: sow-to-jira-web
+    runtime: docker
+    region: oregon
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/status
+    autoDeployTrigger: commit
+    envVars:
+      # --- Wired connections (no literal secrets) ---
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sow-to-jira-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: sow-to-jira-kv
+          type: keyvalue
+          property: connectionString
+
+      # --- Application crypto key: operator-supplied secret ---
+      - key: APP_ENC_KEY
+        sync: false
+
+      # --- Non-secret config defaults (safe to commit) ---
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: LITELLM_PROVIDER
+        value: ollama
+      - key: LOG_LEVEL
+        value: info
+
+  # ---------------------------------------------------------------------------
+  # Key Value (Redis-compatible) instance for the future queue / progress store.
+  # Internal-only access; no public ipAllowList entry.
+  # ---------------------------------------------------------------------------
+  - type: keyvalue
+    name: sow-to-jira-kv
+    region: oregon
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+# Preview environments for pull requests (secrets like APP_ENC_KEY are excluded
+# from previews and must be set per-preview by the operator).
+previews:
+  generation: automatic
+  expireAfterDays: 3

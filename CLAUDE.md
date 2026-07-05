@@ -58,7 +58,7 @@ The detailed GSD-managed sections below are authoritative; this is the 30-second
 - `pageindex/` — Vendored fork of VectifyAI PageIndex (not a pip dep). Treat as third-party; only `pipeline/indexer.py` should call into it.
 - `tests/` — Real pytest suite. The `test_*.py` files at repo root (`test_jira_api.py`, `test_jira_mcp.py`, `test_discovery.py`, `test_settings.py`) are standalone scripts, not part of the pytest run.
 - `scripts/install/install.sh` — Public installer downloaded by `curl | bash` (see README). Do not break its CLI surface.
-- `scripts/prod-check.sh`, `scripts/verify-telemetry.py` — Production-integrity checks.
+- `scripts/prod-check.sh` — Production-integrity checks.
 - `infra/` — Argus observability stack (Grafana, Loki, Tempo, Langfuse, Bifrost).
 - `config/sow_config.json` — Jira issue type defaults and extraction/indexing caps (not env-driven).
 - `pageindex/config.yaml` — PageIndex token/page limits and default dynamic model.

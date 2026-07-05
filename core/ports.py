@@ -199,6 +199,75 @@ class ObjectStore(Protocol):
 # storage decision is made.
 
 
+# ─── Auth ports (offline authentication core) ─────────────────────────────────
+#
+# These describe the auth seam used by the ``current_user`` FastAPI dependency
+# and the session store. They mirror the shape of ``pipeline.db.User`` and
+# ``pipeline.db.Session`` so a future DB-backed ``SessionStore`` satisfies the
+# SAME Protocol as the in-memory ``auth.store.FakeSessionStore``. Session tokens
+# are opaque; only ``sha256(raw cookie)`` is ever persisted (see
+# ``pipeline.db.Session.token_hash``).
+
+
+@runtime_checkable
+class User(Protocol):
+    """
+    The authenticated principal. Mirrors ``pipeline.db.User`` (id / email /
+    is_active) so an ORM ``User`` row structurally satisfies this protocol.
+    """
+
+    id: str
+    email: str
+    is_active: bool
+
+
+@runtime_checkable
+class Session(Protocol):
+    """
+    A server-side opaque session. Mirrors ``pipeline.db.Session`` (id /
+    user_id / expires_at) so an ORM ``Session`` row structurally satisfies it.
+    ``expires_at`` is a timezone-aware datetime.
+    """
+
+    id: str
+    user_id: str
+    expires_at: Any
+
+
+@runtime_checkable
+class SessionStore(Protocol):
+    """
+    The session persistence surface behind ``current_user``. The in-memory
+    ``auth.store.FakeSessionStore`` satisfies this today; a DB-backed store
+    (over ``pipeline.db.Session``) will satisfy the same shape later.
+
+    The raw cookie token is passed in/out but never stored: implementations
+    persist only ``sha256(raw)`` and compare in constant time.
+    """
+
+    def create_session(self, user_id: str) -> "tuple[str, Session]":
+        """Mint a new session for ``user_id``; return ``(raw_token, session)``."""
+        ...
+
+    def get_session(self, raw_token: str) -> "Optional[Session]":
+        """Return the live session for ``raw_token``, or None if unknown/expired."""
+        ...
+
+    def get_user(self, user_id: str) -> "Optional[User]":
+        """Return the ``User`` for ``user_id``, or None if absent.
+
+        Part of the contract because ``current_user`` (``auth.deps``) resolves
+        the principal via ``store.get_user(session.user_id)`` after loading the
+        session. A DB-backed store must implement this alongside the session
+        methods, or isinstance() would give false confidence for the seam.
+        """
+        ...
+
+    def delete_session(self, raw_token: str) -> None:
+        """Revoke the session identified by ``raw_token`` (idempotent)."""
+        ...
+
+
 @runtime_checkable
 class RunRepository(Protocol):
     """
@@ -275,6 +344,9 @@ __all__ = [
     "AuditSink",
     "ObjectStore",
     "EmbeddingIndex",
+    "User",
+    "Session",
+    "SessionStore",
     "RunRepository",
     "TaskRepository",
     "CredentialRepository",

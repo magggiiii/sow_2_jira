@@ -7,7 +7,7 @@ import base64
 import secrets
 from pathlib import Path
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
@@ -32,6 +32,7 @@ load_dotenv(UI_DIR.parent / ".env")
 
 from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus, JiraPushResult
 from core.errors import ErrorClass, classify_exception
+from core.domain.ids import make_run_id
 from core.guardrails import PushGate, PushBlocked
 from pipeline.orchestrator import PipelineOrchestrator
 from audit.logger import AuditLogger
@@ -64,7 +65,7 @@ def startup_event():
                 "run_id": legacy_id,
                 "filename": "Legacy Export",
                 "llm_mode": "api",
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }, f)
         logger.info(f"Migrated legacy data to session: {legacy_id}")
 
@@ -263,7 +264,7 @@ def run_pipeline_task(req: ProcessRequest, run_id: str):
             "run_id": run_id,
             "filename": req.pdf_filename,
             "llm_mode": req.llm_mode,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }, f)
         
     from pipeline.observability import run_logger
@@ -540,11 +541,11 @@ def save_settings(req: SettingsConfig):
 
 @app.post("/api/process")
 async def start_processing(req: ProcessRequest, background_tasks: BackgroundTasks):
-    # Readable Run ID: YYYYMMDD-HHMMSS-filename
-    clean_name = "".join(c if c.isalnum() else "-" for c in req.pdf_filename.split(".")[0]).strip("-")
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_id = f"{timestamp}-{clean_name}"
-    
+    # Full-UUID run id (W1 1.5). The friendly filename is preserved separately in
+    # the session metadata (see run_pipeline_task), so the UI still shows a
+    # readable name; old timestamp-slug session dirs remain readable by id.
+    run_id = make_run_id()
+
     background_tasks.add_task(run_pipeline_task, req, run_id)
     return {"message": "Processing started", "run_id": run_id}
 
@@ -587,17 +588,14 @@ def add_task(req: AddTaskRequest, session_id: Optional[str] = None):
     if "tasks" not in data:
         data["tasks"] = []
     
-    import uuid
-    import datetime
-    
     new_task = {
         "id": str(uuid.uuid4()),
         "title": req.title,
         "short_description": req.short_description,
         "status": "APPROVED",
         "confidence": 1.0,
-        "created_at": datetime.datetime.utcnow().isoformat(),
-        "updated_at": datetime.datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         "flags": [],
         "source_refs": []
     }

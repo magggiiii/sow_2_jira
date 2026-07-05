@@ -9,6 +9,7 @@ from pydantic import BaseModel, BeforeValidator, Field, field_validator
 import datetime
 
 from core.errors import ErrorClass
+from core.domain.ids import make_run_id
 
 
 # ─── Confidence / score bounding (CONF-1, audit data_model "bound confidence") ─
@@ -222,7 +223,7 @@ class DedupDecisionType(_NormalizedStrEnum):
 # ─── Acceptance Criterion & Dependency ────────────────────────────────────────
 
 class AcceptanceCriterion(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    id: str = Field(default_factory=lambda: str(uuid4()))  # W1 1.5: full UUID (was uuid4()[:8])
     condition: str                                   # The testable statement
     type: AcceptanceCriterionType = AcceptanceCriterionType.FUNCTIONAL
     verified_by: VerifiedBy = VerifiedBy.TEST        # test | review | demo | inspection
@@ -365,7 +366,7 @@ class RunConfig(BaseModel):
     # (skip done nodes, restore their tasks + coverage). Off → single end-of-run
     # checkpoint only (legacy).
     enable_resumption: bool = True
-    run_id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    run_id: str = Field(default_factory=make_run_id)  # W1 1.5: full UUID (was uuid4()[:8])
     provider_config: Optional[ProviderConfig] = None
 
     # STEP 5.4: pipeline tuning knobs, promoted from bare ``os.getenv`` reads in

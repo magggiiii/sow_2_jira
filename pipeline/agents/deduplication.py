@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 
-from models.schemas import ManagedTask, TaskStatus, TaskFlag, DedupDecision
+from models.schemas import ManagedTask, TaskStatus, TaskFlag, DedupDecision, utcnow
 from pipeline.agents.state import _merge_acceptance_criteria, _merge_dependencies
 from pipeline.agents.cross_run_index import ProjectEmbeddingIndex
 from pipeline.llm_client import LLMClient
@@ -586,6 +586,5 @@ class DeduplicationAgent:
         a.merged_from.append(b.id)
         a.confidence = max(a.confidence, b.confidence)
 
-        import datetime
-        a.updated_at = datetime.datetime.utcnow()
+        a.updated_at = utcnow()
         return a

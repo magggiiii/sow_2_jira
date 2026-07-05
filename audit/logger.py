@@ -51,7 +51,7 @@ class AuditLogger:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
-                datetime.datetime.utcnow().isoformat(),
+                datetime.datetime.now(datetime.timezone.utc).isoformat(),  # tz-aware (W1 1.3)
                 agent,
                 node_id,
                 action,

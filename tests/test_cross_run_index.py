@@ -95,6 +95,10 @@ def test_index_creates_files_on_first_add(tmp_path):
     assert manifest["task_count"] == 2
     assert manifest["version"] == 1
     assert "last_updated" in manifest
+    # W1 1.3: tz-aware isoformat carries +00:00 and no longer appends a manual
+    # "Z" (which would have produced an invalid "+00:00Z" double-suffix).
+    assert manifest["last_updated"].endswith("+00:00")
+    assert not manifest["last_updated"].endswith("Z")
 
     with np.load(npz_path, allow_pickle=True) as data:
         assert data["embeddings"].shape == (2, EMBED_DIM)

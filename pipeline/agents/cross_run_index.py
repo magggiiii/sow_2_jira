@@ -112,7 +112,8 @@ class ProjectEmbeddingIndex:
         manifest = {
             "version": INDEX_VERSION,
             "project_key": self.project_key,
-            "last_updated": datetime.datetime.utcnow().isoformat() + "Z",
+            # tz-aware UTC (W1 1.3); isoformat now carries +00:00 (no manual "Z").
+            "last_updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "task_count": int(embeddings.shape[0]),
         }
         tmp_manifest = self.manifest_path.with_suffix(".json.tmp")

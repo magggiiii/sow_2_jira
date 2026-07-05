@@ -13,6 +13,7 @@ from models.schemas import (
     TaskFlag,
     TaskStatus,
     normalize_acceptance_criteria,
+    utcnow,
 )
 from audit.logger import AuditLogger
 
@@ -237,8 +238,7 @@ class TaskStateAgent:
         if incoming.mockup_prototype and not existing.mockup_prototype:
             existing.mockup_prototype = incoming.mockup_prototype
 
-        import datetime
-        existing.updated_at = datetime.datetime.utcnow()
+        existing.updated_at = utcnow()
 
         return existing
 

@@ -50,6 +50,20 @@ def clamp_unit_interval(value):
 UnitInterval = Annotated[float, BeforeValidator(clamp_unit_interval)]
 
 
+# ─── Time (tz-aware, W1 1.3) ──────────────────────────────────────────────────
+
+def utcnow() -> datetime.datetime:
+    """Timezone-aware UTC 'now'.
+
+    Replaces the naive ``datetime.datetime.utcnow()`` (deprecated in 3.12+ and a
+    source of aware-vs-naive comparison bugs). Every timestamp default and
+    reassignment in the pipeline routes through this so all datetimes carry
+    ``tzinfo=UTC`` — required for the multi-region/SaaS pivot and correct
+    ISO-8601 serialization (``...+00:00``).
+    """
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
 # ─── LLM Config ────────────────────────────────────────────────────────────────
 
 class ProviderConfig(BaseModel):
@@ -316,8 +330,8 @@ class ManagedTask(BaseModel):
     source_refs: list[SourceRef] = Field(default_factory=list)  # Can span multiple nodes
     merged_from: list[UUID] = Field(default_factory=list)       # IDs merged into this task
     dependencies: list[TaskDependency] = Field(default_factory=list)
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
-    updated_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    created_at: datetime.datetime = Field(default_factory=utcnow)
+    updated_at: datetime.datetime = Field(default_factory=utcnow)
 
     @field_validator("acceptance_criteria", mode="before")
     @classmethod
@@ -381,7 +395,7 @@ class RunConfig(BaseModel):
 
 class AuditEntry(BaseModel):
     run_id: str
-    timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = Field(default_factory=utcnow)
     agent: str                  # e.g. "ExtractionAgent", "StateAgent"
     node_id: Optional[str]
     action: str                 # e.g. "EXTRACTED", "MERGED", "CLOSED", "GAP_RECOVERED"

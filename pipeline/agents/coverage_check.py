@@ -36,6 +36,7 @@ from models.schemas import (
     ManagedTask,
     UnitInterval,
     normalize_acceptance_criteria,
+    utcnow,
 )
 from pipeline.llm_client import LLMClient
 from prompts import registry
@@ -58,7 +59,7 @@ class SectionCoverageReport(BaseModel):
     extracted_count: int
     missed_items: list[MissedItem] = Field(default_factory=list)
     checker_confidence: UnitInterval = 0.0        # CONF-1: clamped into [0,1]
-    checked_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    checked_at: datetime.datetime = Field(default_factory=utcnow)
 
 
 class CoverageAudit(BaseModel):

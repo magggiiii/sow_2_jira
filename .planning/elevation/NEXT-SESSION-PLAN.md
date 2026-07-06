@@ -125,3 +125,31 @@ R3 → R4 (final gates + walled-transform authoring + full verify):
 - R0 = 2 solos; R2 = 2 hot-file lanes; R3 = 2; R4 = 2 + verify.
 - Every phase = 1 adversarial-review Workflow (default-reject). Expect the review to catch real defects (it did every UI round this session) — budget for a fix+re-review cycle on the high-risk phases (1.6b/1.6c orchestrator routing, 2.6a IDOR, observability rewrite, FE-1).
 - **Start each session by re-confirming the green baseline** (pytest + npm test) and re-scoping R0 against live code before fanning out.
+
+---
+
+## 8. FINAL WAVE — Argus decommission (added 2026-07-06; R0→R4 above are DONE + committed on `elevation/wave-0`, unpushed)
+
+**Goal:** fully retire the self-hosted **Argus observability fleet** (per-instance OTel edge collectors + admin HQ deck: Grafana/Loki/Tempo/Langfuse-self-hosted) now that hosted SaaS uses **Langfuse Cloud** directly. OTel is already dropped (R4 `4.1f`); this wave removes the fleet's *infra, config, env identity, and installer/doc footprint*, and closes out the leaked-token remediation. Same method: disjoint-file streams · concurrent workflows · per-phase **TDD → adversarial-review (default-reject) → explicit-path commit → UPGRADES.html → `graphify update .`**.
+
+### Ground truth (verified 2026-07-06)
+- Fleet dirs: `infra/user/` (`docker-compose.user.yml` + `config/user/argus-collector-edge.yaml`) and `infra/admin/` (`docker-compose.admin.yml` + `evaluator/` + Bifrost). `infra/` is referenced by `scripts/install/install.sh` (local bring-up) + `README.md` + `CLAUDE.md`/`AGENTS.md`.
+- Code hooks: `pipeline/observability.py` — `ARGUS_SYNC_ENABLED`, `ARGUS_COLLECTOR_URL`, `resolve_collector_endpoint`, `_use_local_collector`, `INSTANCE_ID`(=`SOW_INSTANCE_ID`), `argus.instance_id` resource attr; `pipeline/llm_client.py` imports `INSTANCE_ID` (uses it in span attrs); `tests/test_observability_shims.py` asserts on `SYNC_ENABLED`. Langfuse-cloud path (`LANGFUSE_*`) already exists and is the keeper.
+- ⚠️ **Bifrost is LOCKED (STEP 5.1).** `config/admin/bifrost.admin.yaml` + the Bifrost service inside `infra/admin` are the LLM *gateway*, NOT observability. This wave must NOT change Bifrost routing / `BIFROST_*` / `llm_router` / `configure_litellm_for_mode`. If deleting `infra/admin` wholesale would remove the Bifrost deployment, split it: delete only the Argus-observability services, or get explicit go-ahead to retire Bifrost too.
+
+### Streams (disjoint scopes)
+| Stream | Scope | Offline? |
+|---|---|---|
+| **AR-OBS** (hot, 1 agent) | `pipeline/observability.py` — strip ARGUS collector paths + `INSTANCE_ID`/`argus.instance_id` fleet identity; keep Langfuse-cloud + the no-op/de-OTel shims intact. `pipeline/llm_client.py` (LOCKED-adjacent: remove ONLY the `INSTANCE_ID` import/usage, touch nothing else). `tests/test_observability_shims.py`. | ✅ |
+| **AR-INSTALL-DOCS** | `scripts/install/install.sh` (drop ARGUS_* + the `infra/` bring-up), `README.md`, `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` (remove infra/Argus references). Leave `OLLAMA_*` (LOCKED 5.1). | ✅ |
+| **AR-INFRA-DELETE** | delete `infra/user/**` + `config/user/argus-collector-edge.yaml` (pure Argus observability). `infra/admin/**` + `config/admin/bifrost.admin.yaml` → **gated on the Bifrost decision** (default: keep, flag for 5.1). | ✅ |
+| **AR-SECRET** (walled/out-of-band) | rotate `ARGUS_BACKBONE_TOKEN` in the Argus backend (human); decide git-history purge (filter-repo/BFG → rewrites already-pushed history → needs explicit go-ahead + coordinated force-push to both remotes). | ⛔ |
+
+### Rounds
+- **AR-R0 (2 concurrent, disjoint):** AR-OBS (single comprehensive agent — hot file) ∥ AR-INFRA-DELETE (delete `infra/user` + argus-collector-edge.yaml). Gate: `import pipeline.observability` clean with OTel blocked + Langfuse path intact; no `INSTANCE_ID`/`ARGUS_COLLECTOR_URL` symbol left; `llm_client` still imports (grep proves only INSTANCE_ID removed); full suite green.
+- **AR-R1:** AR-INSTALL-DOCS (after AR-INFRA-DELETE so doc/installer references match reality). Gate: `sh -n install.sh`; no `infra/` or `ARGUS_*` literal remains; `OLLAMA_*` untouched (diff); docs mirror-synced.
+- **AR-R2 (decisions + walled):** confirm Bifrost scope with the user → optionally delete `infra/admin`/`bifrost.admin.yaml`; then AR-SECRET (rotation + history purge) on explicit go-ahead. **Verify gauntlet:** full pytest ∥ npm test ∥ OTel-absent smoke ∥ `git grep` token = 0 tracked ∥ (if history purged) `git log -S<token> --all` = 0.
+
+### Conflict / LOCKED
+- Hot file: `pipeline/observability.py` = single agent. `pipeline/llm_client.py` LOCKED-adjacent — scope to ONLY `INSTANCE_ID`. **LOCKED (never touch):** `BIFROST_*`, `bifrost.admin.yaml` routing, `llm_router`/`configure_litellm_for_mode`, `data/.keyfile`, `os.environ` credential writes, `OLLAMA_*` / STEP 5.1.
+- **WALLED:** live Langfuse-cloud trace verification; live installer run; actual git-history rewrite + force-push (disruptive; explicit go-ahead only); token rotation (human/backend).

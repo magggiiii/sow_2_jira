@@ -142,13 +142,15 @@ R3 → R4 (final gates + walled-transform authoring + full verify):
 |---|---|---|
 | **AR-OBS** (hot, 1 agent) | `pipeline/observability.py` — strip ARGUS collector paths + `INSTANCE_ID`/`argus.instance_id` fleet identity; keep Langfuse-cloud + the no-op/de-OTel shims intact. `pipeline/llm_client.py` (LOCKED-adjacent: remove ONLY the `INSTANCE_ID` import/usage, touch nothing else). `tests/test_observability_shims.py`. | ✅ |
 | **AR-INSTALL-DOCS** | `scripts/install/install.sh` (drop ARGUS_* + the `infra/` bring-up), `README.md`, `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` (remove infra/Argus references). Leave `OLLAMA_*` (LOCKED 5.1). | ✅ |
-| **AR-INFRA-DELETE** | delete `infra/user/**` + `config/user/argus-collector-edge.yaml` (pure Argus observability). `infra/admin/**` + `config/admin/bifrost.admin.yaml` → **gated on the Bifrost decision** (default: keep, flag for 5.1). | ✅ |
+| **AR-INFRA-DELETE** | delete `infra/user/**` + `config/user/argus-collector-edge.yaml` (pure Argus observability). `infra/admin/**` + `config/admin/bifrost.admin.yaml` → **KEEP — DECIDED 2026-07-06: Argus-only decommission; Bifrost stays (LOCKED 5.1). Do NOT delete or edit them.** | ✅ |
 | **AR-SECRET** (walled/out-of-band) | rotate `ARGUS_BACKBONE_TOKEN` in the Argus backend (human); decide git-history purge (filter-repo/BFG → rewrites already-pushed history → needs explicit go-ahead + coordinated force-push to both remotes). | ⛔ |
 
 ### Rounds
 - **AR-R0 (2 concurrent, disjoint):** AR-OBS (single comprehensive agent — hot file) ∥ AR-INFRA-DELETE (delete `infra/user` + argus-collector-edge.yaml). Gate: `import pipeline.observability` clean with OTel blocked + Langfuse path intact; no `INSTANCE_ID`/`ARGUS_COLLECTOR_URL` symbol left; `llm_client` still imports (grep proves only INSTANCE_ID removed); full suite green.
 - **AR-R1:** AR-INSTALL-DOCS (after AR-INFRA-DELETE so doc/installer references match reality). Gate: `sh -n install.sh`; no `infra/` or `ARGUS_*` literal remains; `OLLAMA_*` untouched (diff); docs mirror-synced.
-- **AR-R2 (decisions + walled):** confirm Bifrost scope with the user → optionally delete `infra/admin`/`bifrost.admin.yaml`; then AR-SECRET (rotation + history purge) on explicit go-ahead. **Verify gauntlet:** full pytest ∥ npm test ∥ OTel-absent smoke ∥ `git grep` token = 0 tracked ∥ (if history purged) `git log -S<token> --all` = 0.
+- **AR-R2 (walled):** Bifrost scope DECIDED (keep — LOCKED, untouched). AR-SECRET remains: token rotation (human/backend) + git-history purge is **NOT authorized** (decided 2026-07-06: rotate, do not rewrite history) unless the user later says otherwise. **Verify gauntlet:** full pytest ∥ npm test ∥ OTel-absent smoke ∥ `git grep` token = 0 tracked.
+
+> **Decisions locked 2026-07-06:** (1) branch **PUSHED** to GitHub origin (PR #7, head `cd87184`); GitLab pending VPN. (2) Argus-only — **Bifrost stays LOCKED**. (3) Token: **rotate out-of-band, no history rewrite**.
 
 ### Conflict / LOCKED
 - Hot file: `pipeline/observability.py` = single agent. `pipeline/llm_client.py` LOCKED-adjacent — scope to ONLY `INSTANCE_ID`. **LOCKED (never touch):** `BIFROST_*`, `bifrost.admin.yaml` routing, `llm_router`/`configure_litellm_for_mode`, `data/.keyfile`, `os.environ` credential writes, `OLLAMA_*` / STEP 5.1.

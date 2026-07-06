@@ -258,7 +258,6 @@ def test_gate_e_public_surface_importable():
         add_run_file_logger,
         llm_token_usage,
         llm_operation_duration,
-        INSTANCE_ID,
         SYNC_ENABLED,
         init_argus,
         DEFAULT_JOB_NAME,
@@ -269,9 +268,18 @@ def test_gate_e_public_surface_importable():
     assert callable(run_logger)
     assert callable(add_run_file_logger)
     assert callable(init_argus)
-    assert isinstance(INSTANCE_ID, str)
     assert isinstance(DEFAULT_JOB_NAME, str)
     assert isinstance(SYNC_ENABLED, bool)
+
+
+def test_gate_e_argus_symbols_removed():
+    """De-Argus/de-OTel removal: INSTANCE_ID and the collector-resolution
+    helpers must be GONE from the observability surface entirely."""
+    import pipeline.observability as o
+    assert not hasattr(o, "INSTANCE_ID"), "INSTANCE_ID must be removed"
+    assert not hasattr(o, "resolve_collector_endpoint"), "resolve_collector_endpoint must be removed"
+    assert not hasattr(o, "_use_local_collector"), "_use_local_collector must be removed"
+    assert not hasattr(o, "LANGFUSE_BASE_URL"), "LANGFUSE_BASE_URL must be removed"
 
 
 def test_gate_e_static_clean():

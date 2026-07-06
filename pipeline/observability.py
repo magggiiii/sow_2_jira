@@ -3,65 +3,35 @@
 import os
 import re
 import sys
-import base64
 import functools
 import contextlib
 
 from loguru import logger
 
-# ─── OTel/Traceloop: LAZY & OPTIONAL ────────────────────────────────────────
-# OpenTelemetry / Traceloop are the R4 removal target. This module must import
-# and run correctly even when they are UNINSTALLED. All opentelemetry/traceloop
-# imports live INSIDE init_argus() (and its helpers), guarded by try/except
-# ImportError. When absent, we fall back to the no-op shims defined below.
+# ─── REMOTE TELEMETRY SYNC: RETIRED ─────────────────────────────────────────
+# Remote tracing/metrics export (the legacy collector + direct-to-Langfuse
+# OTLP paths) has been decommissioned. This module no longer imports any remote
+# tracing/metrics SDK anywhere — not at module top, not lazily inside
+# init_argus(). Observability now comes from two places only:
+#   1. Local loguru sinks (stdout + system.log + audit.jsonl + per-run files),
+#      configured below and always on.
+#   2. The DIRECT Langfuse Cloud SDK path, which lives in pipeline/llm_client.py
+#      and reads LANGFUSE_HOST itself — it does NOT touch any symbol here.
 #
-# NOTE: intentionally NO top-level `import opentelemetry` / `import traceloop`.
+# The tracer/meter/instrument objects below are PERMANENT no-op shims; they are
+# never swapped for real OTel objects. SYNC_ENABLED is retained as an importable
+# bool (ui/server.py + llm_client.py import the name) and still reflects whether
+# Langfuse Cloud credentials are present.
 
-# ─── ARGUS BACKBONE ─────────────────────────────────────────────────────────
-# Two destinations supported:
-#   1. Local Argus Edge Collector at ARGUS_COLLECTOR_URL (the legacy path).
-#   2. Langfuse Cloud directly when LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY
-#      are set — no collector required. Useful for solo/small-team setups
-#      that don't want to run the full Argus HQ deck.
-
-# Toggle for remote synchronization (defaults to OFF). Auto-enabled when
-# Langfuse Cloud keys are present so users don't have to flip both flags.
+# Langfuse Cloud credentials still drive SYNC_ENABLED. When both keys are set,
+# the direct Langfuse SDK path in llm_client.py is active.
 LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
 LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
-LANGFUSE_BASE_URL = os.environ.get("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com").rstrip("/")
 LANGFUSE_ENABLED = bool(LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY)
 
-SYNC_ENABLED = (
-    os.environ.get("ARGUS_SYNC_ENABLED", "false").lower() == "true"
-    or LANGFUSE_ENABLED
-)
-
-def resolve_collector_endpoint() -> str:
-    """
-    Resolves the OTLP trace endpoint.
-
-    Priority:
-      1. ARGUS_COLLECTOR_URL when set — local OTel collector handles fan-out
-         to Tempo / Langfuse / Loki with its own filters.
-      2. Langfuse Cloud HTTP endpoint when LANGFUSE_PUBLIC_KEY/SECRET_KEY are
-         present and no collector is configured — direct, no fan-out.
-      3. localhost:4317 fallback.
-    """
-    explicit = os.environ.get("ARGUS_COLLECTOR_URL", "").strip()
-    if explicit:
-        return explicit
-    if LANGFUSE_ENABLED:
-        return f"{LANGFUSE_BASE_URL}/api/public/otel/v1/traces"
-    return "http://localhost:4317"
-
-
-def _use_local_collector() -> bool:
-    """True iff ARGUS_COLLECTOR_URL is set — i.e. we're routing through the
-    local OTel collector instead of direct-to-Langfuse."""
-    return bool(os.environ.get("ARGUS_COLLECTOR_URL", "").strip())
-
-# Instance ID for Argus identifying this specific user/installation
-INSTANCE_ID = os.environ.get("SOW_INSTANCE_ID", "unknown-instance")
+# Toggle reflecting whether Langfuse Cloud observability is configured. Kept as
+# an importable module-level bool for ui/server.py + llm_client.py + tests.
+SYNC_ENABLED = LANGFUSE_ENABLED
 
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -138,127 +108,33 @@ llm_operation_duration = meter.create_histogram(
     unit="s",
 )
 
-# Set by init_argus() when the real OTel stack is live; used by log formatters
-# to fetch the active trace id. Stays None when OTel is absent/disabled.
-_otel_trace_api = None
-
-
 def init_argus(service_name: str = "sow-to-jira"):
     """
-    Initializes Argus Observability (best-effort, fully optional):
-      1. Traceloop (OpenLLMetry) for LLM Traces & Spans
-      2. OTel Logging instrumentation
-      3. OTel Metrics
+    Retired remote-sync initializer (kept for API compatibility).
 
-    All opentelemetry/traceloop imports happen HERE, lazily and guarded by
-    try/except ImportError. If sync is disabled OR the SDK is not installed,
-    the module keeps its no-op tracer/meter/instruments and returns quietly.
+    Remote tracing/metrics export has been decommissioned, so this is
+    now a log-only no-op. The module keeps its permanent no-op tracer/meter/
+    instrument shims; local loguru sinks and the direct Langfuse Cloud SDK path
+    (in pipeline/llm_client.py) provide all observability. Signature is
+    unchanged so existing callers (ui/server.py, main.py) keep working.
     """
-    global meter, tracer, llm_token_usage, llm_operation_duration, _otel_trace_api
-
-    if not SYNC_ENABLED:
-        logger.info("Argus remote sync is disabled (default-off). Skipping OTel initialization.")
-        return
-
-    # Lazy, optional OTel imports. If any are missing, keep the no-op shims.
-    try:
-        from traceloop.sdk import Traceloop
-        from opentelemetry import trace, metrics
-        from opentelemetry.sdk.resources import SERVICE_NAME
-        from opentelemetry.instrumentation.logging import LoggingInstrumentor
-    except ImportError as exc:
-        logger.warning(
-            f"OpenTelemetry/Traceloop not installed ({exc}); "
-            "running with no-op telemetry shims."
-        )
-        return
-
-    endpoint = resolve_collector_endpoint()
-    exporter = None
-
-    if _use_local_collector():
-        # Send everything to the local OTel collector via gRPC. The collector
-        # is responsible for fan-out: all spans → Tempo, LLM-only → Langfuse,
-        # logs → Loki. No filtering in app code.
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
-        logger.info(f"Routing OTel traces to local collector at {endpoint}")
-    elif LANGFUSE_ENABLED:
-        # No local collector — send directly to Langfuse Cloud OTLP/HTTP.
-        # Beware: this sends ALL spans (incl. FastAPI + orchestration), making
-        # the Langfuse dashboard noisy. Prefer the local-collector path.
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        auth = base64.b64encode(f"{LANGFUSE_PUBLIC_KEY}:{LANGFUSE_SECRET_KEY}".encode()).decode()
-        exporter = OTLPSpanExporter(
-            endpoint=endpoint,
-            headers={"Authorization": f"Basic {auth}"},
-        )
-        logger.warning(
-            f"Direct-to-Langfuse mode (no collector). All spans go to {LANGFUSE_BASE_URL}; "
-            "for LLM-only filtering, run the local collector and set ARGUS_COLLECTOR_URL."
-        )
-    else:
-        # Legacy: gRPC to whatever endpoint resolve_collector_endpoint returned.
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
-
-    Traceloop.init(
-        app_name=service_name,
-        exporter=exporter,
-        telemetry_enabled=False,  # disable Traceloop platform reporting
-        resource_attributes={
-            SERVICE_NAME: service_name,
-            "argus.instance_id": INSTANCE_ID,
-        }
+    logger.info(
+        "Remote tracing/metrics sync is retired; using local loguru sinks + "
+        "the direct Langfuse Cloud SDK for observability."
     )
-
-    # 2. Instrument Logging
-    # Automatically injects trace_id and span_id into log records
-    LoggingInstrumentor().instrument(set_logging_format=True)
-
-    # 3. Setup Metrics
-    # (Resource attributes are applied to Traceloop above via resource_attributes.)
-    # Metrics are automatically exported if OTLP_EXPORTER is configured in env
-    # For now, we rely on the Traceloop/OTel default env vars:
-    # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-
-    # Swap the no-op shims for real OTel objects now that the SDK is live.
-    _otel_trace_api = trace
-    tracer = trace.get_tracer(DEFAULT_JOB_NAME)
-    meter = metrics.get_meter(DEFAULT_JOB_NAME)
-    llm_token_usage = meter.create_counter(
-        name="gen_ai.client.token.usage",
-        description="Number of tokens used per request",
-        unit="1",
-    )
-    llm_operation_duration = meter.create_histogram(
-        name="gen_ai.client.operation.duration",
-        description="Total time for the client operation",
-        unit="s",
-    )
-
-    logger.info(f"Argus initialized for instance: {INSTANCE_ID}")
+    return
 
 
 def _current_otel_trace_id() -> str:
-    """Best-effort active OTel trace id as a 32-hex string.
+    """Trace-id shim: remote OTel is retired, so there is no active trace id.
 
-    Returns 'disabled' when sync is off, and the zero-trace when OTel is live
-    but there's no active span. Never raises — falls back to 'disabled' if the
-    OTel API is unavailable for any reason.
+    Always returns 'disabled'. Retained (and still stamped into the log
+    formats) so the log-format surface is unchanged from when OTel was live.
     """
-    if not SYNC_ENABLED or _otel_trace_api is None:
-        return "disabled"
-    try:
-        span = _otel_trace_api.get_current_span()
-        if span and span.get_span_context().is_valid:
-            return format(span.get_span_context().trace_id, "032x")
-        return "0" * 32
-    except Exception:
-        return "disabled"
+    return "disabled"
 
 
-# Initialize Argus (only if enabled; safe when OTel absent)
+# Retired remote sync — log-only no-op, safe to call unconditionally.
 init_argus()
 
 # ─── Secret Redaction ───────────────────────────────────────────────────────
@@ -452,7 +328,6 @@ def trace_span(name: str, agent: str = "system", run_id: str = "none"):
                 with tracer.start_as_current_span(name) as span:
                     span.set_attribute("agent", agent)
                     span.set_attribute("run_id", run_id)
-                    span.set_attribute("argus.instance_id", INSTANCE_ID)
                     with logger.contextualize(agent=agent, run_id=run_id):
                         return func(*args, **kwargs)
             else:
@@ -461,6 +336,6 @@ def trace_span(name: str, agent: str = "system", run_id: str = "none"):
         return wrapper
     return decorator
 
-# Legacy sync_telemetry is now a no-op as Argus Edge Collector handles it
+# Legacy sync_telemetry: permanent no-op now that remote sync is retired.
 def sync_telemetry():
     pass

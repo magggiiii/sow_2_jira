@@ -50,7 +50,7 @@ The detailed GSD-managed sections below are authoritative; this is the 30-second
 - **LLM routing.** All LLM calls go through `pipeline/llm_client.py` → `pipeline/llm_router.py` (`configure_litellm_for_mode`). Provider/model selection comes from encrypted `data/settings.json` (Fernet via `data/.keyfile`) with `LITELLM_*` env vars as fallback. Never call `litellm` directly from agents.
 - **Jira push.** Two clients in `integrations/`: `jira_client.py` (direct REST via `jira` SDK) and `jira_mcp_client.py` (Atlassian remote MCP). The UI selects between them. `JiraPushResult` (`models/schemas.py`) is the contract.
 - **Schemas are the contract.** `models/schemas.py` (Pydantic v2) defines `RunConfig`, `RawTask`, `ManagedTask`, `JiraPushResult`, `TaskStatus`, `TaskFlag`, `LLMMode`, `JiraHierarchy`. Cross-layer data flows as these types — don't pass raw dicts.
-- **Observability is centralized.** `pipeline/observability.py` configures Loguru + OpenTelemetry (OTLP → Tempo/Loki via Bifrost). Use `logger.contextualize(agent=..., run_id=...)` for correlated tracing. `audit/logger.py` writes a separate append-only SQLite trail at `data/audit.db`.
+- **Observability is cloud-native.** `pipeline/observability.py` configures Loguru structured logging (emitted to stdout, captured by the host platform — Render/Vercel) plus Langfuse Cloud for LLM traces/cost via the direct SDK; Bifrost provides LLM-gateway logs. Use `logger.contextualize(agent=..., run_id=...)` for correlated tracing. `audit/logger.py` writes a separate append-only SQLite trail at `data/audit.db`.
 - **Settings are encrypted at rest.** Don't write plaintext credentials to `data/settings.json`. Loading/saving goes through helpers in `ui/server.py` (`_load_settings`, `_save_settings`) and `pipeline/llm_router.py`.
 
 ## Repository Layout (only non-obvious bits)
@@ -59,7 +59,7 @@ The detailed GSD-managed sections below are authoritative; this is the 30-second
 - `tests/` — Real pytest suite. The `test_*.py` files at repo root (`test_jira_api.py`, `test_jira_mcp.py`, `test_discovery.py`, `test_settings.py`) are standalone scripts, not part of the pytest run.
 - `scripts/install/install.sh` — Public installer downloaded by `curl | bash` (see README). Do not break its CLI surface.
 - `scripts/prod-check.sh` — Production-integrity checks.
-- `infra/` — Argus observability stack (Grafana, Loki, Tempo, Langfuse, Bifrost).
+- `infra/admin/` — Optional Bifrost LLM-gateway admin deck (docker-compose.admin.yml + config/admin/). Developer-only; not required to run the app.
 - `config/sow_config.json` — Jira issue type defaults and extraction/indexing caps (not env-driven).
 - `pageindex/config.yaml` — PageIndex token/page limits and default dynamic model.
 - `CLAUDE.md` / `GEMINI.md` — Mirrors of this file for other agent runtimes; keep in sync if you change shared guidance.
@@ -87,7 +87,7 @@ SOW-to-Jira is a local-first system that converts Statement of Work documents in
 - **Deployment**: Docker-first local bring-up — observability must run through compose in a repeatable way
 - **Security**: Persisted credentials must remain encrypted at rest — no plaintext fallback
 - **Stability**: Pipeline behavior cannot regress for existing extraction and Jira push flows
-- **Observability**: Logs and traces must be debuggable from terminal and Grafana/Bifrost in local environment
+- **Observability**: Logs and traces must be debuggable from terminal/platform logs, Langfuse Cloud, and Bifrost
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:codebase/STACK.md -->
@@ -225,7 +225,7 @@ SOW-to-Jira is a local-first system that converts Statement of Work documents in
 - Used by: `ui/server.py` push flow and standalone test scripts (`test_jira_api.py`, `test_jira_mcp.py`)
 - Purpose: Logging, tracing, telemetry buffering, and audit persistence.
 - Location: `pipeline/observability.py`, `pipeline/telemetry.py`, `audit/logger.py`
-- Contains: Loguru setup, OpenTelemetry tracer setup, Loki event emitter, SQLite audit store (`data/audit.db`).
+- Contains: Loguru structured logging + secret redaction, no-op telemetry shims (OpenTelemetry/Argus retired), SQLite audit store (`data/audit.db`).
 - Depends on: environment config and network endpoints.
 - Used by: All pipeline and integration modules.
 ## Data Flow

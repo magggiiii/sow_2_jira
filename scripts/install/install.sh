@@ -11,15 +11,6 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Argus Identity
-SOW_INSTANCE_ID="sow-$(date +%s)-${RANDOM}"
-# Argus observability is opt-in. Do NOT ship secrets in the installer: these are
-# env-driven and default to empty. Set ARGUS_HQ_URL / ARGUS_BACKBONE_TOKEN in the
-# environment (or the generated .env) to enable backbone sync.
-# otlp gRPC exporter expects host:port (no scheme)
-ARGUS_HQ_URL="${ARGUS_HQ_URL:-}"
-ARGUS_BACKBONE_TOKEN="${ARGUS_BACKBONE_TOKEN:-}"
-
 # Utility: Confirm with user
 confirm() {
     read -r -p "${1} [y/N] " response < /dev/tty
@@ -27,16 +18,6 @@ confirm() {
         [yY][eE][sS]|[yY]) true ;;
         *) false ;;
     esac
-}
-
-normalize_host_port() {
-    local value="$1"
-    value="${value#https://}"
-    value="${value#http://}"
-    if [[ "$value" != *:* ]]; then
-        value="${value}:443"
-    fi
-    echo "$value"
 }
 
 upsert_env_var() {
@@ -83,10 +64,8 @@ echo -e "${NC}"
 
 # 2. Setup Folders
 SOW_HOME="$HOME/.sow_to_jira"
-mkdir -p "$SOW_HOME/config/user"
 mkdir -p "$SOW_HOME/config/admin"
 mkdir -p "$SOW_HOME/data"
-mkdir -p "$SOW_HOME/data/argus_storage"
 
 # 3. Docker Dependency Check
 if ! command -v docker &> /dev/null; then
@@ -181,12 +160,6 @@ else
     DOCKER_HOST_INTERNAL=${DOCKER_HOST_INTERNAL:-"host.docker.internal"}
 fi
 
-# Only normalize when a URL was actually provided; an empty (opt-out) value must
-# stay empty rather than becoming a stray ":443".
-if [ -n "$ARGUS_HQ_URL" ]; then
-    ARGUS_HQ_URL="$(normalize_host_port "$ARGUS_HQ_URL")"
-fi
-
 # 3.8 Fetch Latest Version
 if [ -f "VERSION" ]; then
     S2J_VERSION=$(cat VERSION | head -n 1 | tr -d '\r\n')
@@ -214,30 +187,11 @@ else
     fi
 fi
 
-# 4. Artifact Provisioning
-echo -e "${BLUE}[INFO] Downloading distribution artifacts...${NC}"
-
-# Ensure data and storage directories exist
-mkdir -p "$SOW_HOME/data/argus_storage"
-mkdir -p "$SOW_HOME/config/user"
-
-# (Simulated download for now, using local files if available)
-# Ensure we don't have lingering Docker-created directories instead of files
-rm -rf "$SOW_HOME/docker-compose.user.yml" "$SOW_HOME/config/user/tempo.yaml" "$SOW_HOME/config/user/argus-collector-edge.yaml" 2>/dev/null || true
-
-if [ -f "infra/user/docker-compose.user.yml" ]; then
-    cp infra/user/docker-compose.user.yml "$SOW_HOME/docker-compose.user.yml"
-    cp config/user/tempo.yaml "$SOW_HOME/config/user/tempo.yaml"
-    cp config/user/argus-collector-edge.yaml "$SOW_HOME/config/user/argus-collector-edge.yaml"
-else
-    echo "  -> Fetching docker-compose.user.yml..."
-    curl -# -fL "$RAW_URL/infra/user/docker-compose.user.yml" -o "$SOW_HOME/docker-compose.user.yml"
-    echo "  -> Fetching tempo.yaml..."
-    curl -# -fL "$RAW_URL/config/user/tempo.yaml" -o "$SOW_HOME/config/user/tempo.yaml"
-    echo "  -> Fetching argus-collector-edge.yaml..."
-    curl -# -fL "$RAW_URL/config/user/argus-collector-edge.yaml" -o "$SOW_HOME/config/user/argus-collector-edge.yaml"
-fi
-
+# 4. Deployment note
+# The local-first `s2j` user stack has been retired. Application deployment is
+# now hosted (Render — see render.yaml at the repo root). The installer still
+# provisions Ollama/networking config and the optional admin observability deck.
+echo -e "${BLUE}[INFO] Application deployment is now hosted (Render — see render.yaml).${NC}"
 
 # 5. Environment Setup (Wizard removed, now handled in UI)
 GLOBAL_ENV="$SOW_HOME/.env"
@@ -245,12 +199,6 @@ if [ ! -f "$GLOBAL_ENV" ]; then
     cat <<EOF > "$GLOBAL_ENV"
 # SOW-to-Jira Environment Configuration
 # Use the Web UI at http://localhost:8000 to configure API keys.
-
-# Argus Observability (Optional)
-ARGUS_SYNC_ENABLED=false
-SOW_INSTANCE_ID=$SOW_INSTANCE_ID
-ARGUS_HQ_URL=$ARGUS_HQ_URL
-ARGUS_BACKBONE_TOKEN=$ARGUS_BACKBONE_TOKEN
 
 # Networking
 DOCKER_HOST_INTERNAL=$DOCKER_HOST_INTERNAL
@@ -260,14 +208,13 @@ SOW_DATA_DIR=data
 EOF
 fi
 
-# The .env may hold a real ARGUS_BACKBONE_TOKEN (and later API keys); restrict it
-# to the owner so a supplied secret is never group/other-readable.
+# The .env may later hold API keys; restrict it to the owner so a supplied
+# secret is never group/other-readable.
 chmod 600 "$GLOBAL_ENV" 2>/dev/null || true
 
 # Always refresh upgrade-sensitive runtime values on reinstall/update.
 upsert_env_var "$GLOBAL_ENV" "DOCKER_HOST_INTERNAL" "$DOCKER_HOST_INTERNAL"
 upsert_env_var "$GLOBAL_ENV" "S2J_VERSION" "$S2J_VERSION"
-upsert_env_var "$GLOBAL_ENV" "ARGUS_HQ_URL" "$ARGUS_HQ_URL"
 
 # 6. Shortcut Creation (Support for uninstall/update)
 cat <<EOF > "$SOW_HOME/s2j.sh"
@@ -278,8 +225,6 @@ case "\$1" in
         echo "⚠️  WARNING: This will delete ALL data, logs, and API configurations."
         read -p "Are you sure you want to completely remove SOW-to-Jira? [y/N] " confirm
         if [[ \$confirm == [yY] || \$confirm == [yY][eE][sS] ]]; then
-            echo "Stopping containers..."
-            cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml down -v 2>/dev/null
             echo "Removing files..."
             rm -rf "\$SOW_HOME"
             echo "Removing shortcut from profile..."
@@ -290,14 +235,10 @@ case "\$1" in
             echo "Uninstall cancelled."
         fi
         ;;
-    ""|"up"|"start")
-        cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml up -d && $OPEN_CMD http://localhost:8000
-        ;;
-    "down"|"stop")
-        cd "\$SOW_HOME" && docker compose -f docker-compose.user.yml down
-        ;;
-    "logs")
-        docker logs -f s2j-user-app
+    ""|"up"|"start"|"down"|"stop"|"logs")
+        echo "ℹ️  The local-first user stack has been retired."
+        echo "   SOW-to-Jira is now deployed as a hosted service (Render — see render.yaml)."
+        echo "   Local config lives in \$SOW_HOME; 's2j uninstall' still removes it."
         ;;
     *)
         echo "\"\$1\" unknown command."
@@ -316,7 +257,7 @@ if [ -f "infra/admin/docker-compose.admin.yml" ]; then
     cp config/admin/prometheus.admin.yml "$SOW_HOME/config/admin/prometheus.admin.yml"
     cp config/admin/argus-collector-admin.yaml "$SOW_HOME/config/admin/argus-collector-admin.yaml"
     cp config/admin/argus-dashboard.json "$SOW_HOME/config/admin/argus-dashboard.json"
-    cp config/user/tempo.yaml "$SOW_HOME/config/admin/tempo.yaml" # Use user tempo if needed
+    cp config/admin/tempo.yaml "$SOW_HOME/config/admin/tempo.yaml"
 
 
 

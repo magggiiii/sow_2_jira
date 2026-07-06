@@ -152,7 +152,7 @@
       <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.70)"></i></div><div class="wpct">70%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.75)"></i></div><div class="wpct">75%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.85)"></i></div><div class="wpct">85%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
     </div>
@@ -163,6 +163,24 @@
     <div class="sec-no reveal">01 — Shipped &amp; verified</div>
     <h2 class="reveal">What's done so far.</h2>
     <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+
+    <!-- FINAL WAVE — Argus decommission (audit-verified: not needed) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Final wave — Argus observability fleet decommissioned</h3><span class="sha">4e6f247</span></div>
+      <div class="inc-sub reveal">A read-only 10-agent audit (5 mappers → synthesis → 3 default-reject skeptics → adjudication) confirmed with high confidence that the self-hosted Argus fleet is dead weight: its OTel data plane already emits nothing (OTel was dropped in R4), while Render/Vercel platform logs + Langfuse Cloud (direct SDK) + Bifrost cover every live signal. So it is fully retired — Argus-only; Bifrost stays LOCKED. TDD/verify + 3-skeptic adversarial review (accepted round 1). Suite 831/2 + vitest 96/96; OTel-absent import OK; leaked-token occurrences in tracked files = 0.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>observability.py fully de-Argus + de-OTel — Loguru + the Langfuse SDK are the whole story</h4><span class="tag">AR-OBS · 2d9715d</span></div>
+        <p class="what">The observability module keeps its public surface but drops every Argus/OTel export path.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>SYNC_ENABLED keyed on ARGUS_SYNC_ENABLED; three OTLP export branches (collector, direct-to-Langfuse, legacy gRPC) with lazy OTel/Traceloop imports; INSTANCE_ID/argus.instance_id fleet identity stamped on spans/metrics — including a dead direct-to-Langfuse OTLP branch that would flood Langfuse with all FastAPI spans if OTel were ever reinstalled with keys set.</div><div class="cell after"><span class="lbl">After</span>SYNC_ENABLED = LANGFUSE_ENABLED; init_argus() is a log-only no-op; tracer/meter are permanent no-op shims; every OTel/Traceloop import is gone. The direct Langfuse Cloud SDK path (in llm_client) is untouched and remains the live LLM-observability path. llm_client changed only to drop INSTANCE_ID (llm_router LOCKED). Public surface preserved (INSTANCE_ID intentionally removed, coordinated across importers + tests).</div></div>
+        <p class="why"><span class="wl">Better</span>No dead telemetry scaffolding, no OTLP footgun, and observability is exactly what the hosted stack already provides — nothing extra to run or maintain.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Argus infra/config/installer/doc footprint removed; local-first bring-up retired for Render</h4><span class="tag">AR-INFRA-DOCS · 4e6f247</span></div>
+        <p class="what">The self-hosted fleet's files, installer wiring, and docs are gone; the LOCKED Bifrost admin deck is untouched.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>infra/user/docker-compose.user.yml (app + Bifrost + collector/loki/tempo/grafana) + config/user/argus-collector-edge.yaml + config/user/tempo.yaml; install.sh seeded ARGUS_* + SOW_INSTANCE_ID and brought up the local compose stack; README/CLAUDE/AGENTS described a Grafana/Loki/Tempo/Prometheus fleet.</div><div class="cell after"><span class="lbl">After</span>infra/user + argus-collector-edge.yaml deleted; tempo.yaml relocated to config/admin so the LOCKED Bifrost bring-up stays self-contained; install.sh drops all ARGUS_* + the compose bring-up (hosted deploy = render.yaml) with Ollama/networking intact; docs describe Loguru→platform-logs + Langfuse Cloud + Bifrost. bifrost.admin.yaml / infra/admin / BIFROST_* / llm_router unchanged.</div></div>
+        <p class="why"><span class="wl">Better</span>One deployment path (Render), one LLM-observability path (Langfuse Cloud), zero self-hosted observability to operate — and the codebase no longer documents infrastructure it doesn't ship.</p>
+      </div>
+    </div>
 
     <!-- R2b + R3 + R4 — hardening, frontend, de-OTel finalization -->
     <div class="increment">

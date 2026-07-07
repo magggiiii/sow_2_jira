@@ -17,7 +17,7 @@ help:
 	@echo "make test    - Run the pytest suite"
 	@echo "make migrate - Apply Alembic migrations (needs DATABASE_URL / Postgres)"
 	@echo "make worker  - Run the background worker (arq) — lands in WAVE 2"
-	@echo "make lock    - Freeze the current venv into requirements.lock"
+	@echo "make lock    - Recompile requirements.txt (pinned+hashed) from requirements.in"
 
 venv:
 	python3 -m venv venv
@@ -60,10 +60,13 @@ migrate:
 worker:
 	@echo "Background worker (arq + Redis) lands in WAVE 2 — not yet wired."
 
-# Freeze the resolved environment into a lockfile (the repo ships none today).
+# Recompile the fully-pinned, hashed lockfile from the curated direct deps in
+# requirements.in. The current venv freeze is used as a constraint so transitive
+# versions match what's installed (anti-drift). Requires uv on PATH.
 lock:
-	$(PIP) freeze > requirements.lock
-	@echo "Wrote requirements.lock"
+	$(PYTHON) -m pip freeze > /tmp/requirements.freeze
+	uv pip compile requirements.in -c /tmp/requirements.freeze --generate-hashes -o requirements.txt
+	@echo "Recompiled requirements.txt from requirements.in"
 
 clean:
 	rm -rf venv

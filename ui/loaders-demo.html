@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loaders — SOW to Jira</title>
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { padding: var(--space-48); }
+        .demo-head { margin-bottom: var(--space-32); }
+        .demo-head p { color: var(--text-secondary); max-width: 60ch; }
+        .demo-head code { font-family: monospace; color: var(--accent-primary); }
+        .demo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: var(--space-24);
+        }
+        .demo-cell {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-32) var(--space-24);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--space-16);
+            box-shadow: var(--shadow-sm);
+        }
+        .demo-stage {
+            min-height: 90px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .demo-name { font-size: var(--text-lg); font-weight: 600; }
+        .demo-desc { color: var(--text-tertiary); font-size: var(--text-xs); text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="demo-head">
+        <h1>Loaders</h1>
+        <p>Motion loaders ported from <code>beui.dev/components/motion/loader</code> to dependency-free
+           vanilla CSS + JS, themed to the app's accent. Try your OS "reduce motion" setting — each one
+           falls back to a calm opacity pulse.</p>
+    </div>
+
+    <div class="demo-grid">
+        <div class="demo-cell">
+            <div class="demo-stage" id="stage-scramble"></div>
+            <div class="demo-name">Scramble</div>
+            <div class="demo-desc">Text reveals left-to-right; unrevealed slots flicker glyphs.</div>
+        </div>
+        <div class="demo-cell">
+            <div class="demo-stage" id="stage-helix"></div>
+            <div class="demo-name">Helix</div>
+            <div class="demo-desc">Paired dots oscillate out of phase per row → spiral wave.</div>
+        </div>
+        <div class="demo-cell">
+            <div class="demo-stage" id="stage-newton"></div>
+            <div class="demo-name">Newton</div>
+            <div class="demo-desc">Five-ball cradle; the two end balls swing, middle three rest.</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { mountLoader } from '/src/loaders.js'
+        mountLoader(document.getElementById('stage-scramble'), 'scramble', { label: 'Extracting' })
+        mountLoader(document.getElementById('stage-helix'), 'helix')
+        mountLoader(document.getElementById('stage-newton'), 'newton')
+    </script>
+</body>
+</html>

@@ -44,6 +44,7 @@ import {
 } from './render.js'
 import { startStatusPolling, stopPolling, showProgressOverlay, errorRecovery } from './polling.js'
 import { initSettingsModal, showConfirm } from './modals.js'
+import { mountLoader } from './loaders.js'
 
 const LAST_SESSION_KEY = 'lastViewedSessionId' // ui-17: persists across refresh, independent of the running flag.
 
@@ -73,6 +74,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const newExtractionContainer = getEl('newExtractionContainer')
 
   const progressOverlay = getEl('progressOverlay')
+  // beUI-ported "working" loader in the run overlay — pure-CSS Newton's cradle
+  // (animates only while the overlay is visible; CSS pauses it under display:none).
+  const progressLoaderMount = getEl('progressLoader')
+  if (progressLoaderMount && !progressLoaderMount.childElementCount) {
+    mountLoader(progressLoaderMount, 'newton', { label: 'Extracting' })
+  }
   const logConsole = getEl('logConsole')
   const btnCancelProcess = getEl('btnCancelProcess')
   const btnDismissProgress = getEl('btnDismissProgress')

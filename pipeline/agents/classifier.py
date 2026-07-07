@@ -19,50 +19,22 @@ context — the extractor will return []).
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Optional
-
-from pydantic import BaseModel
-
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from core.agent_spec import AgentSpec
-from models.schemas import UnitInterval
+from models.intelligence_schemas import (
+    ClassificationResult,
+    RawClassification,
+    SectionType,
+)
 from pipeline.llm_client import LLMClient
 from prompts import registry
 
-
-class SectionType(str, Enum):
-    ACTIONABLE = "actionable"      # Contains real work items
-    CONTEXT = "context"            # Background, overview, problem statement
-    LEGAL = "legal"                # Terms, warranties, liability
-    DEFINITIONS = "definitions"    # Glossary, acronyms
-    SIGNATURE = "signature"        # Approvals, sign-off pages
-    MIXED = "mixed"                # Looks like a mix — extract conservatively
-
-
-class RawClassification(BaseModel):
-    """Exactly what the classifier LLM returns — the Instructor response_model.
-
-    The domain :class:`ClassificationResult` additionally carries ``node_id``
-    (assigned by the agent, not produced by the model), so the LLM-facing schema
-    is this narrower triple. ``confidence`` is a clamped UnitInterval so an
-    out-of-range model value (e.g. 1.7) coerces into range instead of failing
-    validation, matching ClassificationResult's CONF-1 invariant.
-    """
-    type: SectionType
-    # CONF-1: clamped by the UnitInterval BeforeValidator; no Field ge/le so the
-    # emitted schema has no minimum/maximum (Anthropic strict structured output).
-    confidence: UnitInterval
-    reason: str = ""
-
-
-class ClassificationResult(BaseModel):
-    node_id: str
-    type: SectionType
-    # CONF-1: clamped into [0,1] by the UnitInterval BeforeValidator (no ge/le).
-    confidence: UnitInterval
-    reason: str
+# ─── Schema — moved to models/intelligence_schemas.py (WAVE 7 GATE D) ─────────
+# SectionType, RawClassification, ClassificationResult are re-exported above so
+# every existing ``from pipeline.agents.classifier import ...`` site keeps
+# resolving to the SAME class object.
+__all__ = ["ClassificationResult", "RawClassification", "SectionType"]
 
 
 CLASSIFIER_SYSTEM_PROMPT = registry.load("classifier.system.v1")
@@ -163,7 +135,10 @@ class SectionClassifier:
             agent="SectionClassifier",
             node_id=node_id,
             action="CLASSIFIED",
-            detail=f"type={result.type.value} confidence={result.confidence:.2f} reason={result.reason}",
+            detail=(
+                f"type={result.type.value} confidence={result.confidence:.2f} "
+                f"reason={result.reason}"
+            ),
         )
         return result
 

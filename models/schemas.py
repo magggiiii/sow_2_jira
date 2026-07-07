@@ -1,16 +1,17 @@
 # models/schemas.py
 
 from __future__ import annotations
+
 import contextvars
+import datetime
 from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
-from pydantic import BaseModel, BeforeValidator, Field, field_validator
-import datetime
 
-from core.errors import ErrorClass
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
+
 from core.domain.ids import make_run_id
-
+from core.errors import ErrorClass
 
 # ─── Confidence / score bounding (CONF-1, audit data_model "bound confidence") ─
 
@@ -76,7 +77,9 @@ class ProviderConfig(BaseModel):
     azure_deployment_name: str = ""
 
 
-current_provider_config: contextvars.ContextVar[Optional[ProviderConfig]] = contextvars.ContextVar("current_provider_config", default=None)
+current_provider_config: contextvars.ContextVar[Optional[ProviderConfig]] = (
+    contextvars.ContextVar("current_provider_config", default=None)
+)
 
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
@@ -144,7 +147,8 @@ class TaskFlag(str, Enum):
     NO_MOCKUP = "NO_MOCKUP"            # Informational — mockup field is absent
     POTENTIAL_DUPLICATE = "POTENTIAL_DUPLICATE"
     GAP_RECOVERED = "GAP_RECOVERED"   # Was found by Gap Recovery Agent
-    TRUNCATION = "TRUNCATION"         # A4: section was truncated at max_section_chars — tasks may be missing
+    # A4: section was truncated at max_section_chars — tasks may be missing
+    TRUNCATION = "TRUNCATION"
 
 
 class LLMMode(str, Enum):
@@ -296,6 +300,26 @@ class SourceRef(BaseModel):
     parent_chain: list[str] = Field(default_factory=list)  # Ancestor node_ids, root first
     depth: int = 0                              # 0 for root; matches PageIndex tree depth
 
+    @field_validator("depth")
+    @classmethod
+    def _depth_non_negative(cls, value: int) -> int:
+        # PageIndex tree depth is 0 (root) or a positive descendant level; a
+        # negative depth is a structural error, so REJECT rather than clamp.
+        if value < 0:
+            raise ValueError("SourceRef.depth must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def _pages_ordered(self) -> "SourceRef":
+        # A reference cannot end before it starts. page_start == page_end is a
+        # valid single-page reference; page_end < page_start is rejected.
+        if self.page_end < self.page_start:
+            raise ValueError(
+                "SourceRef.page_end must be >= page_start "
+                f"(got page_start={self.page_start}, page_end={self.page_end})"
+            )
+        return self
+
 
 # ─── Raw Extraction Output (from LLM) ────────────────────────────────────────
 
@@ -339,7 +363,8 @@ class ManagedTask(BaseModel):
     flags: list[TaskFlag] = Field(default_factory=list)
     continues_to_next: bool = False
     status: TaskStatus = TaskStatus.OPEN
-    jira_issue_key: Optional[str] = None  # Set once pushed; presence makes re-push idempotent (skip create)
+    # Set once pushed; presence makes re-push idempotent (skip create)
+    jira_issue_key: Optional[str] = None
     source_refs: list[SourceRef] = Field(default_factory=list)  # Can span multiple nodes
     merged_from: list[UUID] = Field(default_factory=list)       # IDs merged into this task
     dependencies: list[TaskDependency] = Field(default_factory=list)
@@ -387,17 +412,17 @@ class RunConfig(BaseModel):
     # the original hardcoded default. None therefore reproduces today's behavior
     # byte-for-byte (env still works as a fallback; legacy checkpoints that lack
     # these keys load as None) while letting a caller pin a value per run.
-    extraction_confidence_threshold: Optional[float] = None   # env EXTRACTION_CONFIDENCE_THRESHOLD (0.6)
-    dedup_similarity_threshold: Optional[float] = None         # env DEDUP_SIMILARITY_THRESHOLD (0.85)
-    classifier_enabled: Optional[bool] = None                  # env SOW_CLASSIFIER_ENABLED (on)
-    critic_enabled: Optional[bool] = None                      # env SOW_ENABLE_CRITIC (on)
-    semantic_coverage_enabled: Optional[bool] = None           # env SOW_SEMANTIC_COVERAGE (on)
-    critic_threshold: Optional[float] = None                   # env SOW_CRITIC_THRESHOLD (0.8)
-    max_section_chars: Optional[int] = None                    # app_config["pipeline"]["max_section_chars"] (16000)
-    max_gap_recovery_iterations: Optional[int] = None          # app_config["pipeline"]["max_gap_recovery_iterations"]
-    coverage_min_confidence: Optional[float] = None            # env SOW_COVERAGE_MIN_CONFIDENCE (dynamic)
-    coverage_corpus_filter: Optional[bool] = None              # env SOW_COVERAGE_CORPUS_FILTER (off)
-    node_concurrency: Optional[int] = None                     # env SOW_NODE_CONCURRENCY (6)
+    extraction_confidence_threshold: Optional[float] = None  # EXTRACTION_CONFIDENCE_THRESHOLD (0.6)
+    dedup_similarity_threshold: Optional[float] = None  # DEDUP_SIMILARITY_THRESHOLD (0.85)
+    classifier_enabled: Optional[bool] = None  # env SOW_CLASSIFIER_ENABLED (on)
+    critic_enabled: Optional[bool] = None  # env SOW_ENABLE_CRITIC (on)
+    semantic_coverage_enabled: Optional[bool] = None  # env SOW_SEMANTIC_COVERAGE (on)
+    critic_threshold: Optional[float] = None  # env SOW_CRITIC_THRESHOLD (0.8)
+    max_section_chars: Optional[int] = None  # app_config["pipeline"]["max_section_chars"] (16000)
+    max_gap_recovery_iterations: Optional[int] = None  # app_config pipeline key (same name)
+    coverage_min_confidence: Optional[float] = None  # env SOW_COVERAGE_MIN_CONFIDENCE (dynamic)
+    coverage_corpus_filter: Optional[bool] = None  # env SOW_COVERAGE_CORPUS_FILTER (off)
+    node_concurrency: Optional[int] = None  # env SOW_NODE_CONCURRENCY (6)
     # STEP 3.7: opt a run into the staged PipelineRunner path (run_via_pipeline)
     # instead of the legacy linear run() body. Default off → unchanged behavior;
     # the two are proven equivalent offline (test_pipeline_runner_equivalence).

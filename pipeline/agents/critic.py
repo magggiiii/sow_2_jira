@@ -24,81 +24,41 @@ plus an empty report. The pipeline must never crash because the critic misbehave
 from __future__ import annotations
 
 import json
-from enum import Enum
-from typing import Optional, Union
+from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from core.agent_spec import AgentSpec
 from core.guardrails import ConfidenceGate
+from models.intelligence_schemas import (
+    CritiqueBatch,
+    CritiqueIssue,
+    CritiqueReport,
+    RawCritique,
+    TaskCritique,
+)
 from models.schemas import (
-    AcceptanceCriterion,
     ManagedTask,
     TaskFlag,
-    UnitInterval,
     normalize_acceptance_criteria,
 )
 from pipeline.llm_client import LLMClient
 from prompts import registry
 
-
-# ─── Schema ───────────────────────────────────────────────────────────────────
-
-class CritiqueIssue(str, Enum):
-    NON_VERB_TITLE = "non_verb_title"
-    VAGUE_TITLE = "vague_title"
-    UNTESTABLE_AC = "untestable_ac"
-    TOO_BROAD = "too_broad"
-    LIKELY_DUPLICATE = "likely_duplicate"
-    MISSING_AC = "missing_ac"
-    NOTHING_TO_FIX = "nothing_to_fix"
-
-
-class TaskCritique(BaseModel):
-    task_id: UUID
-    issues: list[CritiqueIssue] = Field(default_factory=list)
-    suggested_title: Optional[str] = None
-    suggested_acceptance_criteria: Optional[list[AcceptanceCriterion]] = None
-    confidence: UnitInterval = 0.0  # CONF-1: clamped into [0,1]
-    reason: str = ""
-
-
-class CritiqueReport(BaseModel):
-    section_node_id: str
-    reviewed_count: int = 0
-    auto_fixed_count: int = 0
-    flagged_count: int = 0
-    critiques: list[TaskCritique] = Field(default_factory=list)
-
-
-# ─── Instructor LLM-output models (C-5) ────────────────────────────────────────
-
-class RawCritique(BaseModel):
-    """One critique exactly as the LLM emits it — the permissive Instructor item.
-
-    Intentionally lenient (``task_id``/``issues`` as plain strings, ACs as the
-    same Union the extractor accepts) so the agent's existing per-entry
-    resilience is preserved: ``_parse_critique`` still coerces ``task_id`` to a
-    UUID (skipping the entry on failure), filters ``issues`` down to known
-    :class:`CritiqueIssue` values, and normalizes ACs. A single dirty entry is
-    dropped rather than failing the whole batch — matching the regex-path
-    behavior this replaces.
-    """
-    task_id: str = ""
-    issues: list[str] = Field(default_factory=list)
-    suggested_title: Optional[str] = None
-    suggested_acceptance_criteria: Optional[list[Union[AcceptanceCriterion, str]]] = None
-    confidence: UnitInterval = 0.0  # CONF-1: clamped into [0,1]
-    reason: str = ""
-
-
-class CritiqueBatch(BaseModel):
-    """Top-level Instructor ``response_model`` — the critic returns a JSON array,
-    so the validated payload is wrapped in a single object with one list field."""
-    critiques: list[RawCritique] = Field(default_factory=list)
+# ─── Schema — moved to models/intelligence_schemas.py (WAVE 7 GATE D) ─────────
+# CritiqueIssue, TaskCritique, CritiqueReport, RawCritique, CritiqueBatch are
+# re-exported above so every existing ``from pipeline.agents.critic import ...``
+# site keeps resolving to the SAME class object.
+__all__ = [
+    "CritiqueBatch",
+    "CritiqueIssue",
+    "CritiqueReport",
+    "RawCritique",
+    "TaskCritique",
+]
 
 
 # ─── Prompts ──────────────────────────────────────────────────────────────────

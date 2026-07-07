@@ -21,57 +21,30 @@ agent producing a non-empty result.
 
 from __future__ import annotations
 
-import datetime
 import json
-from typing import Optional
-
-from pydantic import BaseModel, Field
 
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from core.agent_spec import AgentSpec
 from core.guardrails import ConfidenceGate
+from models.intelligence_schemas import (
+    CoverageAudit,
+    MissedItem,
+    SectionCoverageReport,
+)
 from models.schemas import (
     AcceptanceCriterion,
     ManagedTask,
-    UnitInterval,
     normalize_acceptance_criteria,
-    utcnow,
 )
 from pipeline.llm_client import LLMClient
 from prompts import registry
 
-
-# ─── Output models (kept module-local, NOT in models/schemas.py) ──────────────
-
-class MissedItem(BaseModel):
-    """A concrete actionable deliverable the LLM thinks was dropped."""
-    description: str                              # The missed deliverable, 1-2 sentences
-    # CONF-1: clamped into [0,1] by the UnitInterval BeforeValidator; no Field
-    # ge/le (emitting minimum/maximum breaks Anthropic strict structured output).
-    confidence: UnitInterval                       # Checker confidence this IS a miss
-    reason: str                                   # Why it's an actionable miss
-
-
-class SectionCoverageReport(BaseModel):
-    """Per-node semantic coverage outcome."""
-    node_id: str
-    extracted_count: int
-    missed_items: list[MissedItem] = Field(default_factory=list)
-    checker_confidence: UnitInterval = 0.0        # CONF-1: clamped into [0,1]
-    checked_at: datetime.datetime = Field(default_factory=utcnow)
-
-
-class CoverageAudit(BaseModel):
-    """Top-level Instructor ``response_model`` (C-5).
-
-    The coverage check emits a JSON array of misses, so the validated payload is
-    wrapped in a single object with one ``missed_items`` list of MissedItem.
-    Each MissedItem is schema-validated (description/reason present, confidence
-    clamped into [0,1]); the agent then applies its own min_confidence filter —
-    that's domain gating, not validation, so it stays in the agent.
-    """
-    missed_items: list[MissedItem] = Field(default_factory=list)
+# ─── Output models — moved to models/intelligence_schemas.py (WAVE 7 GATE D) ──
+# MissedItem, SectionCoverageReport, CoverageAudit are re-exported above so that
+# every existing ``from pipeline.agents.coverage_check import ...`` site keeps
+# resolving to the SAME class object.
+__all__ = ["CoverageAudit", "MissedItem", "SectionCoverageReport"]
 
 
 # ─── Confidence gate (Wave 3-F, audit C-4) ────────────────────────────────────

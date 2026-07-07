@@ -1,6 +1,7 @@
 # SOW-to-Jira UI Rework Plan — React + Vite migration + full UX revamp
 
-Status: DRAFT for review. Read-only planning artifact. No code changed.
+Status: APPROVED (direction) — planning artifact; no code changed yet.
+DECISION LOG (2026-07-08): design direction **Drafting Table** CONFIRMED by user (§5.1). Remaining §8.3 decisions default to their recommendations (clean view-layer rebuild; Tailwind v4 @theme tokens; Fraunces/Inter/IBM Plex Mono; HashRouter v1; wrap-then-migrate loaders; defer dark mode to v2; backend gaps = separate ticket) unless overridden. Not yet started; not pushed.
 Author: lead architect + designer synthesis, grounded in the six inventory files under `.planning/ui-rework/inventory/`.
 Backend is out of scope and untouched: the frozen `/api/*` contract in `.planning/ui-rework/inventory/backend-contract.md` is the migration boundary.
 

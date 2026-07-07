@@ -144,7 +144,7 @@
   <section>
     <div class="sec-no reveal" style="color:var(--ship)">00 — Progress at a glance</div>
     <h2 class="reveal">The roadmap, and where we are on it.</h2>
-    <p class="sec-intro reveal">Nine tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is largely shipped — A1-C2 (resilience, integrity, parallelism, resumability) are done offline; only C3 (durable worker) waits on Wave-2 services. The newest track — <b>Wave 6, the UI/UX rework</b> — is fully offline-buildable and queued next (audit-driven; plan in <code>IMPLEMENTATION-PLAN.md</code>). See <code>SCALE-HARDENING.md</code>.</p>
+    <p class="sec-intro reveal">Nine tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is largely shipped — A1-C2 (resilience, integrity, parallelism, resumability) are done offline; only C3 (durable worker) waits on Wave-2 services. The newest track — <b>Wave 6, the UI/UX rework</b> — has now shipped offline in full (UI.1→UI.7, audit-driven; only the UI.3/UI.5 live-backend verification passes remain). And the <b>Argus observability fleet has been fully decommissioned</b> (audit-verified as unneeded — Render/Vercel logs + Langfuse Cloud + Bifrost cover it). See <code>SCALE-HARDENING.md</code>.</p>
     <div class="waves">
       <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
       <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
@@ -154,7 +154,7 @@
       <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.70)"></i></div><div class="wpct">70%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.85)"></i></div><div class="wpct">85%</div></div>
       <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.58)"></i></div><div class="wpct">58%</div></div>
-      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="part" style="transform:scaleX(.95)"></i></div><div class="wpct">95%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
     </div>
   </section>
 
@@ -471,6 +471,30 @@
       </div>
     </div>
     <!-- WAVE 6 — UI.1 -->
+    <!-- WAVE 6 — UI/UX rework UI.2a→UI.7 -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 6 · UI.2a→UI.7 — the UI/UX rework, shipped offline</h3><span class="sha">a1f3af6</span></div>
+      <div class="inc-sub reveal">The rest of the audit-driven rework, on top of UI.1's honest tokens. app.js is gone — split into ES modules with a tiny store and a vitest harness (96 tests). Every audit blocker is closed. Offline-complete; only the UI.3/UI.5 live-backend verification passes are walled.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Build seam + module split + a ~1KB store + a real test harness</h4><span class="tag">UI.2a/2b · baaa3d0 · 118653b</span></div>
+        <p class="what">The 979-line god-file becomes testable ES modules behind a Vite build.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>One 979-line <code>app.js</code> IIFE, no build step, no JS tests — every change was a blind edit.</div><div class="cell after"><span class="lbl">After</span>A Vite dev-proxy + prod-build seam (zero behaviour change), then <code>app.js</code> split into <code>src/{state,api,render,modals,polling,main}.js</code> with a ~1KB nanostores store (framework-free) and 96 vitest tests across 5 suites.</div></div>
+        <p class="why"><span class="wl">Better</span>The UI is now modular, unit-tested, and safe to evolve — the split is the gate that let every later UI phase land independently.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>error_class-aware failure UX + an accessible, XSS-safe, keyboard-fast review flow</h4><span class="tag">UI.3/4a/4b · bd22a44 · a1f3af6</span></div>
+        <p class="what">Failures stop dead-ending, and reviewing tasks no longer requires a mouse.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The typed <code>error_class</code> taxonomy was completely unconsumed — every failure dead-ended at "Dismiss"; collapsibles weren't keyboard-reachable; <code>section_title</code> went through <code>innerHTML</code> (XSS); the filter/stat taxonomy was inconsistent.</div><div class="cell after"><span class="lbl">After</span>A severity chip (the <code>--sev-*</code> tokens) drives retry-vs-fix-vs-failed UX off the real error_class; collapsibles are <code>role="button"</code>+keyboard; titles escape via <code>textContent</code>; optimistic in-place card patch; keyboard triage (a/r approve/reject, j/k, e expand) over one reconciled status taxonomy.</div></div>
+        <p class="why"><span class="wl">Better</span>Reviewers can tell what went wrong and what to do next, and can clear a queue from the keyboard — the second audit blocker (dead-end errors) is closed.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Responsive layout + real modal a11y + flow-integrity guards, onboarding &amp; a push-results panel</h4><span class="tag">UI.5/6/7 · bd22a44 · a1f3af6</span></div>
+        <p class="what">The app works on smaller screens, dialogs are accessible, and the run→review→push flow guards itself.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>One <code>@media</code> query (no responsiveness); modals had no dialog semantics/focus trap; Push could fire with no active session; no first-run state; push outcomes vanished.</div><div class="cell after"><span class="lbl">After</span>Tablet/mobile breakpoints (1024/768/400px); real <code>role="dialog"</code>+<code>aria-modal</code>+focus-trap dialogs; Push pre-flight disabled until a canonical <code>activeSessionId</code> is set; skeleton/loading states; a genuine onboarding empty-state; a push-completion panel listing each task with its Jira key.</div></div>
+        <p class="why"><span class="wl">Better</span>The review UI is usable on any screen, accessible, and can't be driven into an invalid push — with the run's outcome shown plainly at the end.</p>
+      </div>
+    </div>
+
     <div class="increment">
       <div class="inc-head reveal"><h3>Wave 6 · UI.1 — token foundation + safety hotfixes</h3><span class="sha">32ba3f4</span></div>
       <div class="inc-sub reveal">First UI-rework increment. Run-the-app + browser verified (no JS harness yet — vitest lands in UI.2a). Adversarial review: 1 defect → fixed.</div>
@@ -706,7 +730,7 @@
     <div class="plist">
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested), and the replay-time dedup-UUID remapper (match by title/node_id/position, self-merge-safe) shipped.</s> Remaining (live-run): run the recorder against a real 103-node SOW (live gemini), wire the remapper's <code>RecordedTaskRef</code>s into the faithful cassette, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run</span></div></div>
       <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p><s>Inverted Jira issue-link direction (per-kind <code>LINK_DIRECTION</code> map — <code>blocks</code> was already correct; <code>duplicates</code> fixed) and typed exception classification (3-way <code>ErrorClass</code> at the push + pipeline boundaries) shipped. Push idempotency shipped via PushGate; the dead MCP client was deleted.</s> Remaining: the STEP 5.3 PushGate/MCP cleanup tail. Note: removing Ollama/Bifrost (STEP 5.1) is <b>locked — out of scope</b>.</p><span class="need">buildable now</span></div></div>
-      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 6 — UI/UX rework (audit-driven, 9 phases)</h4><p>A 4-lens frontend audit (IA · visual · UX/a11y · code) surfaced two blockers — the theme toggle switches to a <b>light theme that doesn't exist</b> (breaks the app), and the new <code>error_class</code> taxonomy is <b>completely unconsumed</b> so every failure dead-ends at "Dismiss" — plus non-existent responsiveness (1 <code>@media</code> in 619 lines), no modal/keyboard a11y, and a 979-line god-file. The track (<b>UI.1→UI.7</b>): <s>honest tokens + single dark theme + polling hardening (UI.1, <code>32ba3f4</code>); light Vite build seam (UI.2a, <code>baaa3d0</code>)</s> → <b>next: UI.2b</b> module split + ~1KB store (keep-vanilla, no framework) → <code>error_class</code>-aware retry/fix/failed UX → accessible keyboard-fast review flow → flow-integrity guards → responsive + dialog a11y → onboarding + push-results panel. Offline-buildable (two live-backend verify passes). Full spec: <code>IMPLEMENTATION-PLAN.md</code> WAVE 6.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Verify</span><div><h4>Wave 6 — live-backend verification (UI.3 / UI.5)</h4><p>The UI/UX rework itself <b>shipped offline in full</b> (UI.1→UI.7 — module split + ~1KB store + 96 vitest, <code>error_class</code>-aware failure UX, accessible/keyboard-fast review flow, flow-integrity guards, responsive + dialog a11y, onboarding + push-results panel; see the Shipped section). What remains is the two <b>live-backend verification passes</b>: confirm the real <code>error_class</code> emissions render correctly (UI.3) and that reopening a running session behaves against a real backend (UI.5).</p><span class="need svc">needs: live-backend</span></div></div>
     </div>
   </section>
 
@@ -726,7 +750,7 @@
   <footer>
     <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
     Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids + WAVE 6 <code>ui-1..24</code>) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
-    Updated 2026-07-05 · branch elevation/wave-0 (pushed → GitHub + GitLab, PR #7) · 604 tests green
+    Updated 2026-07-07 · branch elevation/wave-0 (pushed → GitHub + GitLab, PR #7; head f619767) · 831 pytest + 96 vitest green
   </footer>
 
 </div>

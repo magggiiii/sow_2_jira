@@ -17,7 +17,7 @@ import io
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
 from audit.logger import AuditLogger
-from pipeline.observability import logger, tracer, llm_token_usage, llm_operation_duration, SYNC_ENABLED
+from pipeline.observability import logger, llm_token_usage, llm_operation_duration, SYNC_ENABLED
 from pipeline.telemetry import TelemetryEmitter
 from rich.console import Console
 
@@ -407,13 +407,17 @@ class LLMClient:
     Ensures per-run configuration is used instead of global environment.
     """
 
-    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None, status_callback: Optional[Callable] = None):
+    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None, status_callback: Optional[Callable] = None, cost_meter=None):
         _configure_litellm_logging()
         self.mode = mode
         self.audit_logger = audit_logger
         self.run_id = run_id
         self.stop_event = stop_event
         self.status_callback = status_callback
+        # WAVE-7: optional run-scoped cost accumulator. When set, each real
+        # completion feeds its (prompt_tokens, completion_tokens, model) usage
+        # into the meter as a side effect so a budget kill-switch can trip.
+        self.cost_meter = cost_meter
 
         # Use provided config or resolve from mode
         self.provider_config = provider_config or configure_litellm_for_mode(mode)
@@ -453,21 +457,12 @@ class LLMClient:
         Logs token usage to audit log and sends traces to Tempo.
         """
         
-        # Setup context for when SYNC is disabled
-        if not SYNC_ENABLED:
-            with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
-                return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id, None)
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped;
+        # the call runs directly under the correlated-logging context.
+        with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
+            return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id)
 
-        with tracer.start_as_current_span(f"LLM_CALL_{agent_name}") as span:
-            span.set_attribute("agent", agent_name)
-            span.set_attribute("node_id", node_id)
-            span.set_attribute("model", self.model)
-            span.set_attribute("prompt_preview", prompt[:1000])
-
-            with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
-                return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id, span)
-
-    def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id, span) -> str:
+    def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id) -> str:
         logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
         
         remote_max_attempts = int(os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_MAX_ATTEMPTS", "8")))
@@ -520,9 +515,14 @@ class LLMClient:
             prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
             completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
 
-            if span:
-                span.set_attribute("tokens", tokens)
-                span.set_attribute("response_preview", content[:1000])
+            # WAVE-7: feed usage into the run-scoped cost meter (side effect only;
+            # complete() still returns a bare str). Best-effort — never let a
+            # metering failure surface into the pipeline result.
+            if self.cost_meter is not None:
+                try:
+                    self.cost_meter.record(self.model, prompt_tokens, completion_tokens)
+                except Exception:
+                    pass
 
             # Record Argus Metrics (only if sync enabled)
             if SYNC_ENABLED:
@@ -671,8 +671,6 @@ class LLMClient:
                     })
                     _sleep_with_cancel(wait_s, self.stop_event)
         except Exception as e:
-            if span:
-                span.record_exception(e)
             logger.error(f"✗ LLM call permanently failed: {e}")
             self.telemetry.emit("llm.call", {
                 "run_id": self.run_id,

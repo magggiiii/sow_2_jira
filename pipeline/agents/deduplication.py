@@ -552,6 +552,129 @@ class DeduplicationAgent:
         )
         return result
 
+    def dedup_against(
+        self,
+        recovered: list[ManagedTask],
+        existing: list[ManagedTask],
+    ) -> list[ManagedTask]:
+        """orch-3: dedup ONLY the newly-recovered tasks against an already-
+        surviving set — never a full re-dedup.
+
+        Gap recovery appends fresh tasks to a task list that a prior dedup pass
+        already cleaned. Re-running the full ``deduplicate`` over
+        ``existing + recovered`` re-embeds and re-compares every survivor against
+        every other survivor, which is wasteful and can spuriously re-merge
+        survivors the earlier pass deliberately kept apart. This method scopes
+        the work: candidate pairs are limited to those that involve at least one
+        recovered task (recovered-vs-existing and recovered-vs-recovered), so
+        existing-vs-existing pairs are never offered to the LLM and the survivor
+        set is returned intact. Only recovered tasks may be dropped/merged.
+
+        Uses the same vector + LLM confirmation seam as :meth:`deduplicate`.
+        Returns ``existing + (surviving recovered)`` — order preserved.
+        """
+        if not recovered:
+            return list(existing)
+
+        all_tasks = list(existing) + list(recovered)
+        n_existing = len(existing)
+        recovered_ids = {str(t.id) for t in recovered}
+
+        if len(all_tasks) < 2:
+            return all_tasks
+
+        # Step 1: embed the combined set (single encode, aligned with all_tasks).
+        embedder = self._get_embedder()
+        texts = self._get_embedding_texts(all_tasks)
+        embeddings = embedder.encode(texts, normalize_embeddings=True)
+
+        # Step 2: candidate pairs, then SCOPE to pairs touching a recovered task.
+        candidate_pairs = self._find_candidate_pairs(all_tasks, embeddings)
+        scoped_pairs = [
+            (a, b, sim)
+            for a, b, sim in candidate_pairs
+            if str(a.id) in recovered_ids or str(b.id) in recovered_ids
+        ]
+
+        if not scoped_pairs:
+            self.audit.log(
+                run_id=self.run_id,
+                agent="DeduplicationAgent",
+                action="NO_DUPLICATES_FOUND",
+                detail=(
+                    f"dedup_against: no recovered-scoped pairs above threshold "
+                    f"{self.threshold} ({len(recovered)} recovered vs "
+                    f"{n_existing} existing)"
+                ),
+            )
+            return all_tasks
+
+        # Step 3: LLM confirmation, batched (matches deduplicate semantics).
+        batch_size = self.DEDUP_BATCH_SIZE
+        batches = [
+            scoped_pairs[i:i + batch_size]
+            for i in range(0, len(scoped_pairs), batch_size)
+        ]
+        decisions = []
+        try:
+            for batch in batches:
+                decisions.extend(self._confirm_pairs(batch).decisions)
+        except InstructorError as e:
+            self.audit.log(
+                run_id=self.run_id,
+                agent="DeduplicationAgent",
+                action="DEDUP_ERROR",
+                detail=f"dedup_against: {e}",
+            )
+            # Fail safe: keep everything unmodified.
+            return all_tasks
+
+        # Step 4: apply decisions. Only recovered tasks may be dropped — a
+        # decision to drop a survivor is ignored so the existing set stays intact.
+        drop_ids: set[str] = set()
+        task_map = {str(t.id): t for t in all_tasks}
+
+        for decision in decisions:
+            self.audit.log(
+                run_id=self.run_id,
+                agent="DeduplicationAgent",
+                action=f"DEDUP_{decision.decision.upper()}",
+                detail=f"{decision.task_id_a} vs {decision.task_id_b}: {decision.reason}",
+            )
+
+            if decision.decision in ("merge", "keep_first"):
+                survivor_id, absorbed_id = decision.task_id_a, decision.task_id_b
+            elif decision.decision == "keep_second":
+                survivor_id, absorbed_id = decision.task_id_b, decision.task_id_a
+            else:  # "keep_both" → no action
+                continue
+
+            # The absorbed (dropped) side must be a recovered task; never drop a
+            # survivor from the frozen existing set.
+            if absorbed_id not in recovered_ids:
+                continue
+
+            survivor = task_map.get(survivor_id)
+            absorbed = task_map.get(absorbed_id)
+            if survivor and absorbed:
+                self._merge_tasks(survivor, absorbed)
+                survivor.flags = _dedup_preserve_order(survivor.flags)
+                absorbed.status = TaskStatus.MERGED
+                drop_ids.add(absorbed_id)
+
+        result = [t for t in all_tasks if str(t.id) not in drop_ids]
+
+        self.audit.log(
+            run_id=self.run_id,
+            agent="DeduplicationAgent",
+            action="DEDUP_COMPLETE",
+            detail=(
+                f"dedup_against: existing={n_existing}, recovered={len(recovered)}, "
+                f"kept={len(result)}, dropped={len(all_tasks) - len(result)}"
+            ),
+        )
+        return result
+
     def _merge_tasks(self, a: ManagedTask, b: ManagedTask) -> ManagedTask:
         """Merge task B content into task A. Returns A."""
         # Acceptance criteria are AcceptanceCriterion objects — use the

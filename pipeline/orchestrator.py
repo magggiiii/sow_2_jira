@@ -28,7 +28,7 @@ from audit.logger import AuditLogger
 from core.health import RunHealthReport, build_health_report
 from core.guardrails import CoverageGate
 from core.pipeline import PipelineContext, PipelineRunner
-from pipeline.observability import logger, tracer, trace_span, sync_telemetry
+from pipeline.observability import logger, trace_span
 from pipeline.telemetry import TelemetryEmitter
 import os
 import threading
@@ -131,6 +131,20 @@ class PipelineOrchestrator:
         # without either component needing to know about cancel_check.
         self._cancel_signal_obj = _CancelSignal(self.stop_event, self.cancel_check)
 
+        # WAVE-7 SC-ORCH: optional per-run cost kill-switch. Built ONLY when a
+        # budget is configured. ``max_run_cost`` is read via getattr because the
+        # RunConfig FIELD is deferred to the next round — never reference
+        # ``config.max_run_cost`` directly. When present, the meter is threaded
+        # into the LLMClient (which feeds it token usage after each completion)
+        # and consulted by ``_cancelled()`` so an over-budget run aborts via the
+        # EXISTING cancellation return path (a RunCostExceeded condition).
+        max_run_cost = getattr(config, "max_run_cost", None)
+        if max_run_cost:
+            from core.cost_meter import CostMeter
+            self.cost_meter = CostMeter(max_run_cost=max_run_cost)
+        else:
+            self.cost_meter = None
+
         # WAVE-0 1.6a: persistence seams. ``object_store`` is the run-artifact blob
         # store (pipeline_output.json, checkpoints, node_index, tree cache); when
         # omitted it DEFAULTS to a LocalObjectStore rooted at the existing data dir
@@ -156,7 +170,8 @@ class PipelineOrchestrator:
             mode=config.llm_mode,
             audit_logger=audit,
             run_id=config.run_id,
-            stop_event=self._cancel_signal_obj
+            stop_event=self._cancel_signal_obj,
+            cost_meter=self.cost_meter,
         )
 
         # Build agents. STEP 5.4: each tuning knob resolves as
@@ -273,7 +288,13 @@ class PipelineOrchestrator:
     def _cancelled(self) -> bool:
         """C2: consult the cancellation seam (defaults to the local stop_event).
         Tolerant — a misbehaving probe must not crash the run; treat an error as
-        'not cancelled' so the run continues rather than dying on a flaky check."""
+        'not cancelled' so the run continues rather than dying on a flaky check.
+
+        WAVE-7 SC-ORCH: also reports cancelled when the run-scoped cost meter is
+        over budget (RunCostExceeded), so an over-budget run aborts at the next
+        ``_cancelled()`` checkpoint via the existing cancellation return path."""
+        if self.cost_meter is not None and self.cost_meter.exceeded():
+            return True
         try:
             return bool(self.cancel_check())
         except Exception:
@@ -401,26 +422,26 @@ class PipelineOrchestrator:
         left ``None`` in the parallel path to avoid mutating the shared provider's
         ``status_callback`` from worker threads.
         """
-        with tracer.start_as_current_span(f"EXTRACT_NODE_{node.get('node_id', 'none')}"):
-            # Get text for this node (PageIndex provides it directly)
-            section_text = self.indexer.get_node_text(node)
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        # Get text for this node (PageIndex provides it directly)
+        section_text = self.indexer.get_node_text(node)
 
-            # Classifier gate (Improvement #3): skip non-actionable sections
-            if self.classifier is not None:
-                classification = self.classifier.classify(node, section_text)
-                if not self.classifier.should_extract(classification):
-                    logger.info(
-                        f"› Skipping non-actionable section: {node.get('title')} "
-                        f"({classification.type.value}, conf={classification.confidence:.2f})"
-                    )
-                    return None
+        # Classifier gate (Improvement #3): skip non-actionable sections
+        if self.classifier is not None:
+            classification = self.classifier.classify(node, section_text)
+            if not self.classifier.should_extract(classification):
+                logger.info(
+                    f"› Skipping non-actionable section: {node.get('title')} "
+                    f"({classification.type.value}, conf={classification.confidence:.2f})"
+                )
+                return None
 
-            # Extract (hierarchy-aware)
-            return self.extraction_agent.extract(
-                node, section_text,
-                hierarchy=self.config.jira_hierarchy.value,
-                status_callback=status_callback,
-            )
+        # Extract (hierarchy-aware)
+        return self.extraction_agent.extract(
+            node, section_text,
+            hierarchy=self.config.jira_hierarchy.value,
+            status_callback=status_callback,
+        )
 
     def _apply_node(self, node, raw_tasks, open_tasks):
         """
@@ -432,36 +453,36 @@ class PipelineOrchestrator:
         section_tasks)``; performs no ``CoverageTracker`` mutation (the caller
         marks coverage in node order).
         """
-        with tracer.start_as_current_span(f"APPLY_NODE_{node.get('node_id', 'none')}"):
-            # Cheap re-read (PageIndex provides text directly) — critic + coverage
-            # need the section text; not worth threading through the parallel phase.
-            section_text = self.indexer.get_node_text(node)
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        # Cheap re-read (PageIndex provides text directly) — critic + coverage
+        # need the section text; not worth threading through the parallel phase.
+        section_text = self.indexer.get_node_text(node)
 
-            open_tasks, newly_closed = self.state_agent.process(
-                raw_tasks, open_tasks, node
+        open_tasks, newly_closed = self.state_agent.process(
+            raw_tasks, open_tasks, node
+        )
+
+        # Critic pass (Improvement #4): auto-fix or flag emitted tasks
+        if self.critic is not None:
+            emitted = open_tasks + newly_closed
+            if emitted:
+                self.critic.critique(emitted, section_text, node)
+
+        # Semantic coverage check (Improvement #2): what did we miss?
+        # C-4 / STEP 3.3: the per-node loop only PRODUCES + stores the section
+        # coverage report. INCOMPLETE flagging is deferred to the run-wide,
+        # post-dedup CoverageGate (_run_coverage_verify) so a single confident
+        # miss can no longer blanket-flag a section pre-dedup (the ~100%
+        # INCOMPLETE bomb) and tasks are never double-flagged.
+        section_tasks = open_tasks + newly_closed
+        if self.coverage_checker is not None:
+            report = self.coverage_checker.check_section(
+                node, section_text, section_tasks
             )
+            if report.missed_items:
+                self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
 
-            # Critic pass (Improvement #4): auto-fix or flag emitted tasks
-            if self.critic is not None:
-                emitted = open_tasks + newly_closed
-                if emitted:
-                    self.critic.critique(emitted, section_text, node)
-
-            # Semantic coverage check (Improvement #2): what did we miss?
-            # C-4 / STEP 3.3: the per-node loop only PRODUCES + stores the section
-            # coverage report. INCOMPLETE flagging is deferred to the run-wide,
-            # post-dedup CoverageGate (_run_coverage_verify) so a single confident
-            # miss can no longer blanket-flag a section pre-dedup (the ~100%
-            # INCOMPLETE bomb) and tasks are never double-flagged.
-            section_tasks = open_tasks + newly_closed
-            if self.coverage_checker is not None:
-                report = self.coverage_checker.check_section(
-                    node, section_text, section_tasks
-                )
-                if report.missed_items:
-                    self.section_coverage_reports[node["node_id"]] = report.model_dump(mode="json")
-
-            return open_tasks, newly_closed, section_tasks
+        return open_tasks, newly_closed, section_tasks
 
     # ─── C-4 / STEP 3.3: run-wide, post-dedup coverage gate ─────────────────
 
@@ -916,7 +937,7 @@ class PipelineOrchestrator:
     # registry-driven runner both call these, so behavior is single-sourced.
 
     def _stage_setup(self, ctx: PipelineContext) -> None:
-        sync_telemetry()
+        # infr-15c: the OTel telemetry-sync call was a no-op shim; call removed.
         # Ensure provider_config is loaded and set ContextVar for this run/thread
         if not self.config.provider_config:
             self.config.provider_config = configure_litellm_for_mode(self.config.llm_mode)
@@ -941,17 +962,17 @@ class PipelineOrchestrator:
 
     def _stage_index(self, ctx: PipelineContext) -> None:
         # ── Step 1-2: Parse + Index via PageIndex ────────────────────────────
-        with tracer.start_as_current_span("STEP_1_2_PAGEINDEX"):
-            step_start = time.time()
-            self._update_status(1, "Running PageIndex (parse + tree build)...", 0.05)
-            logger.info("› Step 1/5: Running PageIndex...")
-            nodes = self._build_or_load_tree(self.config.sow_pdf_path)
-            self.telemetry.emit("step.completed", {
-                "run_id": self.config.run_id,
-                "step": "pageindex",
-                "duration_ms": int((time.time() - step_start) * 1000),
-                "node_count": len(nodes),
-            })
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        step_start = time.time()
+        self._update_status(1, "Running PageIndex (parse + tree build)...", 0.05)
+        logger.info("› Step 1/5: Running PageIndex...")
+        nodes = self._build_or_load_tree(self.config.sow_pdf_path)
+        self.telemetry.emit("step.completed", {
+            "run_id": self.config.run_id,
+            "step": "pageindex",
+            "duration_ms": int((time.time() - step_start) * 1000),
+            "node_count": len(nodes),
+        })
 
         # ── Step 2: Initialize Coverage Tracker & Safety Check ───────────────
         # A2: graceful capacity capping. In the default "degraded" strategy an
@@ -1003,56 +1024,55 @@ class PipelineOrchestrator:
         nodes = ctx.nodes
         coverage = ctx.coverage
         # ── Step 3: Chunk Loop — Extract + State per node ─────────────────────
-        with tracer.start_as_current_span("STEP_3_EXTRACT_LOOP") as span:
-            step_start = time.time()
-            span.set_attribute("node_count", len(nodes))
-            self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        step_start = time.time()
+        self._update_status(3, f"Extracting tasks from {len(nodes)} nodes...", 0.40)
 
-            # C1: resume from a prior crash if a valid checkpoint exists (skip
-            # done nodes, restore their tasks + coverage). Fresh run → (0, [], []).
-            start_index, resume_closed, resume_open = self._maybe_resume(nodes, coverage)
+        # C1: resume from a prior crash if a valid checkpoint exists (skip
+        # done nodes, restore their tasks + coverage). Fresh run → (0, [], []).
+        start_index, resume_closed, resume_open = self._maybe_resume(nodes, coverage)
 
-            # A2: per-node error isolation lives in _extract_all — one node's
-            # failure is logged + counted and the loop continues. Cancellation
-            # returns whatever was extracted so far.
-            all_closed_tasks, open_tasks, cancelled = self._extract_all(
-                nodes, coverage,
-                start_index=start_index,
-                all_closed_tasks=resume_closed,
-                open_tasks=resume_open,
-            )
-            ctx.all_closed_tasks = all_closed_tasks
-            ctx.open_tasks = open_tasks
-            if cancelled:
-                ctx.cancelled = True
-                return
+        # A2: per-node error isolation lives in _extract_all — one node's
+        # failure is logged + counted and the loop continues. Cancellation
+        # returns whatever was extracted so far.
+        all_closed_tasks, open_tasks, cancelled = self._extract_all(
+            nodes, coverage,
+            start_index=start_index,
+            all_closed_tasks=resume_closed,
+            open_tasks=resume_open,
+        )
+        ctx.all_closed_tasks = all_closed_tasks
+        ctx.open_tasks = open_tasks
+        if cancelled:
+            ctx.cancelled = True
+            return
 
-            # Force-close remaining open tasks
-            forced_closed = self.state_agent.close_all_remaining(open_tasks)
-            all_closed_tasks.extend(forced_closed)
-            self.telemetry.emit("step.completed", {
-                "run_id": self.config.run_id,
-                "step": "extraction",
-                "duration_ms": int((time.time() - step_start) * 1000),
-                "task_count": len(all_closed_tasks),
-            })
+        # Force-close remaining open tasks
+        forced_closed = self.state_agent.close_all_remaining(open_tasks)
+        all_closed_tasks.extend(forced_closed)
+        self.telemetry.emit("step.completed", {
+            "run_id": self.config.run_id,
+            "step": "extraction",
+            "duration_ms": int((time.time() - step_start) * 1000),
+            "task_count": len(all_closed_tasks),
+        })
 
         logger.success(f"✓ Extracted {len(all_closed_tasks)} raw tasks")
 
     def _stage_dedup(self, ctx: PipelineContext) -> None:
         # ── Step 4: Deduplication ─────────────────────────────────────────────
-        with tracer.start_as_current_span("STEP_4_DEDUP"):
-            step_start = time.time()
-            self._update_status(4, "Deduplicating tasks...", 0.85)
-            logger.info("› Step 4/5: Deduplicating tasks...")
-            deduplicated = self.dedup_agent.deduplicate(ctx.all_closed_tasks)
-            logger.info(f"✓ {len(deduplicated)} tasks after deduplication")
-            self.telemetry.emit("step.completed", {
-                "run_id": self.config.run_id,
-                "step": "deduplication",
-                "duration_ms": int((time.time() - step_start) * 1000),
-                "task_count": len(deduplicated),
-            })
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        step_start = time.time()
+        self._update_status(4, "Deduplicating tasks...", 0.85)
+        logger.info("› Step 4/5: Deduplicating tasks...")
+        deduplicated = self.dedup_agent.deduplicate(ctx.all_closed_tasks)
+        logger.info(f"✓ {len(deduplicated)} tasks after deduplication")
+        self.telemetry.emit("step.completed", {
+            "run_id": self.config.run_id,
+            "step": "deduplication",
+            "duration_ms": int((time.time() - step_start) * 1000),
+            "task_count": len(deduplicated),
+        })
         ctx.deduplicated = deduplicated
 
     def _stage_gap_recovery(self, ctx: PipelineContext) -> None:
@@ -1063,34 +1083,37 @@ class PipelineOrchestrator:
         logger.info(f"Coverage: {report['coverage_pct']}% ({report['covered_nodes']}/{report['total_nodes']} nodes)")
 
         if report["gap_nodes"] > 0:
-            with tracer.start_as_current_span("STEP_4B_GAP_RECOVERY"):
-                step_start = time.time()
-                self._update_status(4, f"Gap recovery on {report['gap_nodes']} nodes...", 0.90)
-                logger.info(f"› Running gap recovery on {report['gap_nodes']} uncovered nodes...")
-                gaps = coverage.get_gaps(min_text_length=100)
-                recovered_pairs = self.gap_agent.recover(gaps, self.indexer)
+            # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+            step_start = time.time()
+            self._update_status(4, f"Gap recovery on {report['gap_nodes']} nodes...", 0.90)
+            logger.info(f"› Running gap recovery on {report['gap_nodes']} uncovered nodes...")
+            gaps = coverage.get_gaps(min_text_length=100)
+            recovered_pairs = self.gap_agent.recover(gaps, self.indexer)
 
-                if recovered_pairs:
-                    recovered_managed = []
-                    for raw_task, actual_node in recovered_pairs:
-                        open_tasks_tmp, closed_tmp = self.state_agent.process(
-                            [raw_task], [], actual_node
-                        )
-                        recovered_managed.extend(open_tasks_tmp + closed_tmp)
+            if recovered_pairs:
+                recovered_managed = []
+                for raw_task, actual_node in recovered_pairs:
+                    open_tasks_tmp, closed_tmp = self.state_agent.process(
+                        [raw_task], [], actual_node
+                    )
+                    recovered_managed.extend(open_tasks_tmp + closed_tmp)
 
-                    # Force close any still open
-                    recovered_managed = self.state_agent.close_all_remaining(recovered_managed)
+                # Force close any still open
+                recovered_managed = self.state_agent.close_all_remaining(recovered_managed)
 
-                    # Merge with main list and re-dedup
-                    combined = deduplicated + recovered_managed
-                    deduplicated = self.dedup_agent.deduplicate(combined)
-                    logger.info(f"✓ After gap recovery: {len(deduplicated)} tasks")
-                self.telemetry.emit("step.completed", {
-                    "run_id": self.config.run_id,
-                    "step": "gap_recovery",
-                    "duration_ms": int((time.time() - step_start) * 1000),
-                    "task_count": len(deduplicated),
-                })
+                # orch-3: dedup ONLY the newly-recovered tasks against the
+                # already-surviving set (recovered-vs-existing), instead of a
+                # full re-dedup of every survivor against every other survivor.
+                deduplicated = self.dedup_agent.dedup_against(
+                    recovered_managed, deduplicated
+                )
+                logger.info(f"✓ After gap recovery: {len(deduplicated)} tasks")
+            self.telemetry.emit("step.completed", {
+                "run_id": self.config.run_id,
+                "step": "gap_recovery",
+                "duration_ms": int((time.time() - step_start) * 1000),
+                "task_count": len(deduplicated),
+            })
         ctx.report = report
         ctx.deduplicated = deduplicated
 
@@ -1176,51 +1199,51 @@ class PipelineOrchestrator:
         deduplicated = ctx.deduplicated
         report = ctx.report
         # ── Step 5: Save Checkpoint ───────────────────────────────────────────
-        with tracer.start_as_current_span("STEP_5_SAVE"):
-            step_start = time.time()
-            self._update_status(5, "Saving pipeline output...", 0.95)
-            logger.info("› Step 5/5: Saving pipeline output...")
-            checkpoint_key = self._artifact_key("pipeline_output.json")
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        step_start = time.time()
+        self._update_status(5, "Saving pipeline output...", 0.95)
+        logger.info("› Step 5/5: Saving pipeline output...")
+        checkpoint_key = self._artifact_key("pipeline_output.json")
 
-            # 1.6b: pipeline output routes through the object store (was a direct
-            # data/sessions write).
+        # 1.6b: pipeline output routes through the object store (was a direct
+        # data/sessions write).
+        self._put_json_artifact(
+            checkpoint_key,
+            {
+                "run_id": self.config.run_id,
+                "config": self.config.model_dump(mode="json"),
+                "tasks": [t.model_dump(mode="json") for t in deduplicated],
+                "coverage_report": report,
+                # Additive key — existing consumers ignore it.
+                "health": self.health_report.to_dict(),
+            },
+            indent=2,
+            default=str,
+        )
+
+        # Semantic coverage reports (Improvement #2) — sibling artifact
+        if self.section_coverage_reports:
             self._put_json_artifact(
-                checkpoint_key,
-                {
-                    "run_id": self.config.run_id,
-                    "config": self.config.model_dump(mode="json"),
-                    "tasks": [t.model_dump(mode="json") for t in deduplicated],
-                    "coverage_report": report,
-                    # Additive key — existing consumers ignore it.
-                    "health": self.health_report.to_dict(),
-                },
+                self._artifact_key("coverage_reports.json"),
+                self.section_coverage_reports,
                 indent=2,
                 default=str,
             )
 
-            # Semantic coverage reports (Improvement #2) — sibling artifact
-            if self.section_coverage_reports:
-                self._put_json_artifact(
-                    self._artifact_key("coverage_reports.json"),
-                    self.section_coverage_reports,
-                    indent=2,
-                    default=str,
-                )
+        # 1.6c: mirror the run + task records into the DB repos (no-op when
+        # they aren't injected). Never persists a plaintext api_key/token.
+        self._write_through_repos(deduplicated, report)
 
-            # 1.6c: mirror the run + task records into the DB repos (no-op when
-            # they aren't injected). Never persists a plaintext api_key/token.
-            self._write_through_repos(deduplicated, report)
+        # C1: the run completed — the per-node resume checkpoint is no longer
+        # needed, so a re-run starts fresh rather than resuming a finished run.
+        self._delete_extraction_checkpoint()
 
-            # C1: the run completed — the per-node resume checkpoint is no longer
-            # needed, so a re-run starts fresh rather than resuming a finished run.
-            self._delete_extraction_checkpoint()
-
-            self.telemetry.emit("step.completed", {
-                "run_id": self.config.run_id,
-                "step": "save",
-                "duration_ms": int((time.time() - step_start) * 1000),
-                "task_count": len(deduplicated),
-            })
+        self.telemetry.emit("step.completed", {
+            "run_id": self.config.run_id,
+            "step": "save",
+            "duration_ms": int((time.time() - step_start) * 1000),
+            "task_count": len(deduplicated),
+        })
 
         logger.success(f"✓ Pipeline complete! {len(deduplicated)} tasks ready.")
         logger.info(f"Checkpoint saved: {checkpoint_key}")
@@ -1230,5 +1253,4 @@ class PipelineOrchestrator:
             "task_count": len(deduplicated),
             "coverage_pct": report["coverage_pct"],
         })
-
-        sync_telemetry()
+        # infr-15c: the OTel telemetry-sync call was a no-op shim; call removed.

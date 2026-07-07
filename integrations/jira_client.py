@@ -16,7 +16,7 @@ from models.schemas import (
 )
 from audit.logger import AuditLogger
 from core.errors import classify_exception
-from pipeline.observability import logger, tracer, trace_span
+from pipeline.observability import logger, trace_span
 
 # Module-level sleep hook so tests can patch backoff to be instant
 # (monkeypatch integrations.jira_client._sleep). Production sleeps for real.
@@ -586,100 +586,96 @@ class JiraClient:
 
         fields = self._build_fields(task, issue_type)
 
-        with tracer.start_as_current_span(f"PUSH_{task.title[:30]}") as span:
-            span.set_attribute("task_id", str(task.id))
-            span.set_attribute("issue_type", issue_type)
-            if parent_key: span.set_attribute("parent_key", parent_key)
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.
+        # Unified 'parent' field for both Sub-tasks and Epics (Next-Gen & Modern Classic)
+        if parent_key:
+            fields["parent"] = {"key": parent_key}
 
-            # Unified 'parent' field for both Sub-tasks and Epics (Next-Gen & Modern Classic)
-            if parent_key:
-                fields["parent"] = {"key": parent_key}
+        try:
+            issue = _with_retry(
+                lambda: self.jira.create_issue(fields=fields),
+                description=f"create_issue({issue_type})",
+            )
+            logger.info(f"Created Jira {issue_type}: {issue.key}")
+            # Record the key on the task so a re-push of this in-memory
+            # batch skips it (idempotency, audit C-11).
+            task.jira_issue_key = issue.key
 
-            try:
-                issue = _with_retry(
-                    lambda: self.jira.create_issue(fields=fields),
-                    description=f"create_issue({issue_type})",
-                )
-                logger.info(f"Created Jira {issue_type}: {issue.key}")
-                # Record the key on the task so a re-push of this in-memory
-                # batch skips it (idempotency, audit C-11).
-                task.jira_issue_key = issue.key
+            self.audit.log(
+                run_id=self.run_id,
+                agent="JiraClient",
+                action="PUSHED",
+                task_id=str(task.id),
+                detail=f"Created {issue.key}: {task.title[:60]}",
+            )
+            return JiraPushResult(
+                task_id=task.id,
+                success=True,
+                jira_issue_key=issue.key,
+                jira_issue_url=f"{self.server}/browse/{issue.key}",
+            )
+        except Exception as e:
+            error_str = str(e)
+            logger.warning(f"Jira push failed: {error_str[:100]}")
 
+            # Attempt 2: parent caused a 400 — retry without it
+            if parent_key and ("400" in error_str or "parent" in error_str.lower()):
+                logger.info("Retrying without parent field (fallback to flat)")
                 self.audit.log(
                     run_id=self.run_id,
                     agent="JiraClient",
-                    action="PUSHED",
                     task_id=str(task.id),
-                    detail=f"Created {issue.key}: {task.title[:60]}",
+                    action="parent_fallback",
+                    detail=f"Parent linking failed ({error_str[:100]}), retrying flat"
                 )
-                return JiraPushResult(
-                    task_id=task.id,
-                    success=True,
-                    jira_issue_key=issue.key,
-                    jira_issue_url=f"{self.server}/browse/{issue.key}",
-                )
-            except Exception as e:
-                error_str = str(e)
-                logger.warning(f"Jira push failed: {error_str[:100]}")
-
-                # Attempt 2: parent caused a 400 — retry without it
-                if parent_key and ("400" in error_str or "parent" in error_str.lower()):
-                    logger.info("Retrying without parent field (fallback to flat)")
-                    self.audit.log(
-                        run_id=self.run_id,
-                        agent="JiraClient",
-                        task_id=str(task.id),
-                        action="parent_fallback",
-                        detail=f"Parent linking failed ({error_str[:100]}), retrying flat"
+                fields.pop("parent", None)
+                try:
+                    issue = _with_retry(
+                        lambda: self.jira.create_issue(fields=fields),
+                        description=f"create_issue({issue_type}, flat-fallback)",
                     )
-                    fields.pop("parent", None)
-                    try:
-                        issue = _with_retry(
-                            lambda: self.jira.create_issue(fields=fields),
-                            description=f"create_issue({issue_type}, flat-fallback)",
-                        )
-                        logger.success(f"Fallback created Jira {issue.key}")
-                        # Record the key so a re-push skips it (idempotency).
-                        task.jira_issue_key = issue.key
-                        # H-11: the parent link was requested but rejected, so the
-                        # child landed flat — that is a degraded hierarchy too.
-                        fallback_result = JiraPushResult(
-                            task_id=task.id,
-                            success=True,
-                            jira_issue_key=issue.key,
-                            jira_issue_url=f"{self.server}/browse/{issue.key}",
-                            warning="Created without parent (flat fallback)",
-                        )
-                        self._mark_hierarchy_degraded(
-                            fallback_result,
-                            task,
-                            f"Parent link to '{parent_key}' rejected; "
-                            f"task created flat (no parent)",
-                        )
-                        return fallback_result
-                    except Exception as e2:
-                        logger.error(f"Fallback failed too: {e2}")
-                        return JiraPushResult(
-                            task_id=task.id,
-                            success=False,
-                            error=str(e2),
-                            error_class=classify_exception(e2),
-                        )
+                    logger.success(f"Fallback created Jira {issue.key}")
+                    # Record the key so a re-push skips it (idempotency).
+                    task.jira_issue_key = issue.key
+                    # H-11: the parent link was requested but rejected, so the
+                    # child landed flat — that is a degraded hierarchy too.
+                    fallback_result = JiraPushResult(
+                        task_id=task.id,
+                        success=True,
+                        jira_issue_key=issue.key,
+                        jira_issue_url=f"{self.server}/browse/{issue.key}",
+                        warning="Created without parent (flat fallback)",
+                    )
+                    self._mark_hierarchy_degraded(
+                        fallback_result,
+                        task,
+                        f"Parent link to '{parent_key}' rejected; "
+                        f"task created flat (no parent)",
+                    )
+                    return fallback_result
+                except Exception as e2:
+                    logger.error(f"Fallback failed too: {e2}")
+                    return JiraPushResult(
+                        task_id=task.id,
+                        success=False,
+                        error=str(e2),
+                        error_class=classify_exception(e2),
+                    )
 
-                logger.error(f"Permanent push failure: {error_str}")
-                self.audit.log(
-                    run_id=self.run_id,
-                    agent="JiraClient",
-                    action="PUSH_FAILED",
-                    task_id=str(task.id),
-                    detail=error_str,
-                )
-                return JiraPushResult(
-                    task_id=task.id,
-                    success=False,
-                    error=error_str,
-                    error_class=classify_exception(e),
-                )
+            logger.error(f"Permanent push failure: {error_str}")
+            self.audit.log(
+                run_id=self.run_id,
+                agent="JiraClient",
+                action="PUSH_FAILED",
+                task_id=str(task.id),
+                detail=error_str,
+            )
+            return JiraPushResult(
+                task_id=task.id,
+                success=False,
+                error=error_str,
+                error_class=classify_exception(e),
+            )
 
     @trace_span("JIRA_CREATE_CONTAINER", agent="JiraClient")
     def _create_container(self, section_title: str, issue_type: str) -> str | None:

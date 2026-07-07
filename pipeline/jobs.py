@@ -23,7 +23,7 @@ logging framework.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from core.progress_port import ProgressStore
 from core.queue_port import JobQueue

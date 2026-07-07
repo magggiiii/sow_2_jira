@@ -1,39 +1,38 @@
 import json
+import logging
 import os
-import shutil
-import asyncio
-import threading
-import base64
 import secrets
+import shutil
+
+# Add project root to path for imports
+import sys
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
-from datetime import datetime, timezone
-import uuid
 
+import httpx
+from dotenv import load_dotenv
 from fastapi import (
-    FastAPI,
-    HTTPException,
-    UploadFile,
-    File,
     BackgroundTasks,
-    Depends,
-    Request,
     Cookie,
+    Depends,
+    FastAPI,
+    File,
     Header,
+    HTTPException,
+    Request,
     Response,
+    UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from dotenv import load_dotenv
-import logging
-import httpx
-import time
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-# Add project root to path for imports
-import sys
 UI_DIR = Path(__file__).parent
 sys.path.insert(0, str(UI_DIR.parent))
 
@@ -41,19 +40,35 @@ sys.path.insert(0, str(UI_DIR.parent))
 # Langfuse/Argus env vars at module-import time.
 load_dotenv(UI_DIR.parent / ".env")
 
-from models.schemas import RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus, JiraPushResult
-from core.errors import ErrorClass, classify_exception
-from core.domain.ids import make_run_id
-from core.guardrails import PushGate, PushBlocked
-from pipeline.orchestrator import PipelineOrchestrator
-from audit.logger import AuditLogger
-from config.settings import SettingsManager, PROVIDER_REGISTRY, build_litellm_model, resolve_provider_base, _ensure_docker_host
-from integrations.jira_client import JiraClient
-from jira import JIRA
+from jira import JIRA  # noqa: E402  (dotenv-ordering)
 
-from auth.deps import SESSION_COOKIE_NAME, current_user, get_session_store
-
-from pipeline.observability import trace_span, logger, SYNC_ENABLED
+from audit.logger import AuditLogger  # noqa: E402  (dotenv-ordering)
+from auth.deps import (  # noqa: E402  (dotenv-ordering)
+    SESSION_COOKIE_NAME,
+    current_user,
+    get_session_store,
+)
+from config.settings import (  # noqa: E402  (dotenv-ordering)
+    PROVIDER_REGISTRY,
+    SettingsManager,
+    _ensure_docker_host,
+    build_litellm_model,
+    resolve_provider_base,
+)
+from core.domain.ids import make_run_id  # noqa: E402  (dotenv-ordering)
+from core.errors import ErrorClass, classify_exception  # noqa: E402  (dotenv-ordering)
+from core.guardrails import PushBlocked, PushGate  # noqa: E402  (dotenv-ordering)
+from integrations.jira_client import JiraClient  # noqa: E402  (dotenv-ordering)
+from models.schemas import (  # noqa: E402  (dotenv-ordering)
+    JiraHierarchy,
+    JiraPushResult,
+    LLMMode,
+    ManagedTask,
+    RunConfig,
+    TaskStatus,
+)
+from pipeline.observability import SYNC_ENABLED, logger  # noqa: E402  (dotenv-ordering)
+from pipeline.orchestrator import PipelineOrchestrator  # noqa: E402  (dotenv-ordering)
 
 app = FastAPI(title="SOW to Jira Pipeline")
 
@@ -460,7 +475,7 @@ def get_sessions(user=Depends(get_current_user)):
                 try:
                     with open(meta_path, "r") as f:
                         sessions.append(json.load(f))
-                except:
+                except Exception:
                     pass
     # Sort by created_at descending
     sessions.sort(key=lambda x: x.get("created_at", ""), reverse=True)
@@ -542,7 +557,9 @@ def run_pipeline_task(req: ProcessRequest, run_id: str, owner_id: str = DEFAULT_
                 if len(status.logs) > 50:
                     status.logs.pop(0)
                 
-            orchestrator = PipelineOrchestrator(run_cfg, app_config, audit, status_callback=status_cb)
+            orchestrator = PipelineOrchestrator(
+                run_cfg, app_config, audit, status_callback=status_cb
+            )
             active_orchestrators[run_id] = orchestrator
             orchestrator.run()
             
@@ -652,7 +669,11 @@ def _extract_models_from_response(provider_id: str, data: dict) -> list[str]:
     if provider_id == "ollama":
         return [m.get("name") for m in data.get("models", []) if m.get("name")]
     if provider_id == "azure":
-        return [m.get("id") or m.get("model") for m in data.get("data", []) if m.get("id") or m.get("model")]
+        return [
+            m.get("id") or m.get("model")
+            for m in data.get("data", [])
+            if m.get("id") or m.get("model")
+        ]
     if provider_id in {"google"}:
         models = []
         for m in data.get("models", []):
@@ -802,8 +823,12 @@ def save_settings(
     prev_model = provider_settings.get("model")
     provider_settings["model"] = req.model or provider_settings.get("model", "")
     provider_settings["base_url"] = base_url
-    provider_settings["azure_deployment_name"] = req.azure_deployment_name or provider_settings.get("azure_deployment_name", "")
-    provider_settings["azure_api_version"] = req.azure_api_version or provider_settings.get("azure_api_version", "")
+    provider_settings["azure_deployment_name"] = (
+        req.azure_deployment_name or provider_settings.get("azure_deployment_name", "")
+    )
+    provider_settings["azure_api_version"] = (
+        req.azure_api_version or provider_settings.get("azure_api_version", "")
+    )
 
     if req.api_key and req.api_key != "***":
         provider_settings["api_key"] = settings_manager.encrypt_secret(req.api_key)
@@ -830,12 +855,19 @@ def save_settings(
     if base_url:
         os.environ["LITELLM_API_BASE"] = base_url
     if provider_settings.get("model"):
-        os.environ["LITELLM_MODEL"] = build_litellm_model(provider, provider_settings["model"], provider_settings["azure_deployment_name"])
+        os.environ["LITELLM_MODEL"] = build_litellm_model(
+            provider,
+            provider_settings["model"],
+            provider_settings["azure_deployment_name"],
+        )
 
     if prev_provider != provider:
         logger.info(f"LLM provider switched: {prev_provider or 'unset'} → {provider}")
     if prev_model != provider_settings.get("model"):
-        logger.info(f"LLM model switched ({provider}): {prev_model or 'unset'} → {provider_settings.get('model') or 'unset'}")
+        logger.info(
+            f"LLM model switched ({provider}): {prev_model or 'unset'} → "
+            f"{provider_settings.get('model') or 'unset'}"
+        )
     
     # Invalidate Cache on setting change
     MODEL_CACHE.clear()
@@ -1012,8 +1044,13 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
             data = load_data(session_id)
             run_config = data.get("config", {}) if isinstance(data.get("config"), dict) else {}
 
-            project_key = (req.jira_project_key if (req and req.jira_project_key)
-                           else os.environ.get("JIRA_PROJECT_KEY", run_config.get("jira_project_key", "PROJ")))
+            project_key = (
+                req.jira_project_key
+                if (req and req.jira_project_key)
+                else os.environ.get(
+                    "JIRA_PROJECT_KEY", run_config.get("jira_project_key", "PROJ")
+                )
+            )
 
             if run_config.get("jira_project_key") != project_key:
                 run_config["jira_project_key"] = project_key
@@ -1037,7 +1074,12 @@ def run_push_task(req: Optional[PushRequest], session_id: Optional[str], run_id:
                 return
 
             audit = AuditLogger()
-            jira = JiraClient(hierarchy, audit, run_config.get("run_id", session_id or "ui"), project_key=project_key)
+            jira = JiraClient(
+                hierarchy,
+                audit,
+                run_config.get("run_id", session_id or "ui"),
+                project_key=project_key,
+            )
 
             # STEP 5.3: gate approved tasks through PushGate before any Jira create —
             # skip already-pushed (idempotent), block flagged / DEGRADED-run tasks
@@ -1138,7 +1180,10 @@ def test_jira_connection(
     if not (server and email and token):
         return {
             "success": False,
-            "error": "Jira credentials are not configured (JIRA_SERVER / JIRA_EMAIL / JIRA_API_TOKEN).",
+            "error": (
+                "Jira credentials are not configured "
+                "(JIRA_SERVER / JIRA_EMAIL / JIRA_API_TOKEN)."
+            ),
             "error_class": ErrorClass.USER_FIXABLE.value,
         }
 

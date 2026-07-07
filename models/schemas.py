@@ -427,6 +427,19 @@ class RunConfig(BaseModel):
     # instead of the legacy linear run() body. Default off → unchanged behavior;
     # the two are proven equivalent offline (test_pipeline_runner_equivalence).
     use_pipeline_runner: bool = False
+    # WAVE-7 SC-ORCH: hard USD ceiling for one run — CostMeter aborts past it.
+    # None = no budget (the default); a positive float caps spend. The orchestrator
+    # reads this field to build the per-run cost kill-switch (pipeline/orchestrator.py).
+    max_run_cost: Optional[float] = None
+
+    @field_validator("max_run_cost")
+    @classmethod
+    def _max_run_cost_positive(cls, value: Optional[float]) -> Optional[float]:
+        # None stays allowed (no budget). A budget of <=0 is nonsensical — it
+        # would abort the run before any work — so REJECT rather than clamp.
+        if value is not None and value <= 0:
+            raise ValueError("RunConfig.max_run_cost must be > 0 when set")
+        return value
 
 
 # ─── Audit Log Entry ──────────────────────────────────────────────────────────

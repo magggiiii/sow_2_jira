@@ -15,8 +15,9 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # Make the ORM metadata importable when Alembic runs from the repo root.
 from pipeline.db import Base, normalize_sync_db_url

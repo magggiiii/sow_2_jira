@@ -18,10 +18,9 @@ tests/test_pipeline_runner_equivalence.py against the synthetic eval cassette.
 from __future__ import annotations
 
 from core.pipeline.context import PipelineContext
-from core.pipeline.stage import Stage
 from core.pipeline.registry import StageRegistry
 from core.pipeline.runner import PipelineRunner
-
+from core.pipeline.stage import Stage
 
 # ─── Fakes ──────────────────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@ seam stays honest about the contract it accepts.
 from typing import Union
 
 from core.ports import LLMProvider
-from models.schemas import RunConfig, LLMMode, JiraHierarchy
+from models.schemas import JiraHierarchy, LLMMode, RunConfig
 from pipeline.llm_client import LLMClient
 from pipeline.orchestrator import PipelineOrchestrator
 

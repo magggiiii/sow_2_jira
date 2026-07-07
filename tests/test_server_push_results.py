@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from models.schemas import JiraPushResult, ManagedTask, TaskFlag, TaskStatus
 from core.errors import ErrorClass
+from models.schemas import JiraPushResult, ManagedTask, TaskFlag, TaskStatus
 
 
 def _task(*flags: TaskFlag, key=None) -> ManagedTask:
@@ -67,7 +67,9 @@ def test_run_push_task_persists_mixed_push_results(monkeypatch):
             return out
 
     monkeypatch.setattr(srv, "JiraClient", FakeJira)
-    monkeypatch.setattr(srv, "AuditLogger", lambda *a, **k: type("A", (), {"log": lambda *a, **k: None})())
+    monkeypatch.setattr(
+        srv, "AuditLogger", lambda *a, **k: type("A", (), {"log": lambda *a, **k: None})()
+    )
 
     srv.run_push_task(srv.PushRequest(), session_id="s1", run_id="r1")
 

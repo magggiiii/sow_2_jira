@@ -19,7 +19,6 @@ import pytest
 
 from models.schemas import ManagedTask, RawTask, clamp_unit_interval
 
-
 # ─── The shared helper ────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize(
@@ -56,7 +55,10 @@ def test_managed_task_confidence_clamps_low():
 
 
 def test_managed_task_confidence_in_range_unchanged():
-    assert ManagedTask(title="t", short_description="d", confidence=0.42).confidence == pytest.approx(0.42)
+    assert (
+        ManagedTask(title="t", short_description="d", confidence=0.42).confidence
+        == pytest.approx(0.42)
+    )
 
 
 def test_managed_task_confidence_zero_still_valid():
@@ -74,13 +76,17 @@ def test_raw_task_confidence_clamps_low():
 
 
 def test_raw_task_confidence_in_range_unchanged():
-    assert RawTask(title="t", short_description="d", confidence=0.42).confidence == pytest.approx(0.42)
+    assert (
+        RawTask(title="t", short_description="d", confidence=0.42).confidence
+        == pytest.approx(0.42)
+    )
 
 
 # ─── agent response models ────────────────────────────────────────────────────
 
 def test_task_critique_confidence_clamps():
     from uuid import uuid4
+
     from pipeline.agents.critic import TaskCritique
 
     tid = uuid4()
@@ -94,7 +100,10 @@ def test_missed_item_confidence_clamps_instead_of_rejecting():
 
     assert MissedItem(description="x", confidence=1.5, reason="r").confidence == 1.0
     assert MissedItem(description="x", confidence=-0.3, reason="r").confidence == 0.0
-    assert MissedItem(description="x", confidence=0.42, reason="r").confidence == pytest.approx(0.42)
+    assert (
+        MissedItem(description="x", confidence=0.42, reason="r").confidence
+        == pytest.approx(0.42)
+    )
 
 
 def test_section_coverage_report_checker_confidence_clamps():
@@ -109,7 +118,9 @@ def test_section_coverage_report_checker_confidence_clamps():
 def test_classification_result_confidence_clamps_instead_of_rejecting():
     from pipeline.agents.classifier import ClassificationResult, SectionType
 
-    res = ClassificationResult(node_id="n1", type=SectionType.ACTIONABLE, confidence=1.5, reason="r")
+    res = ClassificationResult(
+        node_id="n1", type=SectionType.ACTIONABLE, confidence=1.5, reason="r",
+    )
     assert res.confidence == 1.0
     res2 = ClassificationResult(node_id="n1", type=SectionType.CONTEXT, confidence=-0.3, reason="r")
     assert res2.confidence == 0.0
@@ -125,7 +136,7 @@ def test_classification_result_confidence_clamps_instead_of_rejecting():
 # on Anthropic. The clamp tests above prove bounds are still enforced; these
 # assert the Instructor response models carry no number bounds in their schema.
 
-import json
+import json  # noqa: E402  (placed-after-explanatory-block)
 
 
 def _instructor_response_models():

@@ -1,7 +1,7 @@
 # audit/logger.py
 
-import sqlite3
 import datetime
+import sqlite3
 from pathlib import Path
 from typing import Optional
 

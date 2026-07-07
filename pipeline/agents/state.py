@@ -1,9 +1,10 @@
-from typing import Optional
 # pipeline/agents/state.py
 # This agent is RULE-BASED. No LLM calls. Pure logic.
 
-from uuid import uuid4
 from difflib import SequenceMatcher
+from uuid import uuid4
+
+from audit.logger import AuditLogger
 from models.schemas import (
     AcceptanceCriterion,
     ManagedTask,
@@ -15,8 +16,6 @@ from models.schemas import (
     normalize_acceptance_criteria,
     utcnow,
 )
-from audit.logger import AuditLogger
-
 
 TITLE_SIMILARITY_THRESHOLD = 0.75  # SequenceMatcher ratio to consider "continuation"
 
@@ -77,11 +76,13 @@ class TaskStateAgent:
 
         Logic:
         1. For each new_raw_task:
-           a. Check if it continues an open task (title similarity + open task has continues_to_next=True)
+           a. Check if it continues an open task (title similarity + open task
+              has continues_to_next=True)
            b. If yes → MERGE into open task (append descriptions, extend lists)
            c. If no → create new ManagedTask with status=OPEN
         2. For open tasks not continued this round AND continues_to_next=False → close them
-        3. For open tasks not continued this round AND continues_to_next=True → keep open (flagged INCOMPLETE)
+        3. For open tasks not continued this round AND continues_to_next=True → keep
+           open (flagged INCOMPLETE)
         """
         source_ref = SourceRef(
             node_id=node["node_id"],

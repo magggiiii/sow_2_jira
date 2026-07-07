@@ -75,8 +75,9 @@ def test_app_still_serves_when_otel_absent():
         for mod in list(sys.modules):
             if mod == "ui.server" or mod.startswith("ui.server."):
                 del sys.modules[mod]
-        import ui.server as srv
         from fastapi.testclient import TestClient
+
+        import ui.server as srv
 
         client = TestClient(srv.app)
         resp = client.get("/healthz")
@@ -99,4 +100,6 @@ def test_instrumentation_is_lazy_and_gated_in_source():
     src = inspect.getsource(srv)
     assert "SYNC_ENABLED" in src, "instrumentation should be gated on SYNC_ENABLED"
     assert "ImportError" in src, "instrumentation import should be ImportError-guarded"
-    assert "instrument_app" in src, "instrumentation should still call instrument_app when available"
+    assert (
+        "instrument_app" in src
+    ), "instrumentation should still call instrument_app when available"

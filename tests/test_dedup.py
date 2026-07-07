@@ -28,7 +28,6 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import numpy as np
-import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -41,7 +40,6 @@ from models.schemas import (
     TaskStatus,
 )
 from pipeline.agents.deduplication import DedupDecisionList, DeduplicationAgent
-
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 

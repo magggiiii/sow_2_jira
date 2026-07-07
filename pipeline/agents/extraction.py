@@ -1,13 +1,12 @@
 # pipeline/agents/extraction.py
 
-import json
 from pydantic import BaseModel, Field
 
-from models.schemas import RawTask, TaskFlag, normalize_acceptance_criteria
-from pipeline.llm_client import LLMClient
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from core.agent_spec import AgentSpec
+from models.schemas import RawTask, normalize_acceptance_criteria
+from pipeline.llm_client import LLMClient
 from prompts import registry
 
 
@@ -29,10 +28,12 @@ EXTRACTION_SYSTEM_PROMPT = registry.load("extraction.system.v1")
 EXTRACTION_PROMPT_TEMPLATE = registry.load("extraction.user.v1")
 
 HIERARCHY_CONTEXT = {
-    "flat": """═══ HIERARCHY CONTEXT ═══
-Target: FLAT (standalone Tasks, no parent).
-Extract medium-grained, self-contained tasks. Each task should make sense on its own without parent context.
-""",
+    "flat": (
+        "═══ HIERARCHY CONTEXT ═══\n"
+        "Target: FLAT (standalone Tasks, no parent).\n"
+        "Extract medium-grained, self-contained tasks. Each task should make "
+        "sense on its own without parent context.\n"
+    ),
     "epic_task": """═══ HIERARCHY CONTEXT ═══
 Target: EPIC → TASK hierarchy.
 This SOW section will become an Epic. Extract atomic Tasks that belong under it.
@@ -74,11 +75,18 @@ class TaskExtractionAgent:
         # it to derive an extraction StageHealth for the RunHealthReport.
         self.error_count = 0
 
-    def extract(self, node: dict, section_text: str, hierarchy: str = "epic_task", status_callback=None) -> list[RawTask]:
+    def extract(
+        self,
+        node: dict,
+        section_text: str,
+        hierarchy: str = "epic_task",
+        status_callback=None,
+    ) -> list[RawTask]:
         """
         Runs extraction on a single PageIndex node.
         Returns a list of RawTask objects.
-        hierarchy: one of 'flat', 'epic_task', 'story_subtask' — adjusts extraction granularity.
+        hierarchy: one of 'flat', 'epic_task', 'story_subtask' — adjusts extraction
+        granularity.
         Auto-adds LOW_CONFIDENCE flag to tasks below threshold.
         Returns empty list if section_text is too short (< 50 chars).
         """

@@ -4,8 +4,12 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Callable, Optional, TypeVar, Union
+from typing import Callable, Optional, TypeVar
+
 from jira import JIRA
+
+from audit.logger import AuditLogger
+from core.errors import classify_exception
 from models.schemas import (
     AcceptanceCriterion,
     AcceptanceCriterionType,
@@ -14,8 +18,6 @@ from models.schemas import (
     ManagedTask,
     TaskFlag,
 )
-from audit.logger import AuditLogger
-from core.errors import classify_exception
 from pipeline.observability import logger, trace_span
 
 # Module-level sleep hook so tests can patch backoff to be instant
@@ -326,7 +328,9 @@ class JiraClient:
         except Exception as e:
             logger.warning(f"Dependency link pass crashed: {e}")
 
-        logger.success(f"Push operation complete. {sum(1 for r in results if r.success)} succeeded.")
+        logger.success(
+            f"Push operation complete. {sum(1 for r in results if r.success)} succeeded."
+        )
         return results
 
     def _create_dependency_links(
@@ -379,7 +383,10 @@ class JiraClient:
                         agent="JiraClient",
                         action="DEP_UNRESOLVED",
                         task_id=str(task.id),
-                        detail=f"{source_key} depends on '{dep.target_ref}' but no matching task found",
+                        detail=(
+                            f"{source_key} depends on '{dep.target_ref}' "
+                            "but no matching task found"
+                        ),
                     )
                     continue
                 if target_key == source_key:

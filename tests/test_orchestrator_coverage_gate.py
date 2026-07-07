@@ -14,8 +14,6 @@ Two behavioral changes, pinned here without PageIndex / LLM / network:
 
 from __future__ import annotations
 
-from pipeline.orchestrator import PipelineOrchestrator
-from pipeline.agents.coverage_check import MissedItem, SectionCoverageReport
 from models.schemas import (
     JiraHierarchy,
     LLMMode,
@@ -24,7 +22,8 @@ from models.schemas import (
     SourceRef,
     TaskFlag,
 )
-
+from pipeline.agents.coverage_check import MissedItem, SectionCoverageReport
+from pipeline.orchestrator import PipelineOrchestrator
 
 # ─── fakes ────────────────────────────────────────────────────────────────────
 

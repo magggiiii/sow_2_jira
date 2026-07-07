@@ -22,7 +22,6 @@ from fastapi.testclient import TestClient
 
 import ui.server as srv
 
-
 _PDF_BYTES = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n"
 
 
@@ -103,7 +102,7 @@ def test_oversize_upload_rejected_413(upload_client, monkeypatch):
 
 def test_upload_hardening_active_in_hardened_mode(tmp_path, monkeypatch):
     """Upload hardening applies with auth ON too (not mode-gated)."""
-    from auth.deps import get_session_store, SESSION_COOKIE_NAME
+    from auth.deps import SESSION_COOKIE_NAME, get_session_store
     from auth.store import FakeSessionStore
 
     upload_dir = tmp_path / "uploads"

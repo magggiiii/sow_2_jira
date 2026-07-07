@@ -12,8 +12,8 @@
 # so it stays a dependency-light, reusable core.
 
 from core.pipeline.context import PipelineContext
-from core.pipeline.stage import Stage
 from core.pipeline.registry import StageRegistry
 from core.pipeline.runner import PipelineRunner
+from core.pipeline.stage import Stage
 
 __all__ = ["PipelineContext", "Stage", "StageRegistry", "PipelineRunner"]

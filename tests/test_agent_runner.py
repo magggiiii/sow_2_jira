@@ -32,7 +32,6 @@ from core.agent_spec import AgentSpec
 from core.ports import LLMProvider
 from core.results import StageResult, StageStatus
 
-
 # ─── Fake LLM provider ────────────────────────────────────────────────────────
 
 

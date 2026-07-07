@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
+from models.schemas import JiraHierarchy, LLMMode, RunConfig
 from pipeline.orchestrator import cap_nodes
-from models.schemas import RunConfig, LLMMode, JiraHierarchy
 
 
 def _nodes(n: int) -> list[dict]:

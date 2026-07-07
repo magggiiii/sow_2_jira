@@ -1,8 +1,9 @@
 # tests/test_routing.py
 
 import os
-import pytest
+
 from config.settings import _ensure_docker_host
+
 
 def test_ensure_docker_host_with_localhost():
     # Setup

@@ -4,7 +4,6 @@ The gate is the allowlist applied to Google-sign-in emails: only addresses in an
 allowed domain may proceed. Matching is case-insensitive.
 """
 
-import pytest
 
 from auth.domain_gate import allowed_domains_from_env, is_allowed_email
 

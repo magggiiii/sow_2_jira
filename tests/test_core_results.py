@@ -2,7 +2,6 @@
 
 from core.results import LLMResult, StageResult, StageStatus
 
-
 # ─── Classmethods set status correctly ────────────────────────────────────────
 
 def test_ok_sets_status_and_output():

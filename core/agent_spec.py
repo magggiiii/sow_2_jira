@@ -28,8 +28,7 @@ of pydantic is required here). It is purely additive and changes no behavior.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Union
-
+from typing import Any, Callable, Optional
 
 # A prompt builder is any callable that turns a payload into the final prompt
 # string. The payload is whatever the agent already passes around (a dict, a

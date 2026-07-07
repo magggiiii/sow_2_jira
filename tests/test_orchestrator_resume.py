@@ -12,14 +12,15 @@ current document triggers a fresh run.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-from pipeline.orchestrator import PipelineOrchestrator
-from pipeline.coverage import CoverageTracker
 from models.schemas import (
-    RunConfig, LLMMode, JiraHierarchy, ManagedTask, TaskStatus,
+    JiraHierarchy,
+    LLMMode,
+    ManagedTask,
+    RunConfig,
+    TaskStatus,
 )
-
+from pipeline.coverage import CoverageTracker
+from pipeline.orchestrator import PipelineOrchestrator
 
 # ─── Fakes ────────────────────────────────────────────────────────────────────
 

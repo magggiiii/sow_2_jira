@@ -16,27 +16,36 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from prompts import registry
-
-from pipeline.agents.extraction import (
-    TaskExtractionAgent, ExtractionResult,
-    EXTRACTION_SYSTEM_PROMPT, EXTRACTION_PROMPT_TEMPLATE,
-)
 from pipeline.agents.classifier import (
-    SectionClassifier, RawClassification,
-    CLASSIFIER_SYSTEM_PROMPT, CLASSIFIER_PROMPT_TEMPLATE,
+    CLASSIFIER_PROMPT_TEMPLATE,
+    CLASSIFIER_SYSTEM_PROMPT,
+    RawClassification,
+    SectionClassifier,
 )
-from pipeline.agents.deduplication import (
-    DeduplicationAgent, DedupDecisionList,
-    DEDUP_SYSTEM_PROMPT, DEDUP_PROMPT_TEMPLATE,
-)
-from pipeline.agents.critic import TaskCritic, CritiqueBatch, CRITIC_SYSTEM_PROMPT
 from pipeline.agents.coverage_check import (
-    CoverageChecker, CoverageAudit, COVERAGE_SYSTEM_PROMPT,
+    COVERAGE_SYSTEM_PROMPT,
+    CoverageAudit,
+    CoverageChecker,
+)
+from pipeline.agents.critic import CRITIC_SYSTEM_PROMPT, CritiqueBatch, TaskCritic
+from pipeline.agents.deduplication import (
+    DEDUP_PROMPT_TEMPLATE,
+    DEDUP_SYSTEM_PROMPT,
+    DedupDecisionList,
+    DeduplicationAgent,
+)
+from pipeline.agents.extraction import (
+    EXTRACTION_PROMPT_TEMPLATE,
+    EXTRACTION_SYSTEM_PROMPT,
+    ExtractionResult,
+    TaskExtractionAgent,
 )
 from pipeline.agents.gap_recovery import (
-    GapRecoveryAgent, GapRecoveryResult, GAP_SYSTEM_PROMPT,
+    GAP_SYSTEM_PROMPT,
+    GapRecoveryAgent,
+    GapRecoveryResult,
 )
+from prompts import registry
 
 
 def _audit():
@@ -56,8 +65,12 @@ def _agents():
 
 
 EXPECTED = {
-    "extraction": ("ExtractionAgent", EXTRACTION_SYSTEM_PROMPT, ExtractionResult, "extraction.system.v1"),
-    "classifier": ("SectionClassifier", CLASSIFIER_SYSTEM_PROMPT, RawClassification, "classifier.system.v1"),
+    "extraction": (
+        "ExtractionAgent", EXTRACTION_SYSTEM_PROMPT, ExtractionResult, "extraction.system.v1",
+    ),
+    "classifier": (
+        "SectionClassifier", CLASSIFIER_SYSTEM_PROMPT, RawClassification, "classifier.system.v1",
+    ),
     "dedup": ("DeduplicationAgent", DEDUP_SYSTEM_PROMPT, DedupDecisionList, "dedup.system.v1"),
     "critic": ("TaskCritic", CRITIC_SYSTEM_PROMPT, CritiqueBatch, "critic.system.v1"),
     "coverage": ("CoverageChecker", COVERAGE_SYSTEM_PROMPT, CoverageAudit, "coverage.system.v1"),

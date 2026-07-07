@@ -15,9 +15,6 @@ from __future__ import annotations
 import pathlib
 import sys
 from unittest.mock import MagicMock
-from uuid import uuid4
-
-import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -30,10 +27,8 @@ from models.schemas import (
     RawTask,
     SourceRef,
     TaskDependency,
-    TaskStatus,
     normalize_acceptance_criteria,
 )
-
 
 # ─── Dummy collaborators ─────────────────────────────────────────────────────
 
@@ -201,8 +196,8 @@ def _make_jira_client(node_index=None):
     Build a JiraClient instance without invoking JIRA() — we just need the
     methods. Patch the JIRA constructor.
     """
-    from unittest.mock import patch
     import os
+    from unittest.mock import patch
     os.environ.setdefault("JIRA_SERVER", "http://example")
     os.environ.setdefault("JIRA_EMAIL", "u@e")
     os.environ.setdefault("JIRA_API_TOKEN", "tok")
@@ -303,7 +298,9 @@ def test_dependency_link_resolution_creates_links_for_resolvable_refs():
 
 def test_dependency_link_resolution_skips_when_source_push_failed():
     client, mock_jira = _make_jira_client()
-    task_a = ManagedTask(title="Target", short_description="x", confidence=0.5, source_refs=[_source_ref()])
+    task_a = ManagedTask(
+        title="Target", short_description="x", confidence=0.5, source_refs=[_source_ref()],
+    )
     task_b = ManagedTask(
         title="Source",
         short_description="x",
@@ -324,7 +321,9 @@ def test_dependency_link_resolution_records_warning_on_link_failure():
     client, mock_jira = _make_jira_client()
     mock_jira.create_issue_link.side_effect = RuntimeError("403 forbidden")
 
-    task_a = ManagedTask(title="A", short_description="x", confidence=0.5, source_refs=[_source_ref()])
+    task_a = ManagedTask(
+        title="A", short_description="x", confidence=0.5, source_refs=[_source_ref()],
+    )
     task_b = ManagedTask(
         title="B",
         short_description="x",
@@ -345,7 +344,9 @@ def test_dependency_link_resolution_records_warning_on_link_failure():
 
 def test_dependency_link_resolution_maps_kind_to_link_type():
     client, mock_jira = _make_jira_client()
-    task_a = ManagedTask(title="A", short_description="x", confidence=0.5, source_refs=[_source_ref()])
+    task_a = ManagedTask(
+        title="A", short_description="x", confidence=0.5, source_refs=[_source_ref()],
+    )
     task_b = ManagedTask(
         title="B",
         short_description="x",

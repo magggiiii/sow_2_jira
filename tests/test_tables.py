@@ -140,10 +140,10 @@ def test_import_is_connection_free():
 
     make_engine is a factory; nothing at module scope should hold a live engine.
     """
-    import pipeline.db as db
-
     # No module-level Engine/AsyncEngine object should exist.
     from sqlalchemy.ext.asyncio import AsyncEngine
+
+    import pipeline.db as db
 
     engines = [
         name

@@ -19,11 +19,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from pipeline.features.coverage_filter import (
-    CoverageCorpusFilter,
-    corpus_text,
-    miss_text,
-)
 from models.schemas import (
     JiraHierarchy,
     LLMMode,
@@ -32,7 +27,11 @@ from models.schemas import (
     SourceRef,
     TaskFlag,
 )
-
+from pipeline.features.coverage_filter import (
+    CoverageCorpusFilter,
+    corpus_text,
+    miss_text,
+)
 
 # ─── deterministic fake embedder ──────────────────────────────────────────────
 
@@ -300,7 +299,8 @@ def test_run_coverage_verify_filters_then_gates_when_enabled(monkeypatch):
 
     result = orch._run_coverage_verify([task_a, task_b])
 
-    assert TaskFlag.INCOMPLETE not in task_a.flags        # n1 miss was a cross-section dup -> dropped
+    # n1 miss was a cross-section dup -> dropped
+    assert TaskFlag.INCOMPLETE not in task_a.flags
     assert TaskFlag.INCOMPLETE in task_b.flags            # n2 miss is genuinely uncovered
     assert result.flagged_task_count == 1
     assert fake.calls > 0                                  # the fake (not MiniLM) did the work
@@ -322,11 +322,13 @@ def test_run_coverage_verify_disabled_by_default_is_byte_identical():
 
 def test_coverage_embed_fn_prefers_override_and_skips_when_disabled():
     orch = _make_orch()
-    sentinel = lambda texts: np.zeros((len(texts), 2))
+
+    def sentinel(texts):
+        return np.zeros((len(texts), 2))
+
     orch.coverage_filter_embed_fn = sentinel
     assert orch._coverage_embed_fn() is sentinel          # override wins over the dedup embedder
     # And: a real dedup _get_embedder must NOT be called when the filter is disabled.
-    import pipeline.agents.deduplication as dedup_mod
 
     def _boom(self):
         raise AssertionError("MiniLM must not load when the corpus filter is disabled")

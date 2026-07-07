@@ -1,6 +1,5 @@
 # pipeline/coverage.py
 
-from models.schemas import ManagedTask
 
 
 class CoverageTracker:

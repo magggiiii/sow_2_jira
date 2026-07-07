@@ -36,7 +36,6 @@ from pipeline.agents.coverage_check import (
     SectionCoverageReport,
 )
 
-
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _node(node_id: str = "n1", title: str = "Reporting Module") -> dict:
@@ -51,7 +50,9 @@ def _node(node_id: str = "n1", title: str = "Reporting Module") -> dict:
     }
 
 
-def _managed_task(title: str = "Build report exporter", conditions: list[str] | None = None) -> ManagedTask:
+def _managed_task(
+    title: str = "Build report exporter", conditions: list[str] | None = None,
+) -> ManagedTask:
     acs = [AcceptanceCriterion(condition=c) for c in (conditions or [])]
     return ManagedTask(
         title=title,
@@ -61,7 +62,9 @@ def _managed_task(title: str = "Build report exporter", conditions: list[str] | 
     )
 
 
-def _make_checker(llm: MagicMock | None = None, audit: MagicMock | None = None, min_confidence: float = 0.6):
+def _make_checker(
+    llm: MagicMock | None = None, audit: MagicMock | None = None, min_confidence: float = 0.6,
+):
     return CoverageChecker(
         llm_client=llm or MagicMock(),
         audit_logger=audit or MagicMock(),

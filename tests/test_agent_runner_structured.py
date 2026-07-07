@@ -30,7 +30,6 @@ from pydantic import BaseModel
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import core.agent_runner as agent_runner_mod
-from core.agent_runner import AgentRunner, InstructorError
 
 # Import the real llm_client up-front so it is cached in sys.modules with the
 # real ``litellm`` BEFORE any test injects a fake ``litellm`` via monkeypatch.
@@ -38,7 +37,7 @@ from core.agent_runner import AgentRunner, InstructorError
 # helpers; if that module were first imported while a fake litellm is installed,
 # its top-level ``from litellm import RateLimitError`` would explode.
 import pipeline.llm_client  # noqa: E402,F401
-
+from core.agent_runner import AgentRunner, InstructorError
 
 # ─── Response model under test ────────────────────────────────────────────────
 

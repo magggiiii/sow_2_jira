@@ -29,11 +29,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from models.schemas import ManagedTask, SourceRef, TaskStatus
 from pipeline.agents.cross_run_index import (
-    CrossRunMatch,
     EMBED_DIM,
     ProjectEmbeddingIndex,
 )
-
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 

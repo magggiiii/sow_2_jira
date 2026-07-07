@@ -31,11 +31,9 @@ import uuid
 import pytest
 from cryptography.fernet import Fernet
 
+import scripts.migrate_fs_to_pg as migrator
 from config import crypto
 from models.schemas import ManagedTask, TaskStatus
-
-import scripts.migrate_fs_to_pg as migrator
-
 
 # ── crypto env (same mechanism as tests/test_crypto.py) ───────────────────────
 

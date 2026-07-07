@@ -23,8 +23,6 @@ import pathlib
 import sys
 from unittest.mock import MagicMock
 
-import pytest
-
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from core.agent_runner import InstructorError
@@ -37,12 +35,10 @@ from models.schemas import (
 )
 from pipeline.agents.critic import (
     CritiqueBatch,
-    CritiqueIssue,
     CritiqueReport,
     RawCritique,
     TaskCritic,
 )
-
 
 # ─── Fixtures / helpers ──────────────────────────────────────────────────────
 

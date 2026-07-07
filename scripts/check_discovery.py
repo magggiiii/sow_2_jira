@@ -1,9 +1,11 @@
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
-import time
-from ui.server import app, MODEL_CACHE, ModelDiscoveryRequest, get_provider_models
+import pytest
 from fastapi import HTTPException
+
+from ui.server import MODEL_CACHE, ModelDiscoveryRequest, get_provider_models
+
 
 @pytest.mark.asyncio
 async def test_get_provider_models_caching():
@@ -38,7 +40,7 @@ async def test_get_provider_models_caching():
         
         # Call with different key - should bypass cache
         req_new = ModelDiscoveryRequest(api_key="new-key", base_url="https://api.openai.com/v1")
-        result3 = await get_provider_models(provider_id, req_new)
+        await get_provider_models(provider_id, req_new)
         assert mock_get.call_count == 2
         
 @pytest.mark.asyncio

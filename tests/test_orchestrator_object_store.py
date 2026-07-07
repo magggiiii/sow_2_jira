@@ -22,17 +22,12 @@ from __future__ import annotations
 
 import builtins
 import json
-from types import SimpleNamespace
-from uuid import uuid4
-
-import pytest
 
 from core.ports import ObjectStore
 from integrations.object_store import LocalObjectStore
-from models.schemas import RunConfig, LLMMode, JiraHierarchy, ProviderConfig
+from models.schemas import JiraHierarchy, LLMMode, ProviderConfig, RunConfig
 from pipeline.coverage import CoverageTracker
 from pipeline.orchestrator import PipelineOrchestrator
-
 
 # ─── fakes ────────────────────────────────────────────────────────────────────
 

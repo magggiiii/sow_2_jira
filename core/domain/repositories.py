@@ -26,7 +26,6 @@ from uuid import UUID
 from models.schemas import ManagedTask
 from pipeline.db import Run, Task
 
-
 # ── Run <-> dict ──────────────────────────────────────────────────────────────
 
 # Scalar Run columns the repo persists/updates. ``id`` and ``user_id`` are set

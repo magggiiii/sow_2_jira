@@ -21,7 +21,11 @@ LEAK_CASES = [
     ("auth_header_bearer", "Authorization: Bearer eyJhbGLEAKtoken0000", "eyJhbGLEAKtoken0000"),
     ("bare_bearer", "Bearer eyJhbGLEAKtoken1111", "eyJhbGLEAKtoken1111"),
     ("basic_scheme", "Authorization: Basic dXNlcjpwYXNzd29yZExFQUs=", "dXNlcjpwYXNzd29yZExFQUs="),
-    ("high_entropy_blob", "aws AKIA1234567890ABCDEFghij0987654321XY done", "AKIA1234567890ABCDEFghij0987654321XY"),
+    (
+        "high_entropy_blob",
+        "aws AKIA1234567890ABCDEFghij0987654321XY done",
+        "AKIA1234567890ABCDEFghij0987654321XY",
+    ),
 ]
 
 PRESERVE_CASES = [

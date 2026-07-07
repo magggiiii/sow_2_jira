@@ -9,14 +9,14 @@ from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 
-from models.schemas import ManagedTask, TaskStatus, TaskFlag, DedupDecision, utcnow
-from pipeline.agents.state import _merge_acceptance_criteria, _merge_dependencies
-from pipeline.agents.cross_run_index import ProjectEmbeddingIndex
-from pipeline.llm_client import LLMClient
-from pipeline.observability import logger
 from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from core.agent_spec import AgentSpec
+from models.schemas import DedupDecision, ManagedTask, TaskFlag, TaskStatus, utcnow
+from pipeline.agents.cross_run_index import ProjectEmbeddingIndex
+from pipeline.agents.state import _merge_acceptance_criteria, _merge_dependencies
+from pipeline.llm_client import LLMClient
+from pipeline.observability import logger
 from prompts import registry
 
 DEDUP_SYSTEM_PROMPT = registry.load("dedup.system.v1")
@@ -486,7 +486,8 @@ class DeduplicationAgent:
                 survivor = task_map.get(decision.task_id_a)
                 absorbed = task_map.get(decision.task_id_b)
                 if survivor and absorbed:
-                    self._merge_tasks(survivor, absorbed)  # records absorbed in survivor.merged_from
+                    # records absorbed in survivor.merged_from
+                    self._merge_tasks(survivor, absorbed)
                     survivor.flags = _dedup_preserve_order(survivor.flags)
                     absorbed.status = TaskStatus.MERGED
                     drop_ids.add(decision.task_id_b)
@@ -495,7 +496,8 @@ class DeduplicationAgent:
                 survivor = task_map.get(decision.task_id_b)
                 absorbed = task_map.get(decision.task_id_a)
                 if survivor and absorbed:
-                    self._merge_tasks(survivor, absorbed)  # records absorbed in survivor.merged_from
+                    # records absorbed in survivor.merged_from
+                    self._merge_tasks(survivor, absorbed)
                     survivor.flags = _dedup_preserve_order(survivor.flags)
                     absorbed.status = TaskStatus.MERGED
                     drop_ids.add(decision.task_id_a)
@@ -548,7 +550,10 @@ class DeduplicationAgent:
             run_id=self.run_id,
             agent="DeduplicationAgent",
             action="DEDUP_COMPLETE",
-            detail=f"Started: {len(tasks)}, After dedup: {len(result)}, Removed: {len(tasks) - len(result)}",
+            detail=(
+                f"Started: {len(tasks)}, After dedup: {len(result)}, "
+                f"Removed: {len(tasks) - len(result)}"
+            ),
         )
         return result
 

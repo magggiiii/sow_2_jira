@@ -70,14 +70,16 @@ from models.schemas import (  # noqa: E402
     ProviderConfig,
     SourceRef,
 )
-from pipeline.agents.classifier import RawClassification, SectionClassifier  # noqa: E402
-from pipeline.agents.classifier import SectionType  # noqa: E402
+from pipeline.agents.classifier import (  # noqa: E402
+    RawClassification,
+    SectionClassifier,
+    SectionType,  # noqa: E402
+)
 from pipeline.agents.coverage_check import CoverageAudit, CoverageChecker  # noqa: E402
 from pipeline.agents.critic import CritiqueBatch, TaskCritic  # noqa: E402
 from pipeline.agents.deduplication import DedupDecisionList, DeduplicationAgent  # noqa: E402
 from pipeline.agents.extraction import ExtractionResult, TaskExtractionAgent  # noqa: E402
 from pipeline.agents.gap_recovery import GapRecoveryAgent, GapRecoveryResult  # noqa: E402
-
 
 # ─── Minimal, guard-clearing payloads ─────────────────────────────────────────
 
@@ -245,8 +247,9 @@ def case_deduplication(client, run_id, self_test, tmp):
         project_indices_dir=str(Path(tmp) / "project_indices"),
     )
     if self_test:
-        import numpy as np
         from types import SimpleNamespace
+
+        import numpy as np
         agent._get_embedder = lambda: SimpleNamespace(
             encode=lambda texts, normalize_embeddings=True: np.zeros(
                 (len(texts), 384), dtype=np.float32
@@ -327,18 +330,26 @@ def build_client(args, run_id: str):
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--self-test", action="store_true",
-                   help="Stub the Instructor boundary; verify wiring offline (no provider/network).")
+                   help="Stub the Instructor boundary; verify wiring offline "
+                        "(no provider/network).")
     p.add_argument("--mode", default="custom", choices=[m.value for m in LLMMode],
-                   help="LLMMode when no --model is given (resolved via settings/env). Default: custom.")
-    p.add_argument("--provider", default=None, help="Provider name (e.g. openrouter, openai, anthropic, ollama).")
-    p.add_argument("--model", default=None, help="Full litellm model string (e.g. 'openrouter/z-ai/glm-4.6').")
+                   help="LLMMode when no --model is given (resolved via settings/env). "
+                        "Default: custom.")
+    p.add_argument("--provider", default=None,
+                   help="Provider name (e.g. openrouter, openai, anthropic, ollama).")
+    p.add_argument("--model", default=None,
+                   help="Full litellm model string (e.g. 'openrouter/z-ai/glm-4.6').")
     p.add_argument("--api-key", default=None, help="Provider API key (or set S2J_SMOKE_API_KEY).")
     p.add_argument("--api-base", default=None, help="Provider API base URL (optional).")
-    p.add_argument("--record", default=None, help="Write validated agent outputs to this JSON (cassette seed).")
+    p.add_argument("--record", default=None,
+                   help="Write validated agent outputs to this JSON (cassette seed).")
     p.add_argument("--skip-dedup", action="store_true",
-                   help="Skip the dedup case (avoids loading the sentence-transformers embedder).")
+                   help="Skip the dedup case (avoids loading the "
+                        "sentence-transformers embedder).")
     p.add_argument("--only", default=None,
                    help="Comma-separated agent names to run (default: all). "
                         "e.g. --only classifier,extraction")
@@ -394,7 +405,9 @@ def main() -> int:
 
     if args.record:
         Path(args.record).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.record).write_text(json.dumps(recorded, indent=2, ensure_ascii=False), encoding="utf-8")
+        Path(args.record).write_text(
+            json.dumps(recorded, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         print(f"   recorded validated outputs → {args.record}")
 
     return 0 if n_ok == n_total else 1

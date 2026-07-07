@@ -50,7 +50,6 @@ from core.agent_spec import AgentSpec
 from core.ports import LLMProvider
 from core.results import StageResult
 
-
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -246,6 +245,7 @@ class AgentRunner:
         try:
             import instructor
             import litellm
+
             from pipeline.llm_client import (
                 compute_wait_seconds,
                 extract_retry_hint,

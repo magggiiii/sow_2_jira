@@ -23,7 +23,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.guardrails import BLOCKING_FLAGS, PushBlocked, PushDecision, PushGate, PushGateResult
+from core.guardrails import BLOCKING_FLAGS, PushBlocked, PushGate, PushGateResult
 from core.health import RunHealthReport, StageHealth
 from core.results import StageStatus
 from models.schemas import ManagedTask, TaskFlag, TaskStatus
@@ -37,7 +37,9 @@ def _task(*flags: TaskFlag, key=None, status=TaskStatus.APPROVED) -> ManagedTask
 
 
 def _degraded() -> RunHealthReport:
-    return RunHealthReport().add(StageHealth(name="dedup", status=StageStatus.DEGRADED, reason="0 merges"))
+    return RunHealthReport().add(
+        StageHealth(name="dedup", status=StageStatus.DEGRADED, reason="0 merges")
+    )
 
 
 # ─── happy path + return shape ────────────────────────────────────────────────
@@ -65,7 +67,12 @@ def test_blocking_flag_task_raises_without_override():
 
 @pytest.mark.parametrize(
     "flag",
-    [TaskFlag.INCOMPLETE, TaskFlag.LOW_CONFIDENCE, TaskFlag.AMBIGUOUS_SCOPE, TaskFlag.NO_ACCEPTANCE_CRITERIA],
+    [
+        TaskFlag.INCOMPLETE,
+        TaskFlag.LOW_CONFIDENCE,
+        TaskFlag.AMBIGUOUS_SCOPE,
+        TaskFlag.NO_ACCEPTANCE_CRITERIA,
+    ],
 )
 def test_each_blocking_flag_blocks(flag):
     with pytest.raises(PushBlocked):

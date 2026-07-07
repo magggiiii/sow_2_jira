@@ -4,11 +4,11 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, Field
 
+from audit.logger import AuditLogger
 from core.agent_runner import AgentRunner, InstructorError
 from core.agent_spec import AgentSpec
 from models.schemas import AcceptanceCriterion, RawTask, TaskDependency, TaskFlag
 from pipeline.llm_client import LLMClient
-from audit.logger import AuditLogger
 from prompts import registry
 
 

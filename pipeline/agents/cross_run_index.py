@@ -11,9 +11,9 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
-import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +22,6 @@ from pydantic import BaseModel
 from sklearn.neighbors import NearestNeighbors
 
 from models.schemas import ManagedTask
-
 
 INDEX_VERSION = 1
 EMBED_DIM = 384  # all-MiniLM-L6-v2
@@ -195,7 +194,8 @@ class ProjectEmbeddingIndex:
             return []
         if len(task_ids) != embeddings.shape[0]:
             raise ValueError(
-                f"task_ids length ({len(task_ids)}) must match embedding rows ({embeddings.shape[0]})"
+                f"task_ids length ({len(task_ids)}) must match "
+                f"embedding rows ({embeddings.shape[0]})"
             )
 
         existing_emb, existing_ids, existing_runs, existing_keys, existing_titles = self._load()

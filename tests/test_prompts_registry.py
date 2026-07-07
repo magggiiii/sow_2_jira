@@ -25,7 +25,6 @@ import pytest
 
 from prompts import registry
 
-
 # Frozen sha256 of each prompt, captured from the inline constants at move time.
 FROZEN = {
     "extraction.system.v1": "54a105b249f3054cd5b923b43fa9bd3f5da0e5ed4a59451a9177a81b8dbc9bb7",
@@ -51,11 +50,11 @@ def _agent_constant(key: str) -> str:
     """The current module-level constant for ``key`` (post-move this is the
     registry-sourced value; the test still asserts its bytes independently)."""
     from pipeline.agents import (
-        extraction,
         classifier,
-        deduplication,
-        critic,
         coverage_check,
+        critic,
+        deduplication,
+        extraction,
         gap_recovery,
     )
 

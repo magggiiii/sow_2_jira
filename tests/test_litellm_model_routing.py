@@ -54,7 +54,10 @@ def test_together_also_prefixed():
 
 def test_native_providers_unchanged():
     """Non-aggregator providers keep their existing behaviour."""
-    assert build_litellm_model("anthropic", "claude-3-5-sonnet", None) == "anthropic/claude-3-5-sonnet"
+    assert (
+        build_litellm_model("anthropic", "claude-3-5-sonnet", None)
+        == "anthropic/claude-3-5-sonnet"
+    )
     assert build_litellm_model("openai", "gpt-4o", None) == "openai/gpt-4o"
     assert build_litellm_model("google", "gemini-1.5-pro", None) == "gemini/gemini-1.5-pro"
     assert build_litellm_model("ollama", "qwen2.5:7b", None) == "ollama/qwen2.5:7b"

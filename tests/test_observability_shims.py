@@ -13,10 +13,8 @@ Gates covered:
   E. Public surface importable + F821 clean (pyflakes or ast/compile).
 """
 
-import os
-import re
-import sys
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -250,18 +248,18 @@ def test_redaction_still_catches_kv_forms():
 def test_gate_e_public_surface_importable():
     """All required public symbols must import (with OTel installed)."""
     from pipeline.observability import (  # noqa: F401
-        logger,
-        tracer,
-        trace_span,
-        sync_telemetry,
-        run_logger,
-        add_run_file_logger,
-        llm_token_usage,
-        llm_operation_duration,
-        SYNC_ENABLED,
-        init_argus,
         DEFAULT_JOB_NAME,
+        SYNC_ENABLED,
+        add_run_file_logger,
+        init_argus,
+        llm_operation_duration,
+        llm_token_usage,
+        logger,
         meter,
+        run_logger,
+        sync_telemetry,
+        trace_span,
+        tracer,
     )
     assert callable(trace_span)
     assert callable(sync_telemetry)
@@ -277,7 +275,9 @@ def test_gate_e_argus_symbols_removed():
     helpers must be GONE from the observability surface entirely."""
     import pipeline.observability as o
     assert not hasattr(o, "INSTANCE_ID"), "INSTANCE_ID must be removed"
-    assert not hasattr(o, "resolve_collector_endpoint"), "resolve_collector_endpoint must be removed"
+    assert not hasattr(
+        o, "resolve_collector_endpoint"
+    ), "resolve_collector_endpoint must be removed"
     assert not hasattr(o, "_use_local_collector"), "_use_local_collector must be removed"
     assert not hasattr(o, "LANGFUSE_BASE_URL"), "LANGFUSE_BASE_URL must be removed"
 

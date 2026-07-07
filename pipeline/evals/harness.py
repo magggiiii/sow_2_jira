@@ -33,9 +33,13 @@ from unittest import mock
 
 from core.agent_runner import AgentRunner
 from models.schemas import (
-    DedupDecision, JiraHierarchy, LLMMode, ProviderConfig, RunConfig,
+    DedupDecision,
+    JiraHierarchy,
+    LLMMode,
+    ProviderConfig,
+    RunConfig,
 )
-from pipeline.agents.deduplication import DeduplicationAgent, DedupDecisionList
+from pipeline.agents.deduplication import DedupDecisionList, DeduplicationAgent
 from pipeline.evals.bands import EvalBands, EvalResult, compute_bands
 from pipeline.evals.cassette import Cassette
 from pipeline.evals.replay import NoOpProvider, make_structured_replay
@@ -64,7 +68,9 @@ def golden_tree(n: int = 4) -> list[dict]:
     ]
 
 
-def build_cassette(nodes, *, extraction_conf: float = 0.8, coverage_missed: bool = False) -> Cassette:
+def build_cassette(
+    nodes, *, extraction_conf: float = 0.8, coverage_missed: bool = False
+) -> Cassette:
     """Generate a per-node cassette covering every (agent, node_id) call the run
     makes. ``extraction_conf=0.0`` reproduces the critic conf=0.00 flag-bomb;
     ``coverage_missed=True`` reproduces the 100%-INCOMPLETE bomb."""
@@ -159,8 +165,16 @@ class EvalHarness:
         os.environ["SOW_NODE_CONCURRENCY"] = "1"
         try:
             with ExitStack() as stack:
-                stack.enter_context(mock.patch.object(AgentRunner, "complete_structured", replay_or_dedup))
-                stack.enter_context(mock.patch.object(DeduplicationAgent, "_find_candidate_pairs", fake_find_pairs))
+                stack.enter_context(
+                    mock.patch.object(
+                        AgentRunner, "complete_structured", replay_or_dedup
+                    )
+                )
+                stack.enter_context(
+                    mock.patch.object(
+                        DeduplicationAgent, "_find_candidate_pairs", fake_find_pairs
+                    )
+                )
                 orch = PipelineOrchestrator(
                     config=config, app_config=app_config, audit=_NoOpAudit(), llm=NoOpProvider(),
                 )

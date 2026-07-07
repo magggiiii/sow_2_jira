@@ -13,11 +13,8 @@ from __future__ import annotations
 
 import pathlib
 import sys
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
-
-import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -28,7 +25,6 @@ from models.schemas import (
     SourceRef,
     TaskStatus,
 )
-
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 

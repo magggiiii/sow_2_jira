@@ -1,7 +1,9 @@
 
 import os
-from jira import JIRA
+
 from dotenv import load_dotenv
+from jira import JIRA
+
 
 def test_api():
     load_dotenv()

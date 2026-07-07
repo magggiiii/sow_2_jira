@@ -20,7 +20,7 @@ def test_make_run_id_is_unique():
 
 def test_run_config_run_id_is_full_uuid():
     """RunConfig().run_id must be a full 36-char UUID (no more uuid4()[:8])."""
-    from models.schemas import RunConfig, LLMMode, JiraHierarchy
+    from models.schemas import JiraHierarchy, LLMMode, RunConfig
 
     cfg = RunConfig(
         sow_pdf_path="x.pdf",
@@ -33,7 +33,7 @@ def test_run_config_run_id_is_full_uuid():
 
 
 def test_two_runs_get_distinct_ids():
-    from models.schemas import RunConfig, LLMMode, JiraHierarchy
+    from models.schemas import JiraHierarchy, LLMMode, RunConfig
 
     def _cfg():
         return RunConfig(

@@ -78,7 +78,7 @@ def _make_fernet(raw: str, *, var_name: str) -> Fernet:
     """Build a Fernet, translating malformed keys into a non-leaking error."""
     try:
         return Fernet(raw.encode("utf-8") if isinstance(raw, str) else raw)
-    except (ValueError, TypeError) as exc:  # malformed base64 / wrong length
+    except (ValueError, TypeError):  # malformed base64 / wrong length
         # Deliberately does NOT include the key value or the underlying message
         # (which can echo the key) — only the variable name and the requirement.
         raise CryptoConfigError(

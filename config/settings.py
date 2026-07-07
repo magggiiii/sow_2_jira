@@ -1,9 +1,10 @@
+import base64
 import json
 import os
-import base64
 import secrets
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
+
 from cryptography.fernet import Fernet
 
 PROVIDER_REGISTRY = {
@@ -48,7 +49,9 @@ def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
         
     return url
 
-def build_litellm_model(provider: str, model: Optional[str], azure_deployment: Optional[str]) -> str:
+def build_litellm_model(
+    provider: str, model: Optional[str], azure_deployment: Optional[str]
+) -> str:
     if not model:
         model = ""
 

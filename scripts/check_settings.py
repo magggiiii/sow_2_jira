@@ -1,8 +1,8 @@
+
 import pytest
-import json
-import os
-from pathlib import Path
+
 from config.settings import SettingsManager, build_litellm_model
+
 
 def test_corrupted_settings_throws_error(tmp_path):
     # Setup corrupted settings.json
@@ -21,7 +21,10 @@ def test_build_litellm_model():
     assert build_litellm_model("openai", "gpt-4o", None) == "openai/gpt-4o"
     assert build_litellm_model("anthropic", "claude-3", None) == "anthropic/claude-3"
     assert build_litellm_model("azure", "my-deployment", None) == "azure/my-deployment"
-    assert build_litellm_model("azure", "unused-model", "actual-deployment") == "azure/actual-deployment"
+    assert (
+        build_litellm_model("azure", "unused-model", "actual-deployment")
+        == "azure/actual-deployment"
+    )
     # Test model with slash
     assert build_litellm_model("openai", "custom/model", None) == "custom/model"
 

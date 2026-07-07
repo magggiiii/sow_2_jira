@@ -14,10 +14,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from uuid import uuid4
 
-from pipeline.orchestrator import PipelineOrchestrator
+from models.schemas import JiraHierarchy, LLMMode, RunConfig
 from pipeline.coverage import CoverageTracker
-from models.schemas import RunConfig, LLMMode, JiraHierarchy
-
+from pipeline.orchestrator import PipelineOrchestrator
 
 # ─── Fakes ────────────────────────────────────────────────────────────────────
 

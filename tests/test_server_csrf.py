@@ -14,9 +14,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+import ui.server as srv
 from auth.deps import SESSION_COOKIE_NAME, get_session_store
 from auth.store import FakeSessionStore
-import ui.server as srv
 
 
 @pytest.fixture

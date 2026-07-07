@@ -12,7 +12,6 @@ from cryptography.fernet import Fernet
 
 from config import crypto
 
-
 _KEY_ENV_VARS = ("APP_ENC_KEY", "SOW_FERNET_KEY", "APP_ENC_KEY_OLD")
 
 
@@ -30,7 +29,9 @@ def _set_keys(monkeypatch, *, primary=None, old=None, alias=None):
     for var in _KEY_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     if primary is not None:
-        monkeypatch.setenv("APP_ENC_KEY", primary.decode() if isinstance(primary, bytes) else primary)
+        monkeypatch.setenv(
+            "APP_ENC_KEY", primary.decode() if isinstance(primary, bytes) else primary,
+        )
     if alias is not None:
         monkeypatch.setenv("SOW_FERNET_KEY", alias.decode() if isinstance(alias, bytes) else alias)
     if old is not None:

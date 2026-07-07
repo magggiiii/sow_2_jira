@@ -2,46 +2,47 @@
 
 import concurrent.futures
 import json
-from pathlib import Path
-from rich.progress import Progress, SpinnerColumn, TextColumn
 import time
-from typing import Optional, TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+
+from rich.progress import Progress, SpinnerColumn, TextColumn
 
 if TYPE_CHECKING:
     from core.ports import LLMProvider, ObjectStore, RunRepository, TaskRepository
 
-from models.schemas import (
-    RunConfig, ManagedTask, TaskStatus, SourceRef, JiraHierarchy, current_provider_config
-)
-from pipeline.indexer import DocumentIndexer
-from pipeline.coverage import CoverageTracker
-from pipeline.llm_client import LLMClient
-from pipeline.llm_router import configure_litellm_for_mode
-from pipeline.agents.extraction import TaskExtractionAgent
-from pipeline.agents.state import TaskStateAgent
-from pipeline.agents.deduplication import DeduplicationAgent
-from pipeline.agents.gap_recovery import GapRecoveryAgent
-from pipeline.agents.classifier import SectionClassifier
-from pipeline.agents.critic import TaskCritic
-from pipeline.agents.coverage_check import CoverageChecker
-from audit.logger import AuditLogger
-from core.health import RunHealthReport, build_health_report
-from core.guardrails import CoverageGate
-from core.pipeline import PipelineContext, PipelineRunner
-from pipeline.observability import logger, trace_span
-from pipeline.telemetry import TelemetryEmitter
 import os
 import threading
 
-
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, MofNCompleteColumn
+from rich.progress import BarColumn, MofNCompleteColumn, TimeElapsedColumn
+
+from audit.logger import AuditLogger
+from core.guardrails import CoverageGate
+from core.health import RunHealthReport, build_health_report
+from core.pipeline import PipelineContext, PipelineRunner
+from models.schemas import ManagedTask, RunConfig, current_provider_config
+from pipeline.agents.classifier import SectionClassifier
+from pipeline.agents.coverage_check import CoverageChecker
+from pipeline.agents.critic import TaskCritic
+from pipeline.agents.deduplication import DeduplicationAgent
+from pipeline.agents.extraction import TaskExtractionAgent
+from pipeline.agents.gap_recovery import GapRecoveryAgent
+from pipeline.agents.state import TaskStateAgent
+from pipeline.coverage import CoverageTracker
+from pipeline.indexer import DocumentIndexer
+from pipeline.llm_client import LLMClient
+from pipeline.llm_router import configure_litellm_for_mode
+from pipeline.observability import logger, trace_span
+from pipeline.telemetry import TelemetryEmitter
 
 console = Console()
 
 
-def cap_nodes(nodes: list[dict], max_nodes: int, strategy: str = "degraded") -> tuple[list[dict], bool, str]:
+def cap_nodes(
+    nodes: list[dict], max_nodes: int, strategy: str = "degraded"
+) -> tuple[list[dict], bool, str]:
     """
     Apply the ``max_nodes`` Denial-of-Wallet cap to the node list.
 
@@ -113,7 +114,19 @@ class _CancelSignal:
 
 class PipelineOrchestrator:
 
-    def __init__(self, config: RunConfig, app_config: dict, audit: AuditLogger, status_callback=None, stop_event=None, llm: "LLMProvider | None" = None, cancel_check=None, object_store: "ObjectStore | None" = None, run_repo: "Optional[RunRepository]" = None, task_repo: "Optional[TaskRepository]" = None):
+    def __init__(
+        self,
+        config: RunConfig,
+        app_config: dict,
+        audit: AuditLogger,
+        status_callback=None,
+        stop_event=None,
+        llm: "LLMProvider | None" = None,
+        cancel_check=None,
+        object_store: "ObjectStore | None" = None,
+        run_repo: "Optional[RunRepository]" = None,
+        task_repo: "Optional[TaskRepository]" = None,
+    ):
         self.config = config
         self.app_config = app_config
         self.audit = audit
@@ -276,14 +289,23 @@ class PipelineOrchestrator:
 
     def _print_run_summary(self):
         """Prints a high-fidelity summary of the run configuration."""
+        pc = self.config.provider_config
+        provider_name = pc.provider if pc else "default"
+        model_name = pc.model if pc else "default"
         summary_text = (
             f"[bold cyan]Run ID:[/] {self.config.run_id}\n"
             f"[bold cyan]LLM Mode:[/] {self.config.llm_mode.value}\n"
-            f"[bold cyan]Provider:[/] {self.config.provider_config.provider if self.config.provider_config else 'default'}\n"
-            f"[bold cyan]Model:[/] {self.config.provider_config.model if self.config.provider_config else 'default'}\n"
+            f"[bold cyan]Provider:[/] {provider_name}\n"
+            f"[bold cyan]Model:[/] {model_name}\n"
             f"[bold cyan]Jira Hierarchy:[/] {self.config.jira_hierarchy.value}"
         )
-        console.print(Panel(summary_text, title="[bold green]═══ SOW-to-Jira Pipeline ═══", border_style="green"))
+        console.print(
+            Panel(
+                summary_text,
+                title="[bold green]═══ SOW-to-Jira Pipeline ═══",
+                border_style="green",
+            )
+        )
 
     def _cancelled(self) -> bool:
         """C2: consult the cancellation seam (defaults to the local stop_event).
@@ -390,7 +412,12 @@ class PipelineOrchestrator:
             # 2.3-d: pass the cancel-aware signal so an injected cancel_check
             # (e.g. a durable-worker probe) makes the indexer bail, not only the
             # local stop_event.
-            nodes = self.indexer.build_tree(pdf_path, status_callback=self.status_callback, stop_event=self._cancel_signal(), run_id=self.config.run_id)
+            nodes = self.indexer.build_tree(
+                pdf_path,
+                status_callback=self.status_callback,
+                stop_event=self._cancel_signal(),
+                run_id=self.config.run_id,
+            )
 
         # Cache for future skip-indexing runs
         if hasattr(self.indexer, "last_tree") and self.indexer.last_tree:
@@ -618,11 +645,10 @@ class PipelineOrchestrator:
         total = max(total_nodes, 1)
         current_node_progress = 0.40 + (0.40 * (node_index / total))
         node_title = node.get("title", f"Node {node_index}")
-        status_cb = (
-            lambda msg: self._update_status(
+        def status_cb(msg):
+            return self._update_status(
                 3, f"Processing: {node_title[:30]}... ({msg})", current_node_progress
             )
-        )
         raw_tasks = self._extract_node(node, node_index, total_nodes, status_callback=status_cb)
         if raw_tasks is None:
             return None
@@ -674,7 +700,9 @@ class PipelineOrchestrator:
         except (ValueError, OSError):
             return None  # path is outside the store base → legacy direct I/O
 
-    def _write_extraction_checkpoint(self, nodes, last_index, all_closed_tasks, open_tasks, coverage) -> None:
+    def _write_extraction_checkpoint(
+        self, nodes, last_index, all_closed_tasks, open_tasks, coverage
+    ) -> None:
         """
         Persist resume state after node ``last_index`` through the object store
         (1.6b). Holds the node-id list (for node-set validation on resume), the
@@ -779,7 +807,9 @@ class PipelineOrchestrator:
         )
         return start_index, all_closed, open_tasks
 
-    def _extract_all(self, nodes, coverage, *, start_index=0, all_closed_tasks=None, open_tasks=None):
+    def _extract_all(
+        self, nodes, coverage, *, start_index=0, all_closed_tasks=None, open_tasks=None
+    ):
         """
         Run extraction over all nodes with per-node error isolation, returning
         ``(all_closed_tasks, open_tasks, cancelled)``.
@@ -822,7 +852,10 @@ class PipelineOrchestrator:
                         return all_closed_tasks, open_tasks, True
 
                     node_title = node.get('title', f"Node {i}")
-                    progress.update(task_bar, description=f"[cyan]Node: [bold]{node_title[:30]}...[/]")
+                    progress.update(
+                        task_bar,
+                        description=f"[cyan]Node: [bold]{node_title[:30]}...[/]",
+                    )
                     self._update_status(3, f"Processing: {node_title[:50]}", current_node_progress)
 
                     try:
@@ -836,7 +869,9 @@ class PipelineOrchestrator:
                         self._record_node_failure(node, i, e)
                     # C1: checkpoint after each node (incl. gated/failed) so a
                     # resume skips it. Best-effort; never aborts the run.
-                    self._write_extraction_checkpoint(nodes, i, all_closed_tasks, open_tasks, coverage)
+                    self._write_extraction_checkpoint(
+                        nodes, i, all_closed_tasks, open_tasks, coverage
+                    )
                     progress.advance(task_bar)
 
                 return all_closed_tasks, open_tasks, False
@@ -1080,7 +1115,10 @@ class PipelineOrchestrator:
         deduplicated = ctx.deduplicated
         # ── Step 5b: Gap Recovery ─────────────────────────────────────────────
         report = coverage.coverage_report()
-        logger.info(f"Coverage: {report['coverage_pct']}% ({report['covered_nodes']}/{report['total_nodes']} nodes)")
+        logger.info(
+            f"Coverage: {report['coverage_pct']}% "
+            f"({report['covered_nodes']}/{report['total_nodes']} nodes)"
+        )
 
         if report["gap_nodes"] > 0:
             # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped.

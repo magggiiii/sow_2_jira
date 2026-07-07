@@ -156,8 +156,8 @@ def test_orchestrator_has_default_health_report_attribute():
     """The orchestrator exposes an (empty) health_report before run() executes."""
     from unittest.mock import MagicMock
 
+    from models.schemas import JiraHierarchy, LLMMode, RunConfig
     from pipeline.orchestrator import PipelineOrchestrator
-    from models.schemas import RunConfig, LLMMode, JiraHierarchy
 
     config = RunConfig(
         run_id="health-test-run",

@@ -31,7 +31,11 @@ class NoOpProvider:
     def __init__(self, model: str = "replay/none"):
         self.model = model
         # Some code paths read provider_config.model as a fallback.
-        self.provider_config = type("PC", (), {"model": model, "api_key": "", "api_base": "", "provider": "replay"})()
+        self.provider_config = type(
+            "PC",
+            (),
+            {"model": model, "api_key": "", "api_base": "", "provider": "replay"},
+        )()
 
     def complete(
         self,

@@ -23,13 +23,11 @@ from core.ports import (
     AuditSink,
     CredentialRepository,
     EmbeddingIndex,
-    JiraGateway,
     LLMProvider,
     ObjectStore,
     RunRepository,
     TaskRepository,
 )
-
 
 # ─── (a) In-memory fakes + runtime isinstance ─────────────────────────────────
 
@@ -120,7 +118,9 @@ def test_real_llmclient_class_structurally_matches_llmprovider():
     # Spot-check that the public parameter names the core relies on exist on
     # the real methods (sanity that the protocol mirrors reality).
     complete_params = set(inspect.signature(LLMClient.complete).parameters)
-    assert {"prompt", "system", "temperature", "max_tokens", "agent_name", "node_id"} <= complete_params
+    assert {
+        "prompt", "system", "temperature", "max_tokens", "agent_name", "node_id",
+    } <= complete_params
 
     complete_json_params = set(inspect.signature(LLMClient.complete_json).parameters)
     assert {"prompt", "system", "agent_name", "node_id", "max_tokens"} <= complete_json_params

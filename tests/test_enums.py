@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from models.schemas import _NormalizedStrEnum, DedupDecision, DedupDecisionType
+from models.schemas import DedupDecision, DedupDecisionType, _NormalizedStrEnum
 
 
 class _Sample(_NormalizedStrEnum):

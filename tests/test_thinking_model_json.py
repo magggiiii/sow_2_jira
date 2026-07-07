@@ -9,14 +9,16 @@ Gemini "thinking mode", o1-style). Two real shapes seen in the wild:
 Both must round-trip cleanly.
 """
 
-import json
 from unittest.mock import MagicMock
 
 from pageindex.utils import extract_json
 
 
 def test_pageindex_extract_json_strips_full_think_block():
-    raw = '<think>The TOC is on page 4 based on...</think>\n[{"structure": "1", "title": "Executive Summary"}]'
+    raw = (
+        '<think>The TOC is on page 4 based on...</think>\n'
+        '[{"structure": "1", "title": "Executive Summary"}]'
+    )
     assert extract_json(raw) == [{"structure": "1", "title": "Executive Summary"}]
 
 
@@ -45,7 +47,6 @@ def test_pageindex_extract_json_no_thinking_unchanged():
 def test_complete_json_strips_think_block():
     """LLMClient.complete_json runs the same scrub on remote agent calls."""
     from pipeline.llm_client import LLMClient
-    from models.schemas import LLMMode
 
     audit = MagicMock()
     audit.log = MagicMock()

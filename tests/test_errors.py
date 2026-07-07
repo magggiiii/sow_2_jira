@@ -125,7 +125,10 @@ def test_status_in_message_is_extracted_only_when_anchored():
     # A genuine HTTP status expressed only in the message (no status_code attr)
     # is still recognized when it's unambiguously a status.
     assert classify_exception(RuntimeError("Request failed: HTTP 503")) is ErrorClass.TRANSIENT
-    assert classify_exception(RuntimeError("server returned status code 429")) is ErrorClass.TRANSIENT
+    assert (
+        classify_exception(RuntimeError("server returned status code 429"))
+        is ErrorClass.TRANSIENT
+    )
 
 
 def test_real_status_code_attribute_still_transient():

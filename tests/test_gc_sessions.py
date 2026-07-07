@@ -20,9 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 from integrations.object_store import LocalObjectStore, key_for
 from pipeline.db import Base, Run, User
-
 from scripts.gc_sessions import gc_expired
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

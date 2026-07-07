@@ -21,7 +21,6 @@ from __future__ import annotations
 from core.guardrails import CoverageGate
 from models.schemas import ManagedTask, SourceRef, TaskFlag
 
-
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
 

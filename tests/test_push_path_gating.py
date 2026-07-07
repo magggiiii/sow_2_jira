@@ -100,10 +100,15 @@ def test_run_push_task_only_pushes_cleared_tasks(monkeypatch):
 
         def push_tasks(self, tasks):
             received["tasks"] = list(tasks)
-            return [JiraPushResult(task_id=t.id, success=True, jira_issue_key="PROJ-1") for t in tasks]
+            return [
+                JiraPushResult(task_id=t.id, success=True, jira_issue_key="PROJ-1")
+                for t in tasks
+            ]
 
     monkeypatch.setattr(srv, "JiraClient", FakeJira)
-    monkeypatch.setattr(srv, "AuditLogger", lambda *a, **k: type("A", (), {"log": lambda *a, **k: None})())
+    monkeypatch.setattr(
+        srv, "AuditLogger", lambda *a, **k: type("A", (), {"log": lambda *a, **k: None})()
+    )
 
     srv.run_push_task(srv.PushRequest(), session_id="s1", run_id="r1")
 
@@ -134,10 +139,15 @@ def test_run_push_task_override_pushes_flagged(monkeypatch):
 
         def push_tasks(self, tasks):
             received["tasks"] = list(tasks)
-            return [JiraPushResult(task_id=t.id, success=True, jira_issue_key="PROJ-9") for t in tasks]
+            return [
+                JiraPushResult(task_id=t.id, success=True, jira_issue_key="PROJ-9")
+                for t in tasks
+            ]
 
     monkeypatch.setattr(srv, "JiraClient", FakeJira)
-    monkeypatch.setattr(srv, "AuditLogger", lambda *a, **k: type("A", (), {"log": lambda *a, **k: None})())
+    monkeypatch.setattr(
+        srv, "AuditLogger", lambda *a, **k: type("A", (), {"log": lambda *a, **k: None})()
+    )
 
     srv.run_push_task(srv.PushRequest(override=True), session_id="s2", run_id="r2")
 

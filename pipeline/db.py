@@ -33,7 +33,6 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     SmallInteger,
-    String,
     Text,
     UniqueConstraint,
     func,
@@ -47,8 +46,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import DateTime, Float, JSON
-
+from sqlalchemy.types import JSON, DateTime, Float
 
 # ── SQLite compatibility shims (sqlite-only; Postgres DDL untouched) ──────────
 #

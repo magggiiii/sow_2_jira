@@ -37,7 +37,6 @@ from integrations.repositories import (
 from models.schemas import ManagedTask, TaskStatus
 from pipeline.db import Base, User, UserCredential
 
-
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
 

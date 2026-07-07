@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import pytest
 
+from models.schemas import JiraHierarchy, LLMMode, RunConfig
 from pipeline.orchestrator import PipelineOrchestrator
-from models.schemas import RunConfig, LLMMode, JiraHierarchy
-
 
 # ─── Fakes (mirror the existing orchestrator tests) ────────────────────────────
 

@@ -9,13 +9,12 @@ orchestrator_factory — no litellm, no PipelineOrchestrator, no network.
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pipeline.jobs as jobs
-from pipeline.jobs import JobPayload, enqueue_run, run_pipeline_job
-from integrations.queue.fake import FakeQueue
 from integrations.progress.fake import FakeProgressStore
+from integrations.queue.fake import FakeQueue
+from pipeline.jobs import JobPayload, enqueue_run, run_pipeline_job
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PY = str(REPO_ROOT / "venv" / "bin" / "python")
@@ -133,7 +132,8 @@ def test_run_pipeline_job_records_progress_transitions_without_litellm():
         "    def run(self):\n"
         "        return {'ok': True}\n"
         "payload = JobPayload(run_id='sub-run', kind='extraction', sow_pdf_path='/tmp/x.pdf')\n"
-        "run_pipeline_job(payload, progress=FakeProgressStore(), orchestrator_factory=lambda rc: _Stub(rc))\n"
+        "run_pipeline_job(payload, progress=FakeProgressStore(), "
+        "orchestrator_factory=lambda rc: _Stub(rc))\n"
         "assert 'litellm' not in sys.modules, sorted(m for m in sys.modules if 'litellm' in m)\n"
     )
 
@@ -179,7 +179,7 @@ def test_jobs_module_imports_clean_offline():
 def test_runkind_enum_and_runconfig_still_construct():
     # Gate 6: RunKind exists, imports alongside RunConfig, and an existing-style
     # RunConfig(...) call still constructs unchanged (RunKind is additive only).
-    from models.schemas import RunConfig, RunKind, LLMMode, JiraHierarchy
+    from models.schemas import JiraHierarchy, LLMMode, RunConfig, RunKind
 
     assert RunKind.EXTRACTION.value == "extraction"
     assert RunKind.PUSH.value == "push"

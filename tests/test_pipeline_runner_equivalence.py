@@ -25,7 +25,7 @@ from unittest import mock
 
 from core.agent_runner import AgentRunner
 from models.schemas import DedupDecision, JiraHierarchy, LLMMode, ProviderConfig, RunConfig
-from pipeline.agents.deduplication import DeduplicationAgent, DedupDecisionList
+from pipeline.agents.deduplication import DedupDecisionList, DeduplicationAgent
 from pipeline.evals.harness import build_cassette, golden_tree
 from pipeline.evals.replay import NoOpProvider, make_structured_replay
 
@@ -83,8 +83,14 @@ def _run_driver(run_id: str, driver) -> dict:
     try:
         from pipeline.orchestrator import PipelineOrchestrator
         with ExitStack() as stack:
-            stack.enter_context(mock.patch.object(AgentRunner, "complete_structured", replay_or_dedup))
-            stack.enter_context(mock.patch.object(DeduplicationAgent, "_find_candidate_pairs", fake_find_pairs))
+            stack.enter_context(
+                mock.patch.object(AgentRunner, "complete_structured", replay_or_dedup)
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    DeduplicationAgent, "_find_candidate_pairs", fake_find_pairs
+                )
+            )
             orch = PipelineOrchestrator(
                 config=config, app_config=app_config, audit=_NoOpAudit(), llm=NoOpProvider(),
             )

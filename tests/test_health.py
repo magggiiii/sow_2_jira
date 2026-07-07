@@ -3,7 +3,6 @@
 from core.health import RunHealthReport, StageHealth
 from core.results import StageStatus
 
-
 # ─── overall_status reflects worst stage ──────────────────────────────────────
 
 def test_all_ok_is_overall_ok():
@@ -138,7 +137,9 @@ def test_to_dict_shape_and_values():
     report = RunHealthReport(
         stages=[
             StageHealth(name="index", status=StageStatus.OK, cost_usd=0.01),
-            StageHealth(name="dedup", status=StageStatus.DEGRADED, reason="fallback", cost_usd=0.02),
+            StageHealth(
+                name="dedup", status=StageStatus.DEGRADED, reason="fallback", cost_usd=0.02,
+            ),
         ]
     )
     d = report.to_dict()

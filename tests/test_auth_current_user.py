@@ -7,7 +7,6 @@ end-to-end via ``TestClient``, with no real OIDC/token exchange.
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 

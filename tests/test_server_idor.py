@@ -21,10 +21,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+import ui.server as srv
 from auth.deps import SESSION_COOKIE_NAME, get_session_store
 from auth.store import FakeSessionStore
-import ui.server as srv
-
 
 # ─── shared in-memory harness ────────────────────────────────────────────────
 
@@ -247,7 +246,6 @@ def test_other_user_cancel_404(auth_on):
 
 
 def test_other_user_delete_session_404(auth_on, tmp_path, monkeypatch):
-    h = auth_on["harness"]
     # delete_session removes a real on-disk dir; create one under a tmp data root
     # and point the server's Path lookups at it via cwd so nothing real is touched.
     monkeypatch.chdir(tmp_path)

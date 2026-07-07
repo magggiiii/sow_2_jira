@@ -7,15 +7,15 @@ verification, and recursive node splitting.
 """
 
 import sys
-import json
 from pathlib import Path
+
 from pipeline.observability import logger
 
 # Ensure pageindex is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pageindex.page_index import page_index_main
-from pageindex.utils import ConfigLoader, structure_to_list, add_node_text
+from pageindex.utils import ConfigLoader, structure_to_list
 
 
 class DocumentIndexer:
@@ -37,7 +37,13 @@ class DocumentIndexer:
         self.last_result = None
         self.node_index_map: dict[str, dict] = {}
 
-    def build_tree(self, pdf_path: str, status_callback=None, stop_event=None, run_id: str = "none") -> list[dict]:
+    def build_tree(
+        self,
+        pdf_path: str,
+        status_callback=None,
+        stop_event=None,
+        run_id: str = "none",
+    ) -> list[dict]:
         """
         Run PageIndex on the PDF file.
         Returns a flat list of nodes for the extraction pipeline.
@@ -55,8 +61,12 @@ class DocumentIndexer:
             default_path=str(Path(__file__).parent.parent / "pageindex" / "config.yaml")
         ).load({
             "model": self.model,
-            "max_page_num_each_node": self.config["pipeline"].get("pageindex_max_pages_per_node", 10),
-            "max_token_num_each_node": self.config["pipeline"].get("pageindex_max_tokens_per_node", 20000),
+            "max_page_num_each_node": self.config["pipeline"].get(
+                "pageindex_max_pages_per_node", 10
+            ),
+            "max_token_num_each_node": self.config["pipeline"].get(
+                "pageindex_max_tokens_per_node", 20000
+            ),
             "if_add_node_id": "yes",
             "if_add_node_summary": "yes",
             "if_add_node_text": "yes",
@@ -71,7 +81,9 @@ class DocumentIndexer:
             else:
                 _report(msg, log_to_terminal=log_it)
 
-        result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id)
+        result = page_index_main(
+            pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id
+        )
         
         if stop_event and stop_event.is_set():
             _report("PageIndex: Extraction aborted by user", 0.30)

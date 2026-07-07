@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 
 from core.results import StageStatus
 
-
 # Severity ordering for picking the worst stage status.
 # Higher number == worse. SKIPPED is the least severe and is treated as OK for
 # the overall verdict (unless every stage was skipped, handled in code below).

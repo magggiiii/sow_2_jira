@@ -26,8 +26,7 @@ branch on the boolean and surface a human-readable reason.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, NamedTuple, Sequence
-from typing import Literal
+from typing import Any, Iterable, Literal, Mapping, NamedTuple, Sequence
 
 
 def _read(obj: Any, key: str, default: Any = None) -> Any:
@@ -396,7 +395,9 @@ class PushGate:
 
             names = self._blocking_names(_read(task, "flags", []))
             if degraded or names:
-                parts = (["DEGRADED run"] if degraded else []) + ([",".join(names)] if names else [])
+                parts = (["DEGRADED run"] if degraded else []) + (
+                    [",".join(names)] if names else []
+                )
                 reason = "; ".join(parts)
                 if override:
                     decision = PushDecision(task_id, "push", f"override ({reason})")

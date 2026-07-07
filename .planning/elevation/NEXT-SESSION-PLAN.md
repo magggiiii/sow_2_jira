@@ -155,3 +155,70 @@ R3 → R4 (final gates + walled-transform authoring + full verify):
 ### Conflict / LOCKED
 - Hot file: `pipeline/observability.py` = single agent. `pipeline/llm_client.py` LOCKED-adjacent — scope to ONLY `INSTANCE_ID`. **LOCKED (never touch):** `BIFROST_*`, `bifrost.admin.yaml` routing, `llm_router`/`configure_litellm_for_mode`, `data/.keyfile`, `os.environ` credential writes, `OLLAMA_*` / STEP 5.1.
 - **WALLED:** live Langfuse-cloud trace verification; live installer run; actual git-history rewrite + force-push (disruptive; explicit go-ahead only); token rotation (human/backend).
+
+---
+
+## 9. WAVE 7 — offline completion / pre-provisioning (planned 2026-07-07; §8 Argus DONE+pushed; tracker reconciled)
+
+**Status:** §8 (Argus decommission) is DONE + pushed (head `72a5304`, both remotes). All 9 wave bars in `UPGRADES.html` were reconciled against code (9-track audit). This §9 is the **next session's** offline max-parallel wave — finish everything offline-buildable so the only remaining work is genuinely service-walled (Postgres/Redis/Render/OAuth/live-LLM).
+
+**Planner:** 11-agent read-only workflow (6 scopers → assemble → 3 default-reject skeptics → adjudicate), confidence **HIGH**. **Method:** disjoint-file streams · per-phase **TDD → adversarial-review (3 skeptics + adjudication) → explicit-path commit** — but **UPGRADES.html + `graphify update .` run ONCE at the R3 integration gate** (streams are small).
+
+### Streams (disjoint file scopes)
+| Stream | Verdict | Files | Eff |
+|---|---|---|---|
+| **SC-DEPS** (infr-3, RENDER-BLOCKER) | include-with-care | `requirements.in`✚ · `requirements.txt` (regen, PIN-TO-INSTALLED) · `pageindex/utils.py` (PyPDF2→pypdf: :8 + 6 PdfReader sites + :830-831 branch; **NOT :31 CHATGPT alias**) · `Makefile` (:64-65 lock target) · `tests/test_deps_pypdf_parity.py`✚ | M |
+| **SC-SCHEMA** (doma-5/12/10) | include | `models/schemas.py` (SourceRef :289 RAISING validators ONLY — not `Field(ge=)`) · `models/intelligence_schemas.py`✚ (8 moved schemas) · agents/{coverage_check,critic,classifier}.py + evals/judges.py (re-export) · `models/eval_schemas.py` (GoldenTicket AC :13 retype) · 3 new tests | M |
+| **SC-ORCH + infr-15c** (orch-3, costmeter, de-OTel cleanup) | include-with-care | `pipeline/orchestrator.py` **[HOT]** · `pipeline/agents/deduplication.py` (add `dedup_against`; :364 untouched) · `core/cost_meter.py`✚ · `integrations/jira_client.py` · `pipeline/llm_client.py` · 2 new tests | M |
+| **SC-DEPLOY** (infr-5, mode-12) | include | `render.yaml` (3→4 service) · `pipeline/telemetry.py` (:10 denylist→allowlist) · 2 new tests | M |
+| **SC-TESTS** (test-17) | include | `tests/test_audit_logger.py`✚ (zero prod change) | S |
+
+### Rounds
+- **R1 — 5 file-disjoint agents** (each full TDD→3-skeptic→explicit-path commit): A=SC-DEPS · B=SC-DEPLOY · C=SC-TESTS · **D=SC-SCHEMA (SOLE R1 owner of `models/schemas.py`)** · **E=SC-ORCH FUSED WITH infr-15c** (SOLE owner of `orchestrator.py`+`deduplication.py`+`cost_meter.py`+`jira_client.py`+`llm_client.py`; reads `RunConfig.max_run_cost` via `getattr(config,'max_run_cost',None)`, DEFERS the schemas.py field to R2).
+- **R2 — SCHEMA-MERGE (1 agent, after D):** append `RunConfig.max_run_cost` + `>0` validator to `models/schemas.py` (single additive writer this round).
+- **R3 — INTEGRATION gate (1 agent, once):** full `pytest` ∥ `make verify` ∥ `ruff check .`; confirm PyPDF2→pypdf doesn't break the 2 `pageindex.utils` consumers, centralization + span-deletion + new-field coexist, legacy checkpoints load. THEN `UPGRADES.html` + `graphify update .` ONCE.
+
+### Conflict map / LOCKED
+- HOT single-owner: `pipeline/orchestrator.py` = agent E only (orch-3 dedup swap :1085-1086 + CostMeter gate at existing `_cancelled()` checkpoints :798/:824/:853 + infr-15c delete `sync_telemetry()` :919/:1234 + unwrap 7 spans).
+- MERGE-GATED additive: `models/schemas.py` — D writes SourceRef validators (:289) in R1; F appends RunConfig.max_run_cost in R2. One writer per round.
+- `pipeline/llm_client.py` = agent E: infr-15c collapses the :461 span plumbing ONLY. **PRESERVE :424 `if SYNC_ENABLED: litellm.success_callback=['opentelemetry']`** (behavior, not a span) + credential reads.
+- **LOCKED untouched:** `llm_router`/`configure_litellm_for_mode`; `BIFROST_*`/`bifrost.admin.yaml`/`infra/admin`; `data/.keyfile`; `os.environ` JIRA_*/LITELLM_* writes (STEP 2.4); `OLLAMA_*`/STEP 5.1; `observability.py` shim DEFINITIONS (infr-15c deletes CALL SITES only); `pageindex/utils.py:31` CHATGPT→OPENAI alias.
+
+### Per-phase verification (each review MUST see)
+- **SC-DEPS:** `pip install pypdf` FIRST; RED = utils.py still `import PyPDF2`; GREEN = 4 util fns parse a synthesized in-memory pypdf PDF · zero unpinned lines in requirements.txt · fresh-venv resolves · suite green · ruff clean.
+- **SC-SCHEMA:** RED = `SourceRef(page_start=2,page_end=1)` / `SourceRef(depth=-1)` don't raise + `from models.intelligence_schemas import …` ModuleNotFound + GoldenTicket AC still `list[str]`; GREEN = validators raise · centralized import works (all old sites unbroken) · GoldenTicket AC = `list[AcceptanceCriterion]` + subset contract test.
+- **SC-ORCH:** BLOCKING PRE = cost-gate token source DECIDED (recommended: run-scoped `(prompt,completion)` accumulator threaded from llm_client, NOT a mid-run `audit.db` read); `dedup_against` dedups only recovered vs survivors; CostMeter uses `litellm.cost_per_token` (NEVER `completion_cost`); `RunCostExceeded` aborts via the existing `_cancelled()` return.
+- **SC-DEPLOY:** RED = denylist passes `api_key` + render.yaml is 3-service; GREEN = ALLOWED_KEYS superset of the ~20 live emit keys (incl. `cost_usd`) + 4-service blueprint (worker/cron/envVarGroups/preDeployCommand; **cron → existing `scripts/gc_sessions.py`**) validates offline.
+- **SC-TESTS:** RED = file absent; GREEN = 6 gates (db+`audit_log` table, PRAGMA 9 cols, NOT NULLs, defaults, tz-aware UTC, ORDER BY id). Exclude the run_id back-compat cases (owned by `test_audit_logger_run_id.py`).
+- **infr-15c:** RED = grep finds the call sites; GREEN = grep clean + suite green + observability shims still import.
+
+### Walled / excluded (NOT this wave)
+- `pipeline/worker.py` (arq WorkerSettings) — needs arq+redis+live Redis.
+- Real Render deploy / `render blueprint launch` — paid workspace.
+- Per-user cost AGGREGATION/persistence — deferred (the fields exist at `core/results.py:44,70`, read at `agent_runner.py:513-515`, but Wave 7 does NOT populate them; CostMeter only gates in-run).
+- STEP 2.4/2.2 per-user credential injection — EXCLUDED (`os.environ` credential writes = LOCKED).
+- Faithful 103-node cassette (live gemini), real Postgres/R2 audit asserts (INET/JSONB), browser smoke, live Langfuse trace.
+
+### OPEN DECISIONS (resolve at session start)
+1. **Lockfile tool** — recommend **uv** (0.10.9, already installed; hash-locking; single fast binary) over pip-tools.
+2. **infr-15c go-ahead (LOCKED-adjacent)** — confirm deleting the 9 no-op `tracer.start_as_current_span` sites + 2 `sync_telemetry()` calls across orchestrator/jira_client/llm_client, with `observability.py` shim DEFINITIONS preserved and `llm_client.py:424` callback wiring untouched. If declined, drop infr-15c; the rest of Wave 7 is unaffected.
+3. **Cost-gate token source** — recommend a run-scoped `(prompt_tokens, completion_tokens)` accumulator threaded from `llm_client` (`complete()` returns a bare str; the audit log has only TOTAL tokens). Confirm the accumulator approach before SC-ORCH's RED.
+
+### Ground-truth corrections folded in (from the planner)
+- `eval_schemas` is at `models/eval_schemas.py` (NOT `pipeline/evals/eval_schemas.py`).
+- cron entrypoint `scripts/gc_sessions.py` ALREADY EXISTS → cron references real code; only the worker is walled.
+- `LLMResult.usd_cost` (core/results.py:70) + `StageResult.cost_usd` (:44) EXIST but are UNPOPULATED — Wave 7 does not populate them (deferred).
+
+### Text DAG
+```
+R1 (5 file-disjoint agents, parallel, each: TDD → 3-skeptic review → explicit-path commit)
+  [A] SC-DEPS       pip install pypdf → requirements.in(seed=pip freeze) → requirements.txt(uv compile, pin-to-installed) → pageindex/utils.py → Makefile → parity test
+  [B] SC-DEPLOY     render.yaml(4-svc; cron→gc_sessions.py) + telemetry.py(allowlist +cost_usd) → 2 tests
+  [C] SC-TESTS      tests/test_audit_logger.py (zero prod change)
+  [D] SC-SCHEMA     schemas.py(SourceRef validators ONLY) + intelligence_schemas.py✚ + re-exports + eval_schemas retype → 3 tests   [SOLE R1 owner schemas.py]
+  [E] SC-ORCH+15c   orchestrator.py[HOT] (dedup :1085 + cost gate :798/:824/:853 + del sync_telemetry :919/:1234 + unwrap 7 spans) + deduplication.dedup_against + core/cost_meter.py✚ + jira_client + llm_client(:461 span only) → 2 tests
+        │
+R2  SCHEMA-MERGE   append RunConfig.max_run_cost + >0 validator to schemas.py (single writer)
+        │
+R3  INTEGRATION    pytest ∥ make verify ∥ ruff  →  UPGRADES.html + graphify update .  (ONCE)
+```

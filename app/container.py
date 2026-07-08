@@ -28,12 +28,48 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from integrations.object_store import LocalObjectStore
+from integrations.queue.fake import FakeQueue
 from models.schemas import JiraHierarchy, LLMMode
 
 if TYPE_CHECKING:  # imported lazily at runtime to keep import graph minimal
     from audit.logger import AuditLogger
+    from config.settings import Settings
     from integrations.jira_client import JiraClient
     from pipeline.llm_client import LLMClient
+
+
+# ─── Settings-driven adapter selection (ENV-CONFIG.md) ────────────────────────
+#
+# Only the composition root branches on ``Settings``. The LOCAL branches return
+# the offline adapters that already exist; the PRODUCTION branches lazy-import
+# the cloud adapters (S3 / arq) so importing this module never drags in boto3 or
+# arq, and the local/test path never needs them.
+
+
+def select_object_store(settings: "Settings", base_dir: str = "data") -> Any:
+    """Return the ObjectStore adapter for ``settings`` (local FS vs S3)."""
+    if settings.is_production:
+        # Lazy: only production pulls boto3.
+        from integrations.object_store import S3ObjectStore
+
+        return S3ObjectStore(
+            endpoint=settings.s3_endpoint,
+            access_key=settings.s3_access_key,
+            secret=settings.s3_secret,
+            region=settings.s3_region,
+            bucket=settings.s3_bucket,
+        )
+    return LocalObjectStore(base_dir=base_dir)
+
+
+def select_queue(settings: Optional["Settings"]) -> Any:
+    """Return the JobQueue adapter for ``settings`` (in-process vs arq/Redis)."""
+    if settings is not None and settings.use_redis_queue:
+        # Lazy: only the Redis path pulls arq.
+        from integrations.queue.arq_queue import ArqQueue
+
+        return ArqQueue(settings.redis_url)
+    return FakeQueue()
 
 
 # The hardened, path-traversal-safe ``LocalObjectStore`` lives in
@@ -61,6 +97,7 @@ class Container:
     audit: Any
     jira: Callable[..., Any]
     object_store: Any
+    queue: Any = None
 
 
 def build_container(
@@ -72,6 +109,8 @@ def build_container(
     audit: Optional["AuditLogger"] = None,
     llm: Optional["LLMClient"] = None,
     object_store: Optional[Any] = None,
+    queue: Optional[Any] = None,
+    settings: Optional["Settings"] = None,
 ) -> Container:
     """
     Build a wired :class:`Container`.
@@ -113,9 +152,16 @@ def build_container(
             stop_event=stop_event,
         )
 
-    # ── Object store (local filesystem default) ──────────────────────────────
+    # ── Object store: settings-selected (local FS vs S3), else local default ──
     if object_store is None:
-        object_store = LocalObjectStore(base_dir=object_store_base_dir)
+        if settings is not None:
+            object_store = select_object_store(settings, base_dir=object_store_base_dir)
+        else:
+            object_store = LocalObjectStore(base_dir=object_store_base_dir)
+
+    # ── Job queue: settings-selected (in-process vs arq/Redis) ────────────────
+    if queue is None:
+        queue = select_queue(settings)
 
     # ── Jira gateway factory (per-push creds/context) ────────────────────────
     def jira_factory(
@@ -139,4 +185,5 @@ def build_container(
         audit=audit,
         jira=jira_factory,
         object_store=object_store,
+        queue=queue,
     )

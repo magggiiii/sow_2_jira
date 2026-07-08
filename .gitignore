@@ -4,6 +4,8 @@ venv/
 
 # Secrets
 .env
+.env.local
+.env.*.local
 .github_token
 
 # Runtime data & logs

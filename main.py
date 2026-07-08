@@ -1,21 +1,23 @@
 # main.py
 
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
-from pipeline.observability import logger
 from rich.console import Console
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Confirm, Prompt
+
+from pipeline.observability import logger
 
 # Load environment FIRST
 load_dotenv()
 
-from models.schemas import RunConfig, LLMMode, JiraHierarchy
-from pipeline.orchestrator import PipelineOrchestrator
-from audit.logger import AuditLogger
+from audit.logger import AuditLogger  # noqa: E402  post-dotenv
+from models.schemas import JiraHierarchy, LLMMode, RunConfig  # noqa: E402  post-dotenv
+from pipeline.orchestrator import PipelineOrchestrator  # noqa: E402  post-dotenv
 
 console = Console()
 
@@ -74,7 +76,11 @@ def startup_wizard() -> RunConfig:
     logger.info("  2 → Epic > Task — SOW sections become Epics, items become Tasks")
     logger.info("  3 → Story > Sub-task — SOW sections become Stories, items become Sub-tasks")
     hier_choice = Prompt.ask("Choose", choices=["1", "2", "3"], default="1")
-    hierarchy_map = {"1": JiraHierarchy.FLAT, "2": JiraHierarchy.EPIC_TASK, "3": JiraHierarchy.STORY_SUBTASK}
+    hierarchy_map = {
+        "1": JiraHierarchy.FLAT,
+        "2": JiraHierarchy.EPIC_TASK,
+        "3": JiraHierarchy.STORY_SUBTASK,
+    }
     jira_hierarchy = hierarchy_map[hier_choice]
 
     # ── 4. Jira Project Key ───────────────────────────────────────────────────

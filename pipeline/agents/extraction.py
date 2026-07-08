@@ -1,94 +1,39 @@
 # pipeline/agents/extraction.py
 
-import json
-from models.schemas import RawTask, TaskFlag
-from pipeline.llm_client import LLMClient
+from pydantic import BaseModel, Field
+
 from audit.logger import AuditLogger
+from core.agent_runner import AgentRunner, InstructorError
+from core.agent_spec import AgentSpec
+from models.schemas import RawTask, normalize_acceptance_criteria
+from pipeline.llm_client import LLMClient
+from prompts import registry
 
-EXTRACTION_SYSTEM_PROMPT = """You are a senior Jira project manager extracting actionable work items from a Statement of Work (SOW).
-You think in terms of real Jira boards: Epics, Stories, Tasks, and Sub-tasks.
-Return ONLY valid JSON. No explanation. No markdown fences. No preamble."""
 
-EXTRACTION_PROMPT_TEMPLATE = """You are extracting actionable Jira tickets from a Statement of Work (SOW) section.
+class ExtractionResult(BaseModel):
+    """Instructor ``response_model`` (C-5) — the extractor's output object.
 
-═══ TASK GRANULARITY ═══
-- Each task MUST be a single, atomic unit of work completable by one person in 1-2 sprints (2-4 weeks).
-- If a section describes a large system or module, DECOMPOSE it into multiple focused tasks.
-- NEVER create a single task like "Implement the entire reporting module" — break it down.
-- Think: "Could a developer pick this up on Monday and demo it in the sprint review?"
+    Mirrors the ``{"scratchpad": ..., "tasks": [...]}`` wrapper the prompt asks
+    for. ``tasks`` is a list of the existing :class:`RawTask` (validated, with
+    its permissive Union ACs and clamped confidence), so the per-task dict-parse
+    loop the regex path needed is replaced by iterating already-validated tasks.
+    The legacy bare-array shape the agent used to special-case is now Instructor's
+    concern: the runner always hands back a validated ExtractionResult.
+    """
+    scratchpad: str = ""
+    tasks: list[RawTask] = Field(default_factory=list)
 
-═══ TITLE FORMAT ═══
-- MUST start with an action verb: Create, Implement, Design, Configure, Integrate, Build, Set up, Develop, Define, Write
-- MUST follow: "[Verb] [specific object] [optional context]"
-- Max 80 characters
-- GOOD: "Create user authentication API with JWT tokens"
-- GOOD: "Design database schema for order management"  
-- GOOD: "Integrate payment gateway with Stripe API"
-- BAD: "User Authentication" (no verb, too vague)
-- BAD: "The system should handle payments" (not actionable)
-- BAD: "Implement the entire backend system" (too broad)
+EXTRACTION_SYSTEM_PROMPT = registry.load("extraction.system.v1")
 
-═══ ACCEPTANCE CRITERIA ═══
-- MUST be testable, measurable conditions — not descriptions of features.
-- Use checklist format: "[ ] Condition that can be verified"
-- GOOD: "[ ] API returns 200 OK with user profile JSON when valid token is provided"
-- GOOD: "[ ] Dashboard loads within 3 seconds on 4G connection"
-- GOOD: "[ ] Error message is displayed when invalid email format is entered"
-- BAD: "The system works correctly" (not testable)
-- BAD: "Users can log in" (too vague — HOW do we verify?)
-- If you cannot determine testable criteria from the text, set to null and add "NO_ACCEPTANCE_CRITERIA" to flags.
-
-═══ WHAT TO EXTRACT ═══
-- Functional requirements → development tasks
-- Integration points → integration tasks
-- Data migration needs → migration tasks
-- Configuration/setup work → setup tasks
-- Testing requirements explicitly mentioned → testing tasks
-
-═══ WHAT TO SKIP ═══
-- Background context, company descriptions, project overviews
-- Legal terms, payment terms, warranties, confidentiality clauses
-- Definitions, glossary items, acronyms
-- General assumptions (unless they imply work)
-- Signatures, approval sections
-- If the ENTIRE section is non-actionable, return an empty array []
-
-═══ FLAGS ═══
-- NO_ACCEPTANCE_CRITERIA: Cannot determine testable acceptance criteria
-- AMBIGUOUS_SCOPE: The scope is vague, contradictory, or could be interpreted multiple ways
-- INCOMPLETE: Key information is missing (e.g., mentions an API but not what it should do)
-- LOW_CONFIDENCE: You are less than 60% sure this is a real task
-
-═══ OUTPUT FORMAT ═══
-Each object in the returned array must have EXACTLY these fields:
-{{
-  "title": "string — verb-first, max 80 chars",
-  "short_description": "string — 1-2 sentences, what this task delivers",
-  "acceptance_criteria": ["[ ] testable condition", ...] or null,
-  "use_case": "string — As a [role], I want [goal] so that [benefit]" or null,
-  "considerations_constraints": ["string", ...] or null,
-  "deliverables": ["string — concrete output", ...] or null,
-  "mockup_prototype": "string — reference to mockup/prototype" or null,
-  "confidence": 0.0 to 1.0,
-  "flags": ["FLAG_NAME", ...],
-  "continues_to_next": true or false
-}}
-
-Return ONLY a valid JSON array. No preamble. No explanation. No markdown.
-
-{hierarchy_context}
-SOW Section Title: {section_title}
-SOW Pages: {page_start} to {page_end}
-
-Section Text:
-{section_text}
-"""
+EXTRACTION_PROMPT_TEMPLATE = registry.load("extraction.user.v1")
 
 HIERARCHY_CONTEXT = {
-    "flat": """═══ HIERARCHY CONTEXT ═══
-Target: FLAT (standalone Tasks, no parent).
-Extract medium-grained, self-contained tasks. Each task should make sense on its own without parent context.
-""",
+    "flat": (
+        "═══ HIERARCHY CONTEXT ═══\n"
+        "Target: FLAT (standalone Tasks, no parent).\n"
+        "Extract medium-grained, self-contained tasks. Each task should make "
+        "sense on its own without parent context.\n"
+    ),
     "epic_task": """═══ HIERARCHY CONTEXT ═══
 Target: EPIC → TASK hierarchy.
 This SOW section will become an Epic. Extract atomic Tasks that belong under it.
@@ -109,16 +54,39 @@ class TaskExtractionAgent:
     def __init__(self, llm_client: LLMClient, audit_logger: AuditLogger,
                  run_id: str, confidence_threshold: float = 0.6, max_section_chars: int = 16000):
         self.llm = llm_client
+        # Route the single LLM call through the AgentRunner's Instructor-validated
+        # structured-output seam (complete_structured); see extract().
+        self.runner = AgentRunner(llm_client)
+        # STEP 3.6b: this agent's single structured call declared as an AgentSpec
+        # and routed via runner.run_structured (byte-identical kwargs).
+        self.spec = AgentSpec(
+            name="ExtractionAgent",
+            system_prompt=EXTRACTION_SYSTEM_PROMPT,
+            prompt_template=EXTRACTION_PROMPT_TEMPLATE,
+            response_model=ExtractionResult,
+        )
         self.audit = audit_logger
         self.run_id = run_id
         self.confidence_threshold = confidence_threshold
         self.max_section_chars = max_section_chars
+        # GUARDRAIL-3: additive, read-only counter of recoverable extraction
+        # errors across this run. Incremented on the existing error paths only;
+        # it never changes control flow or return values. The orchestrator reads
+        # it to derive an extraction StageHealth for the RunHealthReport.
+        self.error_count = 0
 
-    def extract(self, node: dict, section_text: str, hierarchy: str = "epic_task", status_callback=None) -> list[RawTask]:
+    def extract(
+        self,
+        node: dict,
+        section_text: str,
+        hierarchy: str = "epic_task",
+        status_callback=None,
+    ) -> list[RawTask]:
         """
         Runs extraction on a single PageIndex node.
         Returns a list of RawTask objects.
-        hierarchy: one of 'flat', 'epic_task', 'story_subtask' — adjusts extraction granularity.
+        hierarchy: one of 'flat', 'epic_task', 'story_subtask' — adjusts extraction
+        granularity.
         Auto-adds LOW_CONFIDENCE flag to tasks below threshold.
         Returns empty list if section_text is too short (< 50 chars).
         """
@@ -135,7 +103,14 @@ class TaskExtractionAgent:
             )
             return []
 
-        if len(section_text) > self.max_section_chars:
+        # A4: surface truncation instead of silently dropping tasks on dense
+        # pages. We record a SECTION_TRUNCATED audit row here and flag every task
+        # extracted from this section with TRUNCATION below, so a reviewer knows
+        # the section was clipped and may have lost work. Raise max_section_chars
+        # (config) for big docs to avoid clipping at all.
+        section_truncated = len(section_text) > self.max_section_chars
+        if section_truncated:
+            original_len = len(section_text)
             section_text = section_text[:self.max_section_chars]
             truncation_notice = (
                 f"\n\n[NOTE: This section was truncated at {self.max_section_chars} characters. "
@@ -143,23 +118,39 @@ class TaskExtractionAgent:
                 f"{node['page_start']}-{node['page_end']} for any tasks not captured here.]"
             )
             section_text += truncation_notice
-
-        prompt = EXTRACTION_PROMPT_TEMPLATE.format(
-            section_title=node["title"],
-            page_start=node["page_start"],
-            page_end=node["page_end"],
-            section_text=section_text,
-            hierarchy_context=HIERARCHY_CONTEXT.get(hierarchy, HIERARCHY_CONTEXT["epic_task"]),
-        )
-
-        try:
-            raw_list = self.llm.complete_json(
-                prompt=prompt,
-                system=EXTRACTION_SYSTEM_PROMPT,
-                agent_name="ExtractionAgent",
+            self.audit.log(
+                run_id=self.run_id,
+                agent="ExtractionAgent",
                 node_id=node["node_id"],
+                action="SECTION_TRUNCATED",
+                detail=(
+                    f"Section '{node['title']}' truncated {original_len} → "
+                    f"{self.max_section_chars} chars; extracted tasks flagged TRUNCATION"
+                ),
             )
-        except (ValueError, RuntimeError) as e:
+
+        payload = {
+            "section_title": node["title"],
+            "page_start": node["page_start"],
+            "page_end": node["page_end"],
+            "section_text": section_text,
+            "hierarchy_context": HIERARCHY_CONTEXT.get(hierarchy, HIERARCHY_CONTEXT["epic_task"]),
+        }
+
+        # C-5: route through the Instructor-validated structured-output seam.
+        # The runner returns a validated ExtractionResult — the {scratchpad,
+        # tasks} wrapper, with each task already a schema-valid RawTask. That
+        # replaces the manual dict/list shape juggling and the per-task
+        # RawTask(**raw) parse loop. Any structured-output failure (call error,
+        # unparseable output, a tasks field Instructor could not coerce into a
+        # list of RawTask) surfaces as one InstructorError, recorded as
+        # EXTRACTION_ERROR (error_count++) and degraded to an empty list.
+        try:
+            result = self.runner.run_structured(
+                self.spec, payload, node_id=node["node_id"]
+            )
+        except InstructorError as e:
+            self.error_count += 1
             self.audit.log(
                 run_id=self.run_id,
                 agent="ExtractionAgent",
@@ -169,33 +160,34 @@ class TaskExtractionAgent:
             )
             return []
 
-        if not isinstance(raw_list, list):
+        # Audit-log the scratchpad so reviewers can see what the model was
+        # thinking, but never propagate it into RawTask.
+        scratchpad = result.scratchpad or ""
+        if scratchpad:
             self.audit.log(
                 run_id=self.run_id,
                 agent="ExtractionAgent",
                 node_id=node["node_id"],
-                action="EXTRACTION_ERROR",
-                detail="LLM returned non-list JSON",
+                action="EXTRACTION_SCRATCHPAD",
+                detail=scratchpad[:1000],
             )
-            return []
 
         tasks = []
-        for raw in raw_list:
-            try:
-                task = RawTask(**raw)
-                # Auto-flag low confidence
-                if task.confidence < self.confidence_threshold:
-                    if "LOW_CONFIDENCE" not in task.flags:
-                        task.flags.append("LOW_CONFIDENCE")
-                tasks.append(task)
-            except Exception as e:
-                self.audit.log(
-                    run_id=self.run_id,
-                    agent="ExtractionAgent",
-                    node_id=node["node_id"],
-                    action="TASK_PARSE_ERROR",
-                    detail=f"Could not parse task: {e} | raw: {str(raw)[:200]}",
-                )
+        for task in result.tasks:
+            # `task` is already a validated RawTask. Apply the same downstream
+            # touches the regex path did: auto-flag low confidence, then
+            # normalize ACs to the structured form so the rest of the pipeline
+            # only deals with AcceptanceCriterion objects.
+            if task.confidence < self.confidence_threshold:
+                if "LOW_CONFIDENCE" not in task.flags:
+                    task.flags.append("LOW_CONFIDENCE")
+            # A4: mark tasks from a clipped section so the loss is visible.
+            if section_truncated and "TRUNCATION" not in task.flags:
+                task.flags.append("TRUNCATION")
+            task.acceptance_criteria = normalize_acceptance_criteria(
+                task.acceptance_criteria
+            )
+            tasks.append(task)
 
         self.audit.log(
             run_id=self.run_id,

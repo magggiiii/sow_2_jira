@@ -1,10 +1,109 @@
+import base64
 import json
 import os
-import base64
 import secrets
+from functools import lru_cache
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Literal, Optional
+
 from cryptography.fernet import Fernet
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Environment-driven application settings — the ``APP_ENV`` flip.
+
+    Authoritative spec: ``.planning/elevation/ENV-CONFIG.md``. One switch,
+    ``APP_ENV=local|production``, plus the per-dependency env vars in the
+    ENV-CONFIG matrix. Read purely from the process environment (the app loads
+    ``.env.local`` / ``.env`` via ``load_dotenv`` before constructing this), so
+    unit tests are deterministic with ``monkeypatch.setenv``.
+
+    Only the composition root (``app.container.build_container``) branches on
+    these values to pick adapters per ``core.ports`` — there is no deep
+    per-module env branching.
+    """
+
+    model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
+
+    # The one flip.
+    app_env: Literal["local", "production"] = "local"
+
+    # Postgres (Supabase local stack / hosted project). Alembic owns the schema.
+    database_url: str = ""
+
+    # Object storage — Supabase Storage S3 for BOTH envs (MinIO dropped).
+    s3_endpoint: str = ""
+    s3_access_key: str = ""
+    s3_secret: str = ""
+    s3_region: str = "local"
+    s3_bucket: str = ""
+
+    # Queue / worker — Redis + arq; unset REDIS_URL falls back to in-process.
+    redis_url: str = ""
+
+    # Encryption (Fernet) — dev key locally, real secret in prod.
+    app_enc_key: str = ""
+    app_enc_key_old: str = ""
+
+    # Auth.
+    auth_mode: Literal["local", "oauth", "off"] = "local"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    auth_callback_url: str = ""
+
+    # LLM gateway (Bifrost) — same base URL both envs (LOCKED code).
+    bifrost_base_url: str = ""
+
+    # Observability (Langfuse) — env creds both envs.
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = ""
+
+    # Jira — env creds both envs (single shared account; per-user deferred).
+    jira_server: str = ""
+    jira_email: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+
+    # CORS allow-list (the Render web origin in prod).
+    app_allowed_origins: str = ""
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env == "production"
+
+    @property
+    def is_local(self) -> bool:
+        return self.app_env == "local"
+
+    @property
+    def use_redis_queue(self) -> bool:
+        """True when a Redis-backed arq queue should be used (else in-process)."""
+        return bool(self.redis_url)
+
+    def assert_safe_for(self, action: str) -> None:
+        """Guard rail: refuse seed/destructive actions when APP_ENV=production.
+
+        Seeds and destructive scripts must never run against production; call
+        this at the top of any such script/route so a mis-set env fails loudly
+        instead of mutating the wrong database.
+        """
+        if self.is_production:
+            raise RuntimeError(
+                f"Refusing to {action}: APP_ENV=production. Seeds and destructive "
+                "scripts run only against a non-production environment."
+            )
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the process-wide cached :class:`Settings`.
+
+    Cached so every caller shares one instance; tests call
+    ``get_settings.cache_clear()`` to rebuild after mutating the environment.
+    """
+    return Settings()
 
 PROVIDER_REGISTRY = {
     "openai": {"base_url": "https://api.openai.com/v1", "show_base_url": False},
@@ -48,10 +147,21 @@ def _ensure_docker_host(url: Optional[str]) -> Optional[str]:
         
     return url
 
-def build_litellm_model(provider: str, model: Optional[str], azure_deployment: Optional[str]) -> str:
+def build_litellm_model(
+    provider: str, model: Optional[str], azure_deployment: Optional[str]
+) -> str:
     if not model:
         model = ""
-    
+
+    # Aggregator providers always need their own prefix even when the model id
+    # itself contains a slash (e.g. OpenRouter's vendor/model IDs like
+    # "qwen/qwen3.5-flash" → "openrouter/qwen/qwen3.5-flash"). LiteLLM uses the
+    # outermost prefix to pick the provider client, and OpenRouter / Together
+    # both publish models under vendor/model names.
+    if provider in {"openrouter", "together"}:
+        clean = model[len(f"{provider}/"):] if model.startswith(f"{provider}/") else model
+        return f"{provider}/{clean}" if clean else f"{provider}/"
+
     # If the model already starts with the correct provider prefix, return it as is
     if provider == "ollama" and model.startswith("ollama/"):
         return model
@@ -59,11 +169,11 @@ def build_litellm_model(provider: str, model: Optional[str], azure_deployment: O
         return model
     if provider == "azure" and model.startswith("azure/"):
         return model
-    
+
     # Force provider prefix for Ollama even if name contains slashes (e.g. hf.co/...)
     if provider == "ollama":
         return f"ollama/{model}" if model else "ollama/"
-    
+
     # For other providers, if it already has a slash, assume it's already prefixed
     if "/" in model:
         return model
@@ -74,7 +184,7 @@ def build_litellm_model(provider: str, model: Optional[str], azure_deployment: O
     if provider == "azure":
         deployment = azure_deployment or model
         return f"azure/{deployment}" if deployment else "azure/"
-    if provider in {"openai", "openrouter", "groq", "mistral", "together", "zai"}:
+    if provider in {"openai", "groq", "mistral", "zai"}:
         return f"{provider}/{model}" if model else f"{provider}/"
     return model
 

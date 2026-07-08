@@ -4,6 +4,9 @@ venv/
 
 # Secrets
 .env
+.env.local
+.env.*.local
+.github_token
 
 # Runtime data & logs
 data/
@@ -47,3 +50,7 @@ htmlcov/
 # Cloned repos (deps now in requirements.txt)
 repo/.github_token
 test_sow_tmp.pdf
+graphify-out/
+
+# Node / Vite frontend build (UI.2a)
+node_modules/

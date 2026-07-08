@@ -8,7 +8,7 @@ Automate complex B2B project decomposition with high-fidelity LLM orchestration 
 
 - **Hierarchical Extraction**: Level-aware decomposition supporting **Epics → Stories → Sub-tasks**.
 - **Universal LLM Routing**: Seamlessly switch between OpenAI, Anthropic, Gemini, and local Ollama models via LiteLLM integration.
-- **Argus Global Observability**: Full-stack tracing, logging, and fleet metrics. Monitor remote instances via **Grafana, Loki, Tempo, and Langfuse**.
+- **Cloud-Native Observability**: Structured Loguru logs captured by the host platform, **Langfuse Cloud** for LLM traces and cost analytics, and **Bifrost** for LLM-gateway logging.
 - **High-Fidelity Terminal UX**: Real-time animated progress bars and formatted run summaries using the `Rich` library.
 - **Enterprise Security**: 
   - **Non-Root Execution**: Containerized app runs as a restricted `sow` user.
@@ -43,6 +43,15 @@ curl -fsSL "https://raw.githubusercontent.com/magggiiii/sow_2_jira/main/scripts/
     - *Ollama Users:* Use `http://host.docker.internal:11434` as the API Base.
     - **Crucial:** You must configure Ollama to listen on all interfaces so Docker can reach it. On macOS, run `launchctl setenv OLLAMA_HOST "0.0.0.0"` in your terminal, then completely quit and restart the Ollama app.
 
+#### Using OpenRouter
+[OpenRouter](https://openrouter.ai) gives you access to 300+ models (OpenAI, Anthropic, Google, Meta, Mistral, and more) behind a single API key — handy when you want to compare providers without juggling credentials.
+
+1.  In **Settings**, select **`openrouter`** as the provider.
+2.  Paste your key (`sk-or-...`) into the **API Key** field. Settings are Fernet-encrypted at rest.
+3.  Click **Fetch Models** — the dropdown will populate with every model your key has access to.
+4.  Pick a model. **Recommended for SOW extraction:** `google/gemini-2.5-flash` — best quality-per-dollar on this pipeline (~$0.49 per SOW run as of May 2026: $0.30 / $2.50 per million tokens in/out, 1M context window, strong JSON-mode adherence). The Settings dialog has a one-click "Use it" button. Cheaper alternative: `deepseek/deepseek-chat-v3.1` (~$0.29/run). Premium-but-still-cheap: `anthropic/claude-haiku-4.5` (~$1.45/run). Full catalogue at [openrouter.ai/models](https://openrouter.ai/models).
+5.  Save. Your runs will appear on the OpenRouter dashboard under the app name `SOW-to-Jira` (override via `OPENROUTER_APP_NAME` / `OPENROUTER_REFERER` env vars).
+
 ---
 
 ## 🏗 For Developers: Manual Distribution (Test Users)
@@ -63,7 +72,7 @@ docker save sow-to-jira:test | gzip > sow-to-jira-v1.tar.gz
 1.  Send them the `sow-to-jira-v1.tar.gz` and the `install.sh`.
 2.  They run: `docker load < sow-to-jira-v1.tar.gz`.
 3.  They run: `bash install.sh`.
-4.  They update their `docker-compose.user.yml` to use `image: sow-to-jira:test`.
+4.  They run the loaded image directly, e.g. `docker run -p 8000:8000 sow-to-jira:test`.
 
 ---
 
@@ -78,14 +87,10 @@ s2j
 ```
 *Tip: If the command isn't found, run `source ~/.zshrc` (macOS) or `source ~/.bashrc` (Linux) first.*
 
-This boots the **Milestone v1.0 Production Stack**:
-- **Main App Dashboard**: [http://localhost:8000](http://localhost:8000)
-- **Observability (Grafana)**: [http://localhost:3000](http://localhost:3000)
+This opens the **Main App Dashboard**: [http://localhost:8000](http://localhost:8000)
 
-**To view the live terminal logs of the app, run:**
-```bash
-s2j logs
-```
+Observability is cloud-native: application logs stream to your host platform's
+log viewer, and LLM traces/cost land in **Langfuse Cloud** (see *Observability & Tracing* below).
 
 ### 2. Run an Extraction
 Choose your preferred interface:
@@ -100,48 +105,25 @@ Choose your preferred interface:
 
 ---
 
-## 👁️ Argus: Global Observability (Admin)
+## 📡 Observability & Tracing
 
-If you are the developer/admin managing the fleet, use the **Argus HQ** stack on your laptop to monitor all remote instances.
+Observability is cloud-native — there is no self-hosted metrics fleet to run:
 
-### 1. Launch the Argus HQ Deck
-Use the admin shortcut after running the installer locally:
+- **Application Logs**: Structured **Loguru** logs are emitted to stdout and captured by the host platform's log viewer (Render / Vercel).
+- **LLM Traces & Cost**: End-to-end spans for every PageIndex and LLM call, plus prompt comparisons and cost tracking, land in **Langfuse Cloud** via the direct SDK.
+- **LLM-Gateway Logs**: When routing through **Bifrost**, gateway-side request/response logs are available on the Bifrost deck.
+
+A local append-only audit trail is always written to `data/audit.db` for manual inspection.
+
+### Bifrost LLM-Gateway Admin Deck (optional)
+
+If you route LLM traffic through Bifrost, an optional admin deck is available for developers. Launch it with the admin shortcut after running the installer locally:
 ```bash
 s2j-admin
 ```
 *(Or manually: `docker compose -f infra/admin/docker-compose.admin.yml up -d`)*
 
-### 2. Monitoring Dashboards
-- **Bird's Eye View (Grafana)**: [http://localhost:3001](http://localhost:3001)
-  - *Import the dashboard from `config/argus-dashboard.json` on first run.*
-- **AI Deep-Dive (Langfuse)**: [http://localhost:3002](http://localhost:3002)
 - **Traffic Control (Bifrost)**: [http://localhost:8081](http://localhost:8081)
-
-### 3. Exposing the HQ via Tunnel
-To receive data from anywhere, run your tunnel provider (e.g., LocalXpose) and point it to your laptop's ports:
-- **OTLP (gRPC)**: 4317
-- **OTLP (HTTP)**: 4318
-
----
-
-## 📡 Observability & Tracing
-
-SOW-to-Jira provides deep visibility into the extraction lifecycle via Argus.
-
-- **Explore Logs**: View standardized application logs in **Grafana Loki**.
-- **Analyze Traces**: Inspect end-to-end trace spans for every PageIndex and LLM call in **Grafana Tempo**.
-- **AI Analytics**: Side-by-side prompt comparisons and cost tracking in **Langfuse**.
-- **Fleet Metrics**: Track token usage, latency, and success rates across all users.
-
-**Remote Sync:**
-Remote synchronization is **disabled by default**. To enable it, or to point a remote extraction run back to your central Argus HQ deck, configure your `.env`:
-```env
-ARGUS_SYNC_ENABLED=true
-ARGUS_HQ_URL=https://hz8nuthhmt.loclx.io
-ARGUS_BACKBONE_TOKEN=your-secure-token
-```
-
-Regardless of this setting, all logs are saved locally in `~/.sow_to_jira/data/audit.jsonl` for manual collection.
 
 ---
 
@@ -153,9 +135,9 @@ bash scripts/prod-check.sh
 ```
 This script verifies:
 - ✅ **Non-Root User**: App is running as user `sow` (UID 1000).
-- ✅ **Healthchecks**: All 5 core services are responding.
+- ✅ **Healthchecks**: Core services are responding.
 - ✅ **Infrastructure**: Proper networking and volume isolation.
-- ✅ **Configuration**: Stable Tempo and Loki configuration files.
+- ✅ **Configuration**: Stable runtime configuration files.
 
 ---
 

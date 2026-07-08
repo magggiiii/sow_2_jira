@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 import time
 import json
-import PyPDF2
+import pypdf
 import copy
 import asyncio
 import random
@@ -112,6 +112,13 @@ def _extract_headers(err: Exception) -> dict[str, str]:
     return headers
 
 
+# Anchored status-in-message extraction (parity with llm_client / core.errors):
+# a bare 3-digit number must not be mistaken for an HTTP status and retried.
+_STATUS_IN_MESSAGE = re.compile(
+    r"(?:status(?:[ _]?code)?|http)\D{0,4}(4\d\d|5\d\d)\b", re.IGNORECASE
+)
+
+
 def _extract_status_code(err: Exception) -> Optional[int]:
     code = getattr(err, "status_code", None)
     if isinstance(code, int):
@@ -120,7 +127,7 @@ def _extract_status_code(err: Exception) -> Optional[int]:
     response_code = getattr(response, "status_code", None)
     if isinstance(response_code, int):
         return response_code
-    match = re.search(r"\b(4\d\d|5\d\d)\b", str(err))
+    match = _STATUS_IN_MESSAGE.search(str(err))
     return int(match.group(1)) if match else None
 
 
@@ -465,10 +472,19 @@ def get_json_content(response):
 def extract_json(content):
     if not content or not isinstance(content, str):
         return {}
-    
+
     try:
-        # First, try to extract JSON enclosed within ```json and ```
         json_content = content.strip()
+
+        # Strip <think>...</think> reasoning blocks emitted by thinking models
+        # (Qwen3-thinking, DeepSeek-R1, Gemini "thinking mode", o1-style). Both
+        # the full block and a leading "</think>" with no opener show up in
+        # practice — drop both forms.
+        json_content = re.sub(r'<think>.*?</think>', '', json_content, flags=re.DOTALL).strip()
+        if json_content.startswith('</think>'):
+            json_content = json_content[len('</think>'):].lstrip()
+
+        # Pull content out of ```json fences when present.
         start_marker = "```json"
         if start_marker in json_content:
             start_idx = json_content.find(start_marker) + len(start_marker)
@@ -476,25 +492,42 @@ def extract_json(content):
             if end_idx > start_idx:
                 json_content = json_content[start_idx:end_idx].strip()
 
-        # Clean up common issues that might cause parsing errors
-        # Note: Be careful with global replaces on non-marker JSON
+        # Drop any conversational preamble before the first '[' or '{'.
+        first = -1
+        for ch in ('[', '{'):
+            i = json_content.find(ch)
+            if i != -1 and (first == -1 or i < first):
+                first = i
+        if first > 0:
+            json_content = json_content[first:]
+
+        # Drop trailing content after the last matching closer.
+        last = max(json_content.rfind(']'), json_content.rfind('}'))
+        if last != -1:
+            json_content = json_content[:last + 1]
+
+        # Common Python-isms some models leak into "JSON".
         json_content = json_content.replace('None', 'null').replace('True', 'true').replace('False', 'false')
-        
-        # Attempt to parse and return the JSON object
+
         return json.loads(json_content)
     except json.JSONDecodeError as e:
         snippet = content[:100] + "..." if len(content) > 100 else content
         logger.error(f"✗ Failed to extract JSON: {e} | Snippet: {snippet}")
-        
-        # Final emergency cleanup: try to find the first { and last }
+
+        # Emergency cleanup: try the widest possible JSON span.
         try:
-            start_idx = json_content.find("{")
-            end_idx = json_content.rfind("}")
-            if start_idx != -1 and end_idx != -1:
-                return json.loads(json_content[start_idx:end_idx+1])
-        except:
+            opens = [json_content.find('{'), json_content.find('[')]
+            opens = [o for o in opens if o != -1]
+            closes = [json_content.rfind('}'), json_content.rfind(']')]
+            closes = [c for c in closes if c != -1]
+            if opens and closes:
+                start_idx = min(opens)
+                end_idx = max(closes)
+                if end_idx > start_idx:
+                    return json.loads(json_content[start_idx:end_idx + 1])
+        except Exception:
             pass
-            
+
         logger.error("✗ Failed to parse JSON even after emergency cleanup")
         return {}
     except Exception as e:
@@ -591,7 +624,7 @@ def get_last_node(structure):
 
 
 def extract_text_from_pdf(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     ###return text not list 
     text=""
     for page_num in range(len(pdf_reader.pages)):
@@ -600,13 +633,13 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 def get_pdf_title(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     meta = pdf_reader.metadata
     title = meta.title if meta and meta.title else 'Untitled'
     return title
 
 def get_text_of_pages(pdf_path, start_page, end_page, tag=True):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     text = ""
     for page_num in range(start_page-1, end_page):
         page = pdf_reader.pages[page_num]
@@ -645,7 +678,7 @@ def get_pdf_name(pdf_path):
     if isinstance(pdf_path, str):
         pdf_name = os.path.basename(pdf_path)
     elif isinstance(pdf_path, BytesIO):
-        pdf_reader = PyPDF2.PdfReader(pdf_path)
+        pdf_reader = pypdf.PdfReader(pdf_path)
         meta = pdf_reader.metadata
         pdf_name = meta.title if meta and meta.title else 'Untitled'
         pdf_name = sanitize_filename(pdf_name)
@@ -794,9 +827,9 @@ def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, over
     logger.debug(f"divide page_list to groups {len(subsets)}")
     return subsets
 
-def get_page_tokens(pdf_path, model=None, pdf_parser="PyPDF2"):
-    if pdf_parser == "PyPDF2":
-        pdf_reader = PyPDF2.PdfReader(pdf_path)
+def get_page_tokens(pdf_path, model=None, pdf_parser="pypdf"):
+    if pdf_parser == "pypdf":
+        pdf_reader = pypdf.PdfReader(pdf_path)
         page_list = []
         for page_num in range(len(pdf_reader.pages)):
             page = pdf_reader.pages[page_num]
@@ -834,7 +867,7 @@ def get_text_of_pdf_pages_with_labels(pdf_pages, start_page, end_page):
     return text
 
 def get_number_of_pages(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     num = len(pdf_reader.pages)
     return num
 

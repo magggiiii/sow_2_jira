@@ -63,11 +63,38 @@
 | DEP-02 | Phase 4 | Completed |
 | DEP-03 | Phase 4 | Completed |
 | DEP-04 | Phase 4 | Completed |
+| INT-01 | Phase 12 | Pending |
+| INT-02 | Phase 12 | Pending |
+| INT-03 | Phase 12 | Pending |
+| INT-04 | Phase 12 | Pending |
+| INT-05 | Phase 12 | Pending |
+| INT-06 | Phase 12 | Pending |
+| INT-07 | Phase 12 | Pending |
 
 **Coverage:**
 - v1 requirements: 15 total
 - Completed: 15 / 15 ✅
+- v1.1 (corrective) requirements: 7 added (Phase 12)
 - Unmapped: 0 ✓
 
 ---
+## v1.1 — Intelligence Layer Tightening (Phase 12)
+
+Added 2026-05-13 in response to the first end-to-end validation run of the Wave 1-3 intelligence layer (baseline run `20260512-194433-test-sow`).
+
+### Output Quality
+
+- [ ] **INT-01**: `INCOMPLETE` flag rate on a fresh end-to-end run is below 5% of tickets (baseline: 100%).
+- [ ] **INT-02**: Dedup yields at least 20 merges on the same SOW the baseline ran on (baseline: 0 merges).
+- [ ] **INT-03**: Extraction JSON failure rate is below 2% of nodes (baseline: 29%).
+- [ ] **INT-04**: `LOW_CONFIDENCE` flag rate is below 10% of tickets, and every surviving flag is traceable to a non-zero critic confidence in the audit log (baseline: 29% with conf=0.00).
+
+### Observability & Reviewer Signal
+
+- [ ] **INT-05**: `coverage_reports.json` is filtered run-wide against the final dedup'd task corpus and tiered (`drop` ≥0.85, `likely_overlap` 0.70-0.85, `uncovered` <0.70) with no cross-section duplicates.
+- [ ] **INT-06**: Full pytest suite remains green (94+ tests, no regression).
+- [ ] **INT-07**: A `BEFORE_AFTER.md` artifact exists in the phase directory comparing the rerun vs. baseline `20260512-194433-test-sow` across INT-01..05.
+
+---
 *Requirements verified: 2026-03-31*
+*v1.1 requirements added: 2026-05-13*

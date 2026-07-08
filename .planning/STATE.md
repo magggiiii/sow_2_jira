@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Milestone v1.0 stabilized, distributed, and over-hauled with Argus Observability and Universal LLM Robustness.
-stopped_at: Phase 11 context gathered
-last_updated: "2026-04-09T09:51:55.624Z"
-last_activity: 2026-04-05 -- Phase 10 stabilization complete
+status: Phase 12 (Intelligence Layer Tightening) added — corrective hardening on the Wave 1-3 intelligence layer surfaced by first end-to-end validation.
+stopped_at: Phase 12 context captured; ready for /gsd:plan-phase 12
+last_updated: "2026-05-13T00:00:00.000Z"
+last_activity: 2026-05-13 -- Phase 12 added with locked decisions D-30 through D-35
 progress:
-  total_phases: 10
-  completed_phases: 2
+  total_phases: 11
+  completed_phases: 10
   total_plans: 6
   completed_plans: 8
-  percent: 100
+  percent: 91
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 
 ## Current Position
 
-Phase: None
-Plan: All complete
-Status: Milestone v1.0 stabilized, distributed, and over-hauled with Argus Observability and Universal LLM Robustness.
-Last activity: 2026-04-05 -- Phase 10 stabilization complete
+Phase: 12 (Intelligence Layer Tightening) — context captured, not yet planned
+Plan: pending — run `/gsd:plan-phase 12 --full` next
+Status: Corrective hardening pass on Wave 1-3 intelligence layer; six locked decisions (D-30..D-35) recorded in 12-CONTEXT.md.
+Last activity: 2026-05-13 -- Phase 12 added
 
-Progress: [▓▓▓▓▓▓▓▓▓▓] 100%
+Progress: [▓▓▓▓▓▓▓▓▓░] 91%
 
 ## Performance Metrics
 
@@ -82,8 +82,19 @@ Recent decisions affecting current work:
 
 - None. Milestone complete.
 
+### Roadmap Evolution
+
+- 2026-05-13 — Phase 12 added: Intelligence Layer Tightening (fix coverage flag bomb + zero-merge dedup + critic conf=0.00 surfaced by the first end-to-end validation of the Wave 1-3 intelligence layer). Locked decisions D-30 through D-35 captured in `.planning/phases/12-intelligence-layer-tightening/12-CONTEXT.md` so the planner can route directly to plan-phase.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260512-001 | First-class OpenRouter provider support (attribution headers, .env example, README, UI helper, smoke script) | 2026-05-12 | 3ed1ae7 | [260512-001-openrouter-first-class](./quick/260512-001-openrouter-first-class/) |
+| 260512-002 | Intelligence layer enhancement: 6-improvement program (hierarchy, structured ACs, semantic coverage, classifier+few-shot, self-critique, cross-run dedup) — 62 new tests, 75/75 full suite green | 2026-05-12 | 5e6b269 | [260512-002-intelligence-layer-enhancement](./quick/260512-002-intelligence-layer-enhancement/) |
+
 ## Session Continuity
 
-Last session: 2026-04-09T09:51:55.617Z
+Last session: 2026-05-12 — Completed quick task 260512-001: OpenRouter first-class provider support
 Stopped at: Phase 11 context gathered
 Resume file: .planning/phases/11-evals-architecture/11-CONTEXT.md

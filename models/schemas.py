@@ -1,12 +1,70 @@
 # models/schemas.py
 
 from __future__ import annotations
+
 import contextvars
-from enum import Enum
-from typing import Optional
-from uuid import UUID, uuid4
-from pydantic import BaseModel, Field
 import datetime
+import os
+from enum import Enum
+from typing import Annotated, Literal, Optional, Union
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
+
+from core.domain.ids import make_run_id
+from core.errors import ErrorClass
+
+# ─── Confidence / score bounding (CONF-1, audit data_model "bound confidence") ─
+
+def clamp_unit_interval(value):
+    """
+    Coerce a numeric confidence/score into the closed unit interval [0.0, 1.0].
+
+    LLM output regularly emits an out-of-range confidence (e.g. 1.5 or -0.3).
+    Rather than reject the whole record (losing otherwise-usable data) or store
+    the raw value (which poisons every downstream ``>= floor`` comparison and
+    ``:.2f`` render), we clamp: ``>1 -> 1.0``, ``<0 -> 0.0``, in-range unchanged.
+
+    This mirrors the ``_NormalizedStrEnum`` philosophy of absorbing
+    dirty-but-numeric LLM output. ``None`` passes through untouched so it can be
+    composed with Optional fields. Genuinely non-numeric input is handed back
+    unchanged for Pydantic's normal coercion/validation to reject.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        # Let Pydantic's normal float coercion/validation handle non-numerics.
+        return value
+    if f < 0.0:
+        return 0.0
+    if f > 1.0:
+        return 1.0
+    return f
+
+
+# Reusable Annotated type for confidence/score fields. The BeforeValidator
+# clamps an out-of-range LLM value into [0,1] so it stays valid instead of being
+# rejected. Bounds are enforced by this clamp ALONE — fields deliberately do NOT
+# add ``Field(ge=..., le=...)``: the clamp already guarantees the range, and
+# emitting ``minimum``/``maximum`` into the JSON schema breaks providers' strict
+# structured-output modes (Anthropic via OpenRouter rejects number bounds).
+UnitInterval = Annotated[float, BeforeValidator(clamp_unit_interval)]
+
+
+# ─── Time (tz-aware, W1 1.3) ──────────────────────────────────────────────────
+
+def utcnow() -> datetime.datetime:
+    """Timezone-aware UTC 'now'.
+
+    Replaces the naive ``datetime.datetime.utcnow()`` (deprecated in 3.12+ and a
+    source of aware-vs-naive comparison bugs). Every timestamp default and
+    reassignment in the pipeline routes through this so all datetimes carry
+    ``tzinfo=UTC`` — required for the multi-region/SaaS pivot and correct
+    ISO-8601 serialization (``...+00:00``).
+    """
+    return datetime.datetime.now(datetime.timezone.utc)
 
 
 # ─── LLM Config ────────────────────────────────────────────────────────────────
@@ -20,10 +78,58 @@ class ProviderConfig(BaseModel):
     azure_deployment_name: str = ""
 
 
-current_provider_config: contextvars.ContextVar[Optional[ProviderConfig]] = contextvars.ContextVar("current_provider_config", default=None)
+current_provider_config: contextvars.ContextVar[Optional[ProviderConfig]] = (
+    contextvars.ContextVar("current_provider_config", default=None)
+)
 
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
+
+class _NormalizedStrEnum(str, Enum):
+    """
+    Base for closed-set string fields (H-23 domain-model hardening).
+
+    A `(str, Enum)` member already compares equal to its raw value, so existing
+    `x == "merge"` style comparisons across the codebase keep working unchanged.
+    On top of that this base adds two things:
+
+    1. `__str__` returns the *value*, so text rendered into Jira descriptions /
+       audit logs stays `"merge"` rather than regressing to `"DedupDecisionType.MERGE"`.
+    2. `_missing_` coerces dirty-but-known inputs (case, surrounding whitespace,
+       and separator drift — spaces/hyphens -> underscore) plus an optional
+       per-enum `_aliases()` map of normalized-string -> member. Genuinely
+       unknown values return None so Pydantic raises a clear validation error
+       (fail loudly on unknown, coerce on dirty-but-known).
+
+    Dependency-free: stdlib `enum` + `str` only.
+    """
+
+    def __str__(self) -> str:  # pragma: no cover - exercised via f-strings
+        return str(self.value)
+
+    @classmethod
+    def _aliases(cls) -> dict:
+        """Override per-enum to map normalized aliases -> member. Default: none.
+
+        Implemented as a classmethod (not a class attribute) so it does not
+        accidentally become an enum member.
+        """
+        return {}
+
+    @classmethod
+    def _missing_(cls, value):
+        if not isinstance(value, str):
+            return None
+        norm = value.strip().lower().replace("-", "_").replace(" ", "_")
+        while "__" in norm:
+            norm = norm.replace("__", "_")
+        if not norm:
+            return None
+        for member in cls:
+            if member.value == norm:
+                return member
+        return cls._aliases().get(norm)
+
 
 class TaskStatus(str, Enum):
     OPEN = "OPEN"            # Newly extracted, may span into next section
@@ -42,6 +148,8 @@ class TaskFlag(str, Enum):
     NO_MOCKUP = "NO_MOCKUP"            # Informational — mockup field is absent
     POTENTIAL_DUPLICATE = "POTENTIAL_DUPLICATE"
     GAP_RECOVERED = "GAP_RECOVERED"   # Was found by Gap Recovery Agent
+    # A4: section was truncated at max_section_chars — tasks may be missing
+    TRUNCATION = "TRUNCATION"
 
 
 class LLMMode(str, Enum):
@@ -50,10 +158,161 @@ class LLMMode(str, Enum):
     CUSTOM = "custom"    # Any litellm provider (e.g., anthropic, gpt, groq)
 
 
+class RunKind(str, Enum):
+    """What a queued/worker run does.
+
+    SEAM-A (async-job seam): a job payload carries a ``kind`` so the future
+    worker can route an enqueued run to the right entrypoint. EXTRACTION is the
+    full SOW→tasks pipeline; PUSH is the Jira-push-only path. Values are the
+    exact lowercase strings the payload uses.
+    """
+    EXTRACTION = "extraction"
+    PUSH = "push"
+
+
 class JiraHierarchy(str, Enum):
+    """
+    Output shape for Jira push. Container grouping is structural — driven by
+    SourceRef.parent_id (and parent_chain for multi-level rollup) rather than
+    by section_title strings. STORY_SUBTASK can honor a real 3-level structure
+    when the PageIndex tree has at least two levels of depth.
+    """
     FLAT = "flat"                    # All Tasks, no parent
     EPIC_TASK = "epic_task"          # SOW sections → Epics, items → Tasks
     STORY_SUBTASK = "story_subtask"  # SOW sections → Stories, items → Sub-tasks
+
+
+class JiraCredentials(BaseModel):
+    """Credentials + target for a Jira push (WAVE 2 STEP 2.4, env/shared scope).
+
+    Centralizes the JIRA_* reads that ``JiraClient`` used to make inline via
+    ``os.environ``. A caller injects an instance so the client body reads no
+    environment; ``from_env()`` builds one from the shared-account env vars.
+    Per-user credential rows are deferred — for now this is a single shared Jira
+    account across all users.
+    """
+
+    server_url: str = ""
+    email: str = ""
+    api_token: str = ""
+    project_key: str = ""
+
+    @classmethod
+    def from_env(cls) -> "JiraCredentials":
+        """Build shared-account credentials from JIRA_* environment variables."""
+        return cls(
+            server_url=os.environ.get("JIRA_SERVER", ""),
+            email=os.environ.get("JIRA_EMAIL", ""),
+            api_token=os.environ.get("JIRA_API_TOKEN", ""),
+            project_key=os.environ.get("JIRA_PROJECT_KEY", ""),
+        )
+
+
+class AcceptanceCriterionType(str, Enum):
+    FUNCTIONAL = "functional"
+    NONFUNCTIONAL = "nonfunctional"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+    USABILITY = "usability"
+
+
+class VerifiedBy(_NormalizedStrEnum):
+    """How an acceptance criterion is verified. Coerces dirty LLM casing."""
+    TEST = "test"
+    REVIEW = "review"
+    DEMO = "demo"
+    INSPECTION = "inspection"
+
+
+class DependencyKind(_NormalizedStrEnum):
+    """Relationship a TaskDependency expresses to its target_ref."""
+    BLOCKS = "blocks"
+    RELATES_TO = "relates_to"
+    DUPLICATES = "duplicates"
+
+
+class DedupDecisionType(_NormalizedStrEnum):
+    """Verdict the dedup LLM returns for a candidate task pair.
+
+    Member values are the EXACT lowercase strings the dedup agent compares
+    against in pipeline/agents/deduplication.py (`decision in ("merge",
+    "keep_first")`, `== "keep_second"`, `DEDUP_{decision.upper()}`), so
+    str-enum equality keeps every existing comparison working.
+    """
+    MERGE = "merge"
+    KEEP_BOTH = "keep_both"
+    KEEP_FIRST = "keep_first"
+    KEEP_SECOND = "keep_second"
+
+    @classmethod
+    def _aliases(cls) -> dict:
+        # Dirty-but-known forms the base normalizer can't reach on its own.
+        # `_missing_` already collapses case, whitespace, and hyphen/space ->
+        # underscore (so "KEEP_BOTH", "keep both", "keep-both" coerce), but a
+        # no-separator blob like "keepboth" or a verbose "keepallboth" does not.
+        # These map the post-normalization string -> member.
+        return {
+            "keepboth": cls.KEEP_BOTH,
+            "keep_all_both": cls.KEEP_BOTH,
+            "both": cls.KEEP_BOTH,
+            "keepfirst": cls.KEEP_FIRST,
+            "first": cls.KEEP_FIRST,
+            "keepsecond": cls.KEEP_SECOND,
+            "second": cls.KEEP_SECOND,
+            "duplicate": cls.MERGE,
+        }
+
+
+# ─── Acceptance Criterion & Dependency ────────────────────────────────────────
+
+class AcceptanceCriterion(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))  # W1 1.5: full UUID (was uuid4()[:8])
+    condition: str                                   # The testable statement
+    type: AcceptanceCriterionType = AcceptanceCriterionType.FUNCTIONAL
+    verified_by: VerifiedBy = VerifiedBy.TEST        # test | review | demo | inspection
+
+
+class TaskDependency(BaseModel):
+    target_ref: str                                  # Sibling task title or external ref
+    reason: str                                      # One-line why
+    kind: DependencyKind = DependencyKind.BLOCKS     # blocks | relates_to | duplicates
+
+
+def normalize_acceptance_criteria(
+    items: Optional[list],
+) -> Optional[list[AcceptanceCriterion]]:
+    """
+    Convert a mixed list of strings, dicts, and AcceptanceCriterion objects
+    into a uniform list[AcceptanceCriterion]. This is the backward-compat seam:
+    legacy LLM output and old `pipeline_output.json` checkpoints used plain
+    strings; new output is structured.
+
+    Strings become AcceptanceCriterion(condition=<string>) with default
+    type=FUNCTIONAL and verified_by="test". Dicts get parsed via Pydantic.
+    None/empty returns None.
+    """
+    if not items:
+        return None
+    out: list[AcceptanceCriterion] = []
+    for item in items:
+        if isinstance(item, AcceptanceCriterion):
+            out.append(item)
+        elif isinstance(item, str):
+            condition = item.strip()
+            if not condition:
+                continue
+            out.append(AcceptanceCriterion(condition=condition))
+        elif isinstance(item, dict):
+            try:
+                out.append(AcceptanceCriterion(**item))
+            except Exception:
+                # If a dict can't be parsed, fall back to stringifying its
+                # condition field if present; otherwise skip.
+                cond = item.get("condition") if isinstance(item, dict) else None
+                if cond:
+                    out.append(AcceptanceCriterion(condition=str(cond)))
+        # Anything else (None, numbers, etc.) is silently dropped.
+    return out or None
 
 
 # ─── Source Reference ─────────────────────────────────────────────────────────
@@ -64,6 +323,29 @@ class SourceRef(BaseModel):
     page_start: int                 # 1-indexed
     page_end: int                   # 1-indexed
     snippet: str = ""               # Short verbatim snippet from SOW (max 300 chars)
+    parent_id: Optional[str] = None             # Immediate parent node_id (None for root sections)
+    parent_chain: list[str] = Field(default_factory=list)  # Ancestor node_ids, root first
+    depth: int = 0                              # 0 for root; matches PageIndex tree depth
+
+    @field_validator("depth")
+    @classmethod
+    def _depth_non_negative(cls, value: int) -> int:
+        # PageIndex tree depth is 0 (root) or a positive descendant level; a
+        # negative depth is a structural error, so REJECT rather than clamp.
+        if value < 0:
+            raise ValueError("SourceRef.depth must be >= 0")
+        return value
+
+    @model_validator(mode="after")
+    def _pages_ordered(self) -> "SourceRef":
+        # A reference cannot end before it starts. page_start == page_end is a
+        # valid single-page reference; page_end < page_start is rejected.
+        if self.page_end < self.page_start:
+            raise ValueError(
+                "SourceRef.page_end must be >= page_start "
+                f"(got page_start={self.page_start}, page_end={self.page_end})"
+            )
+        return self
 
 
 # ─── Raw Extraction Output (from LLM) ────────────────────────────────────────
@@ -72,14 +354,22 @@ class RawTask(BaseModel):
     """Exactly what the Task Extraction Agent LLM returns per task."""
     title: str
     short_description: str
-    acceptance_criteria: Optional[list[str]] = None
+    # Accepts both the new structured form (AcceptanceCriterion/dict) and
+    # legacy plain strings for backward compat. ExtractionAgent normalizes
+    # this to list[AcceptanceCriterion] before handing the task downstream.
+    acceptance_criteria: Optional[list[Union[AcceptanceCriterion, str]]] = None
     use_case: Optional[str] = None
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
     mockup_prototype: Optional[str] = None
-    confidence: float = Field(ge=0.0, le=1.0)
+    # CONF-1: clamped into [0,1] by the UnitInterval BeforeValidator — an
+    # out-of-range LLM value is coerced, not rejected. No Field(ge/le): the
+    # clamp already bounds it, and emitting minimum/maximum into the JSON schema
+    # breaks Anthropic's strict structured-output mode.
+    confidence: UnitInterval
     flags: list[str] = Field(default_factory=list)
     continues_to_next: bool = False
+    dependencies: list[TaskDependency] = Field(default_factory=list)
 
 
 # ─── Managed Task (after State Agent assigns ID) ──────────────────────────────
@@ -89,19 +379,38 @@ class ManagedTask(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     title: str
     short_description: str
-    acceptance_criteria: Optional[list[str]] = None
+    # Always structured downstream of TaskStateAgent. The field validator
+    # below normalizes legacy string entries so old checkpoints still load.
+    acceptance_criteria: Optional[list[AcceptanceCriterion]] = None
     use_case: Optional[str] = None
     considerations_constraints: Optional[list[str]] = None
     deliverables: Optional[list[str]] = None
     mockup_prototype: Optional[str] = None
-    confidence: float
+    confidence: UnitInterval  # CONF-1: clamped into [0,1]
     flags: list[TaskFlag] = Field(default_factory=list)
     continues_to_next: bool = False
     status: TaskStatus = TaskStatus.OPEN
+    # Set once pushed; presence makes re-push idempotent (skip create)
+    jira_issue_key: Optional[str] = None
     source_refs: list[SourceRef] = Field(default_factory=list)  # Can span multiple nodes
     merged_from: list[UUID] = Field(default_factory=list)       # IDs merged into this task
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
-    updated_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    dependencies: list[TaskDependency] = Field(default_factory=list)
+    created_at: datetime.datetime = Field(default_factory=utcnow)
+    updated_at: datetime.datetime = Field(default_factory=utcnow)
+
+    @field_validator("acceptance_criteria", mode="before")
+    @classmethod
+    def _normalize_ac(cls, v):
+        """
+        Lets legacy `pipeline_output.json` files with plain string ACs
+        (e.g. `["[ ] foo"]`) deserialize cleanly. Returns the structured
+        form or None.
+        """
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return normalize_acceptance_criteria(v)
+        return v
 
 
 # ─── Run Configuration (from startup wizard) ─────────────────────────────────
@@ -113,15 +422,60 @@ class RunConfig(BaseModel):
     jira_project_key: str
     skip_indexing: bool = False
     max_nodes: int = 200
-    run_id: str = Field(default_factory=lambda: str(uuid4())[:8])
+    # A2: how to handle a node count over ``max_nodes``. "degraded" (default) caps
+    # the node list, keeps partial output, and flags the run DEGRADED_CAPACITY;
+    # "strict" preserves the legacy hard Denial-of-Wallet RuntimeError.
+    node_processing_strategy: Literal["strict", "degraded"] = "degraded"
+    # C1: write a per-node extraction checkpoint and resume from it after a crash
+    # (skip done nodes, restore their tasks + coverage). Off → single end-of-run
+    # checkpoint only (legacy).
+    enable_resumption: bool = True
+    run_id: str = Field(default_factory=make_run_id)  # W1 1.5: full UUID (was uuid4()[:8])
     provider_config: Optional[ProviderConfig] = None
+
+    # STEP 5.4: pipeline tuning knobs, promoted from bare ``os.getenv`` reads in
+    # PipelineOrchestrator. Each defaults to None — the "not specified" sentinel —
+    # so the orchestrator resolves it as: explicit field > env var / app_config >
+    # the original hardcoded default. None therefore reproduces today's behavior
+    # byte-for-byte (env still works as a fallback; legacy checkpoints that lack
+    # these keys load as None) while letting a caller pin a value per run.
+    extraction_confidence_threshold: Optional[float] = None  # EXTRACTION_CONFIDENCE_THRESHOLD (0.6)
+    dedup_similarity_threshold: Optional[float] = None  # DEDUP_SIMILARITY_THRESHOLD (0.85)
+    classifier_enabled: Optional[bool] = None  # env SOW_CLASSIFIER_ENABLED (on)
+    critic_enabled: Optional[bool] = None  # env SOW_ENABLE_CRITIC (on)
+    semantic_coverage_enabled: Optional[bool] = None  # env SOW_SEMANTIC_COVERAGE (on)
+    critic_threshold: Optional[float] = None  # env SOW_CRITIC_THRESHOLD (0.8)
+    max_section_chars: Optional[int] = None  # app_config["pipeline"]["max_section_chars"] (16000)
+    max_gap_recovery_iterations: Optional[int] = None  # app_config pipeline key (same name)
+    coverage_min_confidence: Optional[float] = None  # env SOW_COVERAGE_MIN_CONFIDENCE (dynamic)
+    coverage_corpus_filter: Optional[bool] = None  # env SOW_COVERAGE_CORPUS_FILTER (off)
+    node_concurrency: Optional[int] = None  # env SOW_NODE_CONCURRENCY (6)
+    # STEP 3.7: opt a run into the staged PipelineRunner path (run_via_pipeline)
+    # instead of the legacy linear run() body. Default ON as of 2026-07-08
+    # (decision 3): runs take the staged PEV path, proven equivalent offline
+    # (test_pipeline_runner_equivalence). Set False to force the legacy linear
+    # run(); run() itself is NOT deleted (gated on STEP 3.8's live cassette).
+    use_pipeline_runner: bool = True
+    # WAVE-7 SC-ORCH: hard USD ceiling for one run — CostMeter aborts past it.
+    # None = no budget (the default); a positive float caps spend. The orchestrator
+    # reads this field to build the per-run cost kill-switch (pipeline/orchestrator.py).
+    max_run_cost: Optional[float] = None
+
+    @field_validator("max_run_cost")
+    @classmethod
+    def _max_run_cost_positive(cls, value: Optional[float]) -> Optional[float]:
+        # None stays allowed (no budget). A budget of <=0 is nonsensical — it
+        # would abort the run before any work — so REJECT rather than clamp.
+        if value is not None and value <= 0:
+            raise ValueError("RunConfig.max_run_cost must be > 0 when set")
+        return value
 
 
 # ─── Audit Log Entry ──────────────────────────────────────────────────────────
 
 class AuditEntry(BaseModel):
     run_id: str
-    timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime.datetime = Field(default_factory=utcnow)
     agent: str                  # e.g. "ExtractionAgent", "StateAgent"
     node_id: Optional[str]
     action: str                 # e.g. "EXTRACTED", "MERGED", "CLOSED", "GAP_RECOVERED"
@@ -136,7 +490,7 @@ class AuditEntry(BaseModel):
 class DedupDecision(BaseModel):
     task_id_a: str
     task_id_b: str
-    decision: str   # "merge" | "keep_both" | "keep_first" | "keep_second"
+    decision: DedupDecisionType   # "merge" | "keep_both" | "keep_first" | "keep_second"
     reason: str
 
 
@@ -148,4 +502,15 @@ class JiraPushResult(BaseModel):
     jira_issue_key: Optional[str] = None  # e.g. "PROJ-42"
     jira_issue_url: Optional[str] = None
     error: Optional[str] = None
+    # How a caller/UI should react to `error` when success is False: transient
+    # (retry-able), user_fixable (fix credentials/config), or terminal. None on
+    # success. Set at the push boundary via core.errors.classify_exception.
+    error_class: Optional[ErrorClass] = None
     warning: Optional[str] = None
+    # JIRA-4 (audit H-11): set True when an Epic/Story container create failed
+    # and this child was created flat (parentless) instead of under its intended
+    # container. The push still succeeds, but the requested hierarchy was not
+    # honored, so the caller/UI can surface it. `hierarchy_degraded_reason`
+    # carries a short human-readable explanation when degraded.
+    hierarchy_degraded: bool = False
+    hierarchy_degraded_reason: Optional[str] = None

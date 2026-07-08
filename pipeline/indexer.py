@@ -7,15 +7,15 @@ verification, and recursive node splitting.
 """
 
 import sys
-import json
 from pathlib import Path
+
 from pipeline.observability import logger
 
 # Ensure pageindex is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pageindex.page_index import page_index_main
-from pageindex.utils import ConfigLoader, structure_to_list, add_node_text
+from pageindex.utils import ConfigLoader, structure_to_list
 
 
 class DocumentIndexer:
@@ -35,8 +35,15 @@ class DocumentIndexer:
         self.config = config
         self.last_tree = None
         self.last_result = None
+        self.node_index_map: dict[str, dict] = {}
 
-    def build_tree(self, pdf_path: str, status_callback=None, stop_event=None, run_id: str = "none") -> list[dict]:
+    def build_tree(
+        self,
+        pdf_path: str,
+        status_callback=None,
+        stop_event=None,
+        run_id: str = "none",
+    ) -> list[dict]:
         """
         Run PageIndex on the PDF file.
         Returns a flat list of nodes for the extraction pipeline.
@@ -54,8 +61,12 @@ class DocumentIndexer:
             default_path=str(Path(__file__).parent.parent / "pageindex" / "config.yaml")
         ).load({
             "model": self.model,
-            "max_page_num_each_node": self.config["pipeline"].get("pageindex_max_pages_per_node", 10),
-            "max_token_num_each_node": self.config["pipeline"].get("pageindex_max_tokens_per_node", 20000),
+            "max_page_num_each_node": self.config["pipeline"].get(
+                "pageindex_max_pages_per_node", 10
+            ),
+            "max_token_num_each_node": self.config["pipeline"].get(
+                "pageindex_max_tokens_per_node", 20000
+            ),
             "if_add_node_id": "yes",
             "if_add_node_summary": "yes",
             "if_add_node_text": "yes",
@@ -70,7 +81,9 @@ class DocumentIndexer:
             else:
                 _report(msg, log_to_terminal=log_it)
 
-        result = page_index_main(pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id)
+        result = page_index_main(
+            pdf_path, opt, status_callback=pageindex_cb, stop_event=stop_event, run_id=run_id
+        )
         
         if stop_event and stop_event.is_set():
             _report("PageIndex: Extraction aborted by user", 0.30)
@@ -81,25 +94,52 @@ class DocumentIndexer:
         self.last_tree = result.get("structure", [])
 
         flat_nodes = self.flatten_tree(self.last_tree)
+        self.node_index_map = {n["node_id"]: n for n in flat_nodes if n.get("node_id")}
         _report(f"PageIndex complete: {len(flat_nodes)} nodes extracted", 0.30)
         return flat_nodes
 
     def flatten_tree(self, tree) -> list[dict]:
         """
         Convert PageIndex's hierarchical tree to the pipeline's flat node format.
-        Each node has: node_id, title, page_start, page_end, summary, text
+        Each node has: node_id, title, page_start, page_end, summary, text,
+        plus the hierarchy fields parent_id, parent_chain, depth, node_index.
+
+        parent_id is None for root nodes. parent_chain lists ancestor node_ids
+        with the root first; depth is 0 for roots; node_index is a depth-first
+        ordinal so callers can preserve document order without re-walking.
         """
-        raw_nodes = structure_to_list(tree) if tree else []
-        nodes = []
-        for n in raw_nodes:
+        nodes: list[dict] = []
+        counter = {"i": 0}
+
+        def walk(item, parent_id, parent_chain, depth):
+            if isinstance(item, list):
+                for child in item:
+                    walk(child, parent_id, parent_chain, depth)
+                return
+            if not isinstance(item, dict):
+                return
+
+            node_id = item.get("node_id", "")
             nodes.append({
-                "node_id": n.get("node_id", ""),
-                "title": n.get("title", ""),
-                "page_start": n.get("start_index", 1),
-                "page_end": n.get("end_index", 1),
-                "summary": n.get("summary", ""),
-                "text": n.get("text", ""),
+                "node_id": node_id,
+                "title": item.get("title", ""),
+                "page_start": item.get("start_index", 1),
+                "page_end": item.get("end_index", 1),
+                "summary": item.get("summary", ""),
+                "text": item.get("text", ""),
+                "parent_id": parent_id,
+                "parent_chain": list(parent_chain),
+                "depth": depth,
+                "node_index": counter["i"],
             })
+            counter["i"] += 1
+
+            children = item.get("nodes")
+            if children:
+                walk(children, node_id, parent_chain + [node_id], depth + 1)
+
+        if tree:
+            walk(tree, parent_id=None, parent_chain=[], depth=0)
         return nodes
 
     def get_node_text(self, node: dict, sections: list[dict] = None) -> str:

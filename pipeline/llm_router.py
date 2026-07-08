@@ -9,7 +9,45 @@ instead of mutating global os.environ.
 import os
 from pipeline.observability import logger
 from models.schemas import LLMMode, ProviderConfig
-from config.settings import SettingsManager, build_litellm_model, _ensure_docker_host
+from config.settings import (
+    SettingsManager,
+    _ensure_docker_host,
+    build_litellm_model,
+    resolve_provider_base,
+)
+
+def resolve_provider_config(
+    provider: str,
+    model: str,
+    api_key: str = "",
+    api_base: str = "",
+    azure_api_version: str = "",
+    azure_deployment_name: str = "",
+) -> ProviderConfig:
+    """Build a ProviderConfig from explicit, caller-supplied values.
+
+    This is the per-run provider seam (WAVE 2 STEP 2.1). Unlike
+    ``configure_litellm_for_mode``, it reads NO global ``SettingsManager`` and NO
+    ``os.environ`` — every value is passed in by the caller (a per-user
+    credential row or ``RunConfig``). Two concurrent runs can therefore hold
+    different providers/keys without any shared process-global state.
+
+    Only pure, module-constant helpers are used: ``build_litellm_model`` (litellm
+    model-string prefixing) and ``resolve_provider_base`` (PROVIDER_REGISTRY
+    default base URL). Docker-host translation (``_ensure_docker_host``, which
+    reads the environment) is deliberately NOT applied here — it is a caller
+    concern for the deploy environment, kept out of the pure builder.
+    """
+    provider = provider or "openai"
+    return ProviderConfig(
+        provider=provider,
+        model=build_litellm_model(provider, model, azure_deployment_name),
+        api_key=api_key or "",
+        api_base=resolve_provider_base(provider, api_base) or "",
+        azure_api_version=azure_api_version or "",
+        azure_deployment_name=azure_deployment_name or "",
+    )
+
 
 def configure_litellm_for_mode(mode: LLMMode) -> ProviderConfig:
     """

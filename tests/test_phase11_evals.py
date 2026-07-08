@@ -1,6 +1,5 @@
-import pytest
-import os
-from models.eval_schemas import HierarchicalDatasetItem, GoldenEpic, GoldenTicket
+from models.eval_schemas import GoldenEpic, GoldenTicket, HierarchicalDatasetItem
+
 
 def test_hierarchical_schemas():
     """Verifies that evaluation schemas are correct and serializable."""

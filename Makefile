@@ -1,4 +1,4 @@
-.PHONY: help venv install clean run ui verify
+.PHONY: help venv install clean run ui ui-dev ui-build verify test migrate worker lock
 
 # Default python command to use inside the venv
 PYTHON = venv/bin/python
@@ -14,6 +14,10 @@ help:
 	@echo "make ui      - Launch the FastAPI review UI"
 	@echo "make clean   - Remove the virtual environment and cached data/logs"
 	@echo "make verify  - Run a quick import check to ensure dependencies are installed"
+	@echo "make test    - Run the pytest suite"
+	@echo "make migrate - Apply Alembic migrations (needs DATABASE_URL / Postgres)"
+	@echo "make worker  - Run the background worker (arq) — lands in WAVE 2"
+	@echo "make lock    - Recompile requirements.txt (pinned+hashed) from requirements.in"
 
 venv:
 	python3 -m venv venv
@@ -23,16 +27,46 @@ venv:
 install: venv
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
-	@echo "Dependencies installed successfully."
+	npm install
+	@echo "Dependencies installed successfully (Python venv + Node/Vite frontend)."
 
 run:
 	$(PYTHON) main.py
 
-ui:
+ui: ui-build
 	$(UVICORN) ui.server:app --reload --port 8000
 
+ui-build:
+	npm run build
+
+# HMR dev: Vite (:5173, proxies /api -> :8000) + the API server. Open :5173.
+ui-dev:
+	$(UVICORN) ui.server:app --reload --port 8000 & npm run dev
+
 verify:
-	$(PYTHON) -c "import opendataloader_pdf, fastapi, uvicorn, jira, pageindex, sentence_transformers, pydantic, openai; print('All imports successful!')"
+	$(PYTHON) -c "import opendataloader_pdf, fastapi, uvicorn, jira, pageindex, sentence_transformers, pydantic, openai, sqlalchemy, asyncpg; print('All imports successful!')"
+
+# Run the pytest suite (offline; LLM stubbed/replayed).
+test:
+	$(PYTHON) -m pytest tests/ -q
+
+# Apply DB migrations. Needs DATABASE_URL pointing at a reachable Postgres —
+# the ORM/baseline are authored (W1 1.2) but migrations are not run offline.
+migrate:
+	$(PYTHON) -m alembic upgrade head
+
+# Background job worker. The arq/Redis worker is wired in WAVE 2; this target
+# exists now so the dev surface is stable.
+worker:
+	@echo "Background worker (arq + Redis) lands in WAVE 2 — not yet wired."
+
+# Recompile the fully-pinned, hashed lockfile from the curated direct deps in
+# requirements.in. The current venv freeze is used as a constraint so transitive
+# versions match what's installed (anti-drift). Requires uv on PATH.
+lock:
+	$(PYTHON) -m pip freeze > /tmp/requirements.freeze
+	uv pip compile requirements.in -c /tmp/requirements.freeze --generate-hashes -o requirements.txt
+	@echo "Recompiled requirements.txt from requirements.in"
 
 clean:
 	rm -rf venv

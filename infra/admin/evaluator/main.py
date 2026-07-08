@@ -2,8 +2,10 @@
 
 import os
 import time
+
 import schedule
 from langfuse import Langfuse
+
 from pipeline.evals.judges import HierarchicalJudge
 
 # Initialize Langfuse client
@@ -13,10 +15,13 @@ os.environ["LANGFUSE_HOST"] = os.getenv("LANGFUSE_HOST", "http://langfuse:3000")
 
 def run_evaluations():
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Starting background evaluation loop...")
-    
-    langfuse = Langfuse()
-    judge = HierarchicalJudge()
-    
+
+    # Construct the clients used by the (currently placeholder) scoring path below.
+    # Prefixed with an underscore because the real trace-iteration loop that consumes
+    # them is still stubbed out; kept live so import/config wiring stays exercised.
+    _langfuse = Langfuse()
+    _judge = HierarchicalJudge()
+
     # 1. Fetch all traces that need scoring
     # In a real scenario, we might use the Langfuse API to filter for unscored traces
     # For now, we'll fetch recent traces and filter manually

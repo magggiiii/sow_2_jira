@@ -1,6 +1,11 @@
-import pytest
 from unittest.mock import MagicMock
-from pipeline.evals.judges import HierarchicalJudge, EvaluationScores
+
+import pytest
+
+pytest.importorskip("langchain_openai")
+
+from pipeline.evals.judges import HierarchicalJudge
+
 
 class MockResponse:
     def __init__(self, content):
@@ -14,7 +19,8 @@ def test_judge_parsing():
     # We need to mock 'invoke' on self.llm
     judge.llm = MagicMock()
     judge.llm.invoke.return_value = MockResponse(
-        '```json {"alignment": 1.0, "recall": 0.8, "fidelity": 0.9, "hallucination": 0.0, "reasoning": "Excellent match"} ```'
+        '```json {"alignment": 1.0, "recall": 0.8, "fidelity": 0.9, '
+        '"hallucination": 0.0, "reasoning": "Excellent match"} ```'
     )
     
     # We also need to mock the prompt/chain since it's used as (self.prompt | self.llm).invoke()

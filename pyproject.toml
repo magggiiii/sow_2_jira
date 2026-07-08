@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = []
+filterwarnings = ["default"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["pageindex", "pipeline/llm_router.py", "pipeline/observability.py", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

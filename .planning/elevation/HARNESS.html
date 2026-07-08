@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOW-to-Jira — Harness Engineering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,400..600&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0a0b0f;
+    --ink-2:#10121a;
+    --panel:#14161f;
+    --panel-2:#1a1d29;
+    --line:rgba(255,255,255,.08);
+    --line-2:rgba(255,255,255,.15);
+    --text:#eceaf2;
+    --muted:#9a96ab;
+    --faint:#6a6678;
+    /* the duality */
+    --core:#f3a35c;      /* core AI — warm cognition */
+    --core-soft:#f8c694;
+    --harness:#56cfe1;   /* harness — cool engineering */
+    --harness-soft:#9be8f2;
+    --seam:#b694ec;      /* boundary — the seam */
+    --seam-soft:#d2bdf6;
+    --crit:#ff6b6b;
+    --high:#f59e4b;
+    --med:#e0c54a;
+    --green:#7bd88f;
+    --radius:18px;
+    --maxw:1100px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--ink);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-weight:380;line-height:1.62;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  body::before{content:"";position:fixed;inset:0;z-index:-2;background:
+    radial-gradient(800px 560px at 88% -8%, rgba(86,207,225,.12), transparent 60%),
+    radial-gradient(760px 520px at 2% 12%, rgba(243,163,92,.10), transparent 58%),
+    radial-gradient(900px 700px at 50% 112%, rgba(182,148,236,.07), transparent 60%);}
+  body::after{content:"";position:fixed;inset:0;z-index:-1;opacity:.022;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+
+  /* hero */
+  header.hero{padding:90px 0 50px}
+  .kicker{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;text-transform:uppercase;color:var(--harness);display:flex;align-items:center;gap:14px}
+  .kicker::before{content:"";width:42px;height:1px;background:var(--harness)}
+  h1{font-family:"Fraunces",serif;font-weight:340;font-size:clamp(2.6rem,6.2vw,5rem);line-height:1.02;letter-spacing:-.02em;margin:24px 0 0;max-width:17ch}
+  h1 .c{color:var(--core-soft);font-style:italic}
+  h1 .h{color:var(--harness-soft);font-style:italic}
+  .lede{font-size:clamp(1.05rem,1.7vw,1.3rem);color:var(--muted);max-width:60ch;margin-top:22px}
+  .thesis{margin-top:26px;border-left:2px solid var(--seam);padding:6px 0 6px 20px;font-family:"Fraunces",serif;font-style:italic;font-size:clamp(1.1rem,1.9vw,1.45rem);color:var(--seam-soft);max-width:48ch;line-height:1.4}
+  .meta-row{margin-top:30px;display:flex;flex-wrap:wrap;gap:10px 26px;font-family:"JetBrains Mono",monospace;font-size:.73rem;color:var(--faint);letter-spacing:.04em}
+  .meta-row b{color:var(--muted);font-weight:500}
+
+  /* section scaffold */
+  section{padding:60px 0;border-top:1px solid var(--line)}
+  .sec-no{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;color:var(--harness);text-transform:uppercase}
+  h2{font-family:"Fraunces",serif;font-weight:340;font-size:clamp(1.9rem,3.5vw,2.8rem);letter-spacing:-.015em;line-height:1.08;margin:14px 0 14px;max-width:22ch}
+  .sec-intro{color:var(--muted);max-width:62ch;font-size:1.04rem}
+
+  /* the duality split */
+  .definition{margin-top:30px;background:linear-gradient(160deg,var(--panel),var(--ink-2));border:1px solid var(--line);border-radius:var(--radius);padding:30px 30px;font-size:1.06rem;color:var(--text)}
+  .definition b{color:var(--harness-soft)}
+  .split{display:grid;grid-template-columns:1fr auto 1fr;gap:0;margin-top:24px;align-items:stretch}
+  .col{padding:28px 26px;border:1px solid var(--line);background:var(--panel)}
+  .col.core{border-radius:var(--radius) 0 0 var(--radius);border-right:none}
+  .col.harness{border-radius:0 var(--radius) var(--radius) 0;border-left:none}
+  .seam-bar{width:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:
+     linear-gradient(180deg,rgba(243,163,92,.10),rgba(86,207,225,.10));border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .seam-bar .lab{writing-mode:vertical-rl;transform:rotate(180deg);font-family:"JetBrains Mono",monospace;font-size:.62rem;letter-spacing:.22em;text-transform:uppercase;color:var(--seam)}
+  .seam-bar .dot{width:8px;height:8px;border-radius:50%;background:var(--seam);box-shadow:0 0 14px var(--seam)}
+  .col h3{font-family:"Fraunces",serif;font-weight:440;font-size:1.35rem;margin-bottom:4px;letter-spacing:-.01em}
+  .col .tag{font-family:"JetBrains Mono",monospace;font-size:.62rem;letter-spacing:.16em;text-transform:uppercase;display:inline-block;margin-bottom:14px}
+  .col.core h3,.col.core .tag{color:var(--core-soft)}
+  .col.harness h3,.col.harness .tag{color:var(--harness-soft)}
+  .col ul{list-style:none;display:flex;flex-direction:column;gap:11px}
+  .col li{font-size:.92rem;color:var(--muted);padding-left:18px;position:relative;line-height:1.45}
+  .col li::before{content:"";position:absolute;left:0;top:.6em;width:6px;height:6px;border-radius:2px}
+  .col.core li::before{background:var(--core)}
+  .col.harness li::before{background:var(--harness)}
+  .scaffold-note{margin-top:16px;text-align:center;font-size:.9rem;color:var(--faint)}
+  .scaffold-note b{color:var(--seam-soft);font-weight:500}
+
+  /* scorecard */
+  .score{margin-top:34px;display:flex;flex-direction:column}
+  .srow{display:grid;grid-template-columns:auto minmax(0,1.5fr) auto;gap:18px;align-items:center;padding:16px 4px;border-bottom:1px solid var(--line)}
+  .layer-chip{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.1em;text-transform:uppercase;padding:5px 9px;border-radius:7px;border:1px solid;white-space:nowrap;min-width:78px;text-align:center}
+  .l-core{color:var(--core);border-color:rgba(243,163,92,.4);background:rgba(243,163,92,.08)}
+  .l-harness{color:var(--harness);border-color:rgba(86,207,225,.4);background:rgba(86,207,225,.08)}
+  .l-boundary{color:var(--seam);border-color:rgba(182,148,236,.4);background:rgba(182,148,236,.08)}
+  .srow .name{font-size:1rem;font-weight:520}
+  .srow .name span{display:block;font-size:.85rem;color:var(--faint);font-weight:340;margin-top:3px;line-height:1.4}
+  .mat{font-family:"JetBrains Mono",monospace;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;padding:5px 11px;border-radius:999px;border:1px solid rgba(255,107,107,.4);color:var(--crit);background:rgba(255,107,107,.08);white-space:nowrap}
+
+  /* findings */
+  .issues{display:flex;flex-direction:column;gap:14px;margin-top:34px}
+  .issue{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px 26px 24px 30px;position:relative;overflow:hidden;transition:border-color .35s,background .35s}
+  .issue::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--crit)}
+  .issue.high::before{background:var(--high)}
+  .issue:hover{border-color:var(--line-2);background:var(--panel-2)}
+  .issue .top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:11px}
+  .sev{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;padding:4px 9px;border-radius:6px;font-weight:700}
+  .sev.critical{background:rgba(255,107,107,.16);color:var(--crit)}
+  .sev.high{background:rgba(245,158,75,.16);color:var(--high)}
+  .issue h4{font-family:"Fraunces",serif;font-weight:440;font-size:1.22rem;letter-spacing:-.01em;flex:1;min-width:240px;line-height:1.18}
+  .issue .body{color:var(--muted);font-size:.97rem}
+  .issue .principle{margin-top:11px;font-size:.86rem;color:var(--seam-soft);font-style:italic;display:flex;gap:9px;align-items:baseline}
+  .issue .principle .pl{font-family:"JetBrains Mono",monospace;font-style:normal;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--seam);white-space:nowrap}
+  .issue .fix{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line-2);display:flex;gap:11px;align-items:baseline;font-size:.93rem}
+  .issue .fix .fl{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--green);white-space:nowrap;padding-top:2px}
+  .issue .fix p{color:var(--text)}
+
+  /* architecture */
+  .arch{display:flex;flex-direction:column;gap:18px;margin-top:34px}
+  .acard{background:linear-gradient(165deg,var(--panel),var(--ink-2));border:1px solid var(--line);border-radius:var(--radius);padding:30px 30px;position:relative;overflow:hidden;transition:transform .4s cubic-bezier(.2,.7,.2,1),border-color .4s}
+  .acard:hover{transform:translateY(-3px);border-color:var(--harness)}
+  .acard .anum{font-family:"JetBrains Mono",monospace;font-size:.66rem;letter-spacing:.16em;color:var(--harness);text-transform:uppercase}
+  .acard h3{font-family:"Fraunces",serif;font-weight:440;font-size:1.5rem;margin:8px 0 10px;letter-spacing:-.01em}
+  .acard .sum{color:var(--muted);font-size:.99rem;max-width:72ch}
+  .acard ul{list-style:none;margin-top:16px;display:flex;flex-direction:column;gap:9px}
+  .acard li{font-size:.92rem;color:var(--text);padding-left:20px;position:relative;line-height:1.5}
+  .acard li::before{content:"›";position:absolute;left:2px;color:var(--harness);font-weight:700}
+  .contract{margin-top:16px;background:#0b0d13;border:1px solid var(--line-2);border-radius:10px;padding:14px 16px;font-family:"JetBrains Mono",monospace;font-size:.74rem;color:var(--harness-soft);overflow-x:auto;line-height:1.55;white-space:pre-wrap}
+  .contract .ck{color:var(--seam-soft)}
+
+  /* shifts + mvp */
+  .shifts{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .shift{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 22px;display:flex;gap:16px;align-items:flex-start}
+  .shift .n{font-family:"Fraunces",serif;font-style:italic;font-size:1.9rem;color:var(--harness);opacity:.6;line-height:1}
+  .shift p{font-size:.95rem;color:var(--muted)}
+  .mvp{margin-top:30px;background:linear-gradient(135deg,rgba(86,207,225,.12),rgba(86,207,225,.02));border:1px solid rgba(86,207,225,.32);border-radius:var(--radius);padding:30px 32px}
+  .mvp h3{font-family:"Fraunces",serif;font-weight:460;font-size:1.5rem;color:var(--harness-soft);margin-bottom:16px}
+  .mvp ol{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:11px}
+  .mvp li{color:var(--text);font-size:.98rem;padding-left:6px}
+  .mvp li::marker{color:var(--harness);font-family:"JetBrains Mono",monospace;font-weight:700}
+
+  footer{border-top:1px solid var(--line);padding:30px 0 60px;text-align:center;color:var(--faint);font-family:"JetBrains Mono",monospace;font-size:.7rem;letter-spacing:.05em}
+
+  .reveal{opacity:0;transform:translateY(24px);transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+  .hero .reveal{transition-delay:calc(var(--i,0)*.09s)}
+
+  @media(max-width:780px){
+    .split{grid-template-columns:1fr}
+    .col.core{border-radius:var(--radius) var(--radius) 0 0;border-right:1px solid var(--line);border-bottom:none}
+    .col.harness{border-radius:0 0 var(--radius) var(--radius);border-left:1px solid var(--line);border-top:none}
+    .seam-bar{width:auto;flex-direction:row;padding:10px}
+    .seam-bar .lab{writing-mode:horizontal-tb;transform:none}
+    .shifts{grid-template-columns:1fr}
+    .srow{grid-template-columns:auto 1fr;gap:12px}
+    .srow .mat{grid-column:2;justify-self:start}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="kicker reveal" style="--i:0">Harness Engineering · System Study · June 2026</div>
+    <h1 class="reveal" style="--i:1">The model was never the problem. The <span class="h">harness</span> was missing.</h1>
+    <p class="lede reveal" style="--i:2">SOW-to-Jira is an AI pipeline with almost no engineering shell around the AI. This study separates the <span style="color:var(--core-soft)">core AI system</span> — the model, prompts, and decisions — from the <span style="color:var(--harness-soft)">harness</span> that's supposed to make it reliable, then re-audits and re-architects the whole system along that seam.</p>
+    <p class="thesis reveal" style="--i:3">“100% incomplete, zero merges, a critic flagging at zero confidence — none of these are model failures. They're holes where a harness should be.”</p>
+    <div class="meta-row reveal" style="--i:4">
+      <span><b>Subject</b> &nbsp;6 cognition agents · ~5,900 LOC</span>
+      <span><b>Method</b> &nbsp;12-agent harness-lens workflow</span>
+      <span><b>Verdict</b> &nbsp;Strong AI, near-absent harness</span>
+    </div>
+  </header>
+
+  <!-- WHAT IS THE HARNESS -->
+  <section>
+    <div class="sec-no reveal">01 — The two halves</div>
+    <h2 class="reveal">Core AI vs. harness — and the seam between them.</h2>
+    <div class="definition reveal">Harness engineering is building the deterministic shell around the AI so that turning a 103-page SOW into 509 Jira tickets is <b>measurable, repeatable, and controllable</b> — no matter which model or prompt is wired in. The agents are the AI: a model, a prompt, one decision. <b>Everything else is the harness:</b> enforcing the output contract, verifying what came back, gating low-confidence verdicts, tracking health and cost, keeping state durable, and recovering from failure deterministically. The split must be clean enough that you can swap models or rewrite a prompt without touching the engineering.</div>
+
+    <div class="split reveal">
+      <div class="col core">
+        <span class="tag">Non-deterministic · evolves freely</span>
+        <h3>The Core AI</h3>
+        <ul>
+          <li>Six cognition agents — each a model + prompt + one scoped decision (what tasks live here, is this actionable, are these duplicates, what's missing…)</li>
+          <li>The prompt templates the model consumes</li>
+          <li>The choice of model/provider per decision — free to swap GPT → Claude → local</li>
+        </ul>
+      </div>
+      <div class="seam-bar"><span class="dot"></span><span class="lab">The Contract</span><span class="dot"></span></div>
+      <div class="col harness">
+        <span class="tag">Deterministic · engineered for stability</span>
+        <h3>The Harness</h3>
+        <ul>
+          <li>Structured-output enforcement at the model boundary (Instructor over LiteLLM)</li>
+          <li>Computational verification — schema, truncation, "work-was-done" checks</li>
+          <li>Confidence gates before any verdict mutates a task</li>
+          <li>Typed StageResult + a pipeline state machine, durable & resumable</li>
+          <li>Per-run injected credentials, health report, and cost meter; an action gate on the Jira push</li>
+        </ul>
+      </div>
+    </div>
+    <p class="scaffold-note reveal">Between them sits <b>scaffolding</b> — the versioned, independently-tested boundary contract: a Pydantic response model + model policy per agent. It's where the non-deterministic model meets the deterministic harness.</p>
+  </section>
+
+  <!-- UPDATED AUDIT -->
+  <section>
+    <div class="sec-no reveal">02 — Updated audit, through the harness lens</div>
+    <h2 class="reveal">Where the system sits today.</h2>
+    <p class="sec-intro reveal">Each area tagged by which half it belongs to — <span style="color:var(--core)">core AI</span>, <span style="color:var(--harness)">harness</span>, or the <span style="color:var(--seam)">boundary</span> seam. The pattern is unmistakable: the cognition is fine, the harness is barely there.</p>
+
+    <div class="score">
+      <div class="srow reveal"><span class="layer-chip l-boundary">Boundary</span><div class="name">Scaffolding — prompts, model routing, response contracts<span>Response models exist but are never handed to the model — the contract is fictional.</span></div><span class="mat">Prototype</span></div>
+      <div class="srow reveal"><span class="layer-chip l-boundary">Boundary</span><div class="name">Structured-output enforcement & computational verification<span>The thinnest seam: regex scrape, hard-coded 4096 cap, silent-swallow — all three headline bugs trace here.</span></div><span class="mat">Prototype</span></div>
+      <div class="srow reveal"><span class="layer-chip l-harness">Harness</span><div class="name">Control loop & orchestration<span>A 270-line linear in-memory pass — no typed stage result, no resumability, no gates between stages.</span></div><span class="mat">Prototype</span></div>
+      <div class="srow reveal"><span class="layer-chip l-harness">Harness</span><div class="name">Guardrails, gating & error recovery<span>No confidence gate, no work-was-done check, no truncation check, no action guard on the Jira push.</span></div><span class="mat">Prototype</span></div>
+      <div class="srow reveal"><span class="layer-chip l-harness">Harness</span><div class="name">Evals, observability & cost control<span>Metrics emit to a no-op meter, telemetry off by default, no cost tracking, the eval harness gates nothing.</span></div><span class="mat">Prototype</span></div>
+      <div class="srow reveal"><span class="layer-chip l-harness">Harness</span><div class="name">State, durability & isolation<span>Runs die with the worker; provider and credentials are process-global, risking cross-tenant bleed.</span></div><span class="mat">Prototype</span></div>
+    </div>
+  </section>
+
+  <!-- FINDINGS -->
+  <section>
+    <div class="sec-no reveal">03 — The findings, as harness gaps</div>
+    <h2 class="reveal">Every headline bug is a missing piece of harness.</h2>
+    <p class="sec-intro reveal">Problem in plain language, the harness principle it violates, and the fix.</p>
+
+    <div class="issues">
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-boundary">Boundary</span><h4>The output contract is fictional</h4></div>
+        <p class="body">The system has typed shapes the AI is meant to fill, but never asks it to — it requests free text, scrapes it, checks the scrap against the shape, and quietly drops whatever doesn't fit. A malformed answer looks identical to no answer.</p>
+        <p class="principle"><span class="pl">Principle</span>Structured output is the contract, not a parse step.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Hand the Pydantic response model to the call via Instructor; the only thing crossing the seam is a valid object or a typed FAILED. Add the three missing response models.</p></div>
+      </div>
+
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-boundary">Boundary</span><h4>A hard 4096 cap silently truncates big answers</h4></div>
+        <p class="body">Every AI call is capped at the same small output size regardless of the job. On the big run the duplicate-finder's answer was cut off mid-sentence, became unreadable, and the system reported "zero duplicates" instead of "truncated."</p>
+        <p class="principle"><span class="pl">Principle</span>Size the token budget to the payload; never hard-code it.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Remove the fixed 4096; size the budget per call; treat a length cut-off as a first-class failure that retries bigger or returns DEGRADED. Batch dedup pairs so each call fits.</p></div>
+      </div>
+
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-harness">Harness</span><h4>Failures are swallowed and look like success</h4></div>
+        <p class="body">When any AI step breaks, the code hands back what it got and carries on — so a broken run and a perfect run are indistinguishable. The first real run looked clean while its dedup step was quietly dead.</p>
+        <p class="principle"><span class="pl">Principle</span>Failure is data, never a swallowed exception.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Each stage returns a typed StageResult (OK / DEGRADED / FAILED + reason). Ban the "except → return inputs" pattern; one exception boundary in the stage runner.</p></div>
+      </div>
+
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-harness">Harness</span><h4>No confidence gate → 100% flagged INCOMPLETE</h4></div>
+        <p class="body">If the coverage checker suspects anything is missing — even a low-confidence hunch — it marks every task in that section incomplete. Run across all sections before duplicates are removed, that flagged 100% of tickets.</p>
+        <p class="principle"><span class="pl">Principle</span>No model verdict mutates a task below its confidence gate.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Gate INCOMPLETE on the checker's own confidence clearing a floor, applied once post-dedup at the batch level — not per-section, verbatim, in the loop.</p></div>
+      </div>
+
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-harness">Harness</span><h4>Critic flags fire at zero confidence</h4></div>
+        <p class="body">The reviewer agent slaps warning labels on tasks even when it openly says it has zero confidence in its own judgment. A model that's effectively shrugging still gets to mark every ticket problematic.</p>
+        <p class="principle"><span class="pl">Principle</span>Inferential verifiers must themselves be confidence-gated.</p>
+        <div class="fix"><span class="fl">Fix</span><p>A single confidence floor across both the fix and flag paths. A conf=0.00 critique produces no flag and no mutation.</p></div>
+      </div>
+
+      <div class="issue reveal high"><div class="top"><span class="sev high">High</span><span class="layer-chip l-harness">Harness</span><h4>No "work-was-done" check</h4></div>
+        <p class="body">The dedup step found many near-identical pairs, got an unusable cut-off answer, and concluded "no duplicates" — the worst possible reading. Nothing flagged that it achieved nothing on an obviously non-trivial workload.</p>
+        <p class="principle"><span class="pl">Principle</span>Verify both ways — did this stage actually do work?</p>
+        <div class="fix"><span class="fl">Fix</span><p>A deterministic assertion: dedup over N candidates yielding 0 merges marks the stage DEGRADED, tied to the truncation check.</p></div>
+      </div>
+
+      <div class="issue reveal high"><div class="top"><span class="sev high">High</span><span class="layer-chip l-boundary">Boundary</span><h4>No action guard on the Jira push</h4></div>
+        <p class="body">Nothing stops a half-baked or flagged ticket from being pushed into the real Jira project. The riskiest, hardest-to-undo step has the weakest safety check — flags become labels, never blocks.</p>
+        <p class="principle"><span class="pl">Principle</span>Tool/action guardrails before an irreversible side effect.</p>
+        <div class="fix"><span class="fl">Fix</span><p>A PushGate blocks tasks carrying INCOMPLETE / LOW_CONFIDENCE flags, or any task from a DEGRADED/FAILED run, without an explicit reviewer override.</p></div>
+      </div>
+
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-harness">Harness</span><h4>The pipeline can't tell if a step worked</h4></div>
+        <p class="body">All steps run in one long straight-line function that never asks "did that work?" A broken step and a good step look identical to the code after them, so a half-broken run finishes reporting success.</p>
+        <p class="principle"><span class="pl">Principle</span>Per-stage health as a typed result; failure is data.</p>
+        <div class="fix"><span class="fl">Fix</span><p>A Stage protocol + a StageRunner that owns the one exception boundary, timing, verify, gate, and persist — and a pipeline state machine that gates on each predecessor's status.</p></div>
+      </div>
+
+      <div class="issue reveal high"><div class="top"><span class="sev high">High</span><span class="layer-chip l-harness">Harness</span><h4>Quality checks run in the wrong order</h4></div>
+        <p class="body">The verify steps run too early — judging tasks before duplicates are removed, then immediately mutating them on opinions that were never confidence-checked. The ordering itself manufactures noise.</p>
+        <p class="principle"><span class="pl">Principle</span>Plan → execute → verify; only gated verdicts mutate state.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Node loop plans/extracts only; dedup executes; critic + coverage run as a single post-dedup, gated batch over the final task set.</p></div>
+      </div>
+
+      <div class="issue reveal high"><div class="top"><span class="sev high">High</span><span class="layer-chip l-harness">Harness</span><h4>No resumability — a crash loses everything</h4></div>
+        <p class="body">If the server restarts partway through a long run, all work so far is thrown away and the user re-processes the whole PDF, including the expensive indexing and extraction.</p>
+        <p class="principle"><span class="pl">Principle</span>Stages are deterministic and resumable, not an open loop.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Persist each stage result as it completes; on restart resume from the first incomplete stage.</p></div>
+      </div>
+
+      <div class="issue reveal"><div class="top"><span class="sev critical">Critical</span><span class="layer-chip l-harness">Harness</span><h4>Credentials & model are process-global</h4></div>
+        <p class="body">One set of credentials and one selected model for the whole process. Two concurrent runs — or a mid-run settings change — can push to the wrong Jira or call the wrong model with the wrong key. A real leak risk and the biggest multi-user blocker.</p>
+        <p class="principle"><span class="pl">Principle</span>Environment is injected per run, not read from globals.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Resolve a validated provider config once at a composition root and inject it into the run, the LLM client, and the Jira client. Stop writing creds into the environment.</p></div>
+      </div>
+
+      <div class="issue reveal high"><div class="top"><span class="sev high">High</span><span class="layer-chip l-harness">Harness</span><h4>The measurement half is absent</h4></div>
+        <p class="body">The code counts tokens and durations then throws them away (the meter was never connected); telemetry ships off by default; there's no dollar cost anywhere; and the quality grader in the repo never grades a run.</p>
+        <p class="principle"><span class="pl">Principle</span>Cost and health are first-class run outputs.</p>
+        <div class="fix"><span class="fl">Fix</span><p>Connect a real meter; split local health from remote sync; add a cost meter; roll it into a per-run health report; wire a golden-set eval into CI with quality bands.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section>
+    <div class="sec-no reveal">04 — The elevated architecture</div>
+    <h2 class="reveal">A harness-engineered SOW-to-Jira.</h2>
+    <p class="sec-intro reveal">Four moves that build the missing shell — and make the three headline bugs <em>structurally impossible</em> rather than merely fixed.</p>
+
+    <div class="arch">
+      <div class="acard reveal">
+        <div class="anum">A · The Seam</div>
+        <h3>AgentSpec (scaffolding) + AgentRunner (harness)</h3>
+        <p class="sum">Split the fused agent into two named artifacts with one typed contract between them. The cognition side becomes a frozen, versioned <b>AgentSpec</b>; the harness side becomes a single <b>AgentRunner</b> every model call must cross. Cross this seam and 100%-INCOMPLETE, the silent dedup no-op, and conf=0.00 flagging all become impossible — while swapping a model or prompt is an AgentSpec edit the harness never notices.</p>
+        <ul>
+          <li>AgentSpec[I,O] holds all cognition: prompt, builder, response_model (the contract), model policy, gate thresholds — lifted into <code>pipeline/specs/</code> with fixture tests, no I/O.</li>
+          <li>AgentRunner.run is the one path: build prompt → call in structured-output mode → size tokens → reject truncation → reprompt on schema error → gate → record cost/health → return StageResult.</li>
+          <li>Existing response models get promoted from after-the-fact parse targets to what the model is forced to emit.</li>
+          <li>The six agent classes shrink to one-liners; only OK/gated output may mutate tasks.</li>
+        </ul>
+        <div class="contract"><span class="ck">StageResult[O]</span>: status: Literal['OK','DEGRADED','FAILED']; output: O | None;
+  reason: str; agent: str; spec_version: str;
+  tokens_in: int; tokens_out: int; cost_usd: float; finish_reason: str</div>
+      </div>
+
+      <div class="acard reveal">
+        <div class="anum">B · The Control Plane</div>
+        <h3>A typed Plan-Execute-Verify pipeline runner</h3>
+        <p class="sum">Replace the 270-line linear run() with a Stage protocol, a StageRunner that owns the one exception boundary, and a pipeline state machine. The stage order encodes the PEV "sandwich" and runs verify <em>post-dedup</em> — which alone fixes two of the three headline bugs and makes degraded runs visibly distinct from clean ones.</p>
+        <ul>
+          <li>The StageRunner — not the agent — owns timing, the single try/except, the work-was-done check, persistence, and the predecessor gate.</li>
+          <li>Stages: PLAN (classify, extract) → EXECUTE (state, dedup) → VERIFY (coverage, critic, gap-recovery) → PERSIST.</li>
+          <li>Run status = the worst stage status; a FAILED predecessor SKIPS dependents (recorded, not silent).</li>
+          <li>Each stage result is persisted, enabling resume-from so a crash at node 80 of 103 is recoverable.</li>
+        </ul>
+        <div class="contract">class <span class="ck">Stage</span>(Protocol): name: str; requires: list[str];
+  def execute(ctx) -&gt; StageOutput;
+  def verify(out, ctx) -&gt; tuple[StageStatus, str]</div>
+      </div>
+
+      <div class="acard reveal">
+        <div class="anum">C · The Guardrail Band</div>
+        <h3>A deterministic verification & gating layer</h3>
+        <p class="sum">A thin, fully-tested band every agent output crosses after the schema check and before any mutation — the only code allowed to decide whether a verdict is trustworthy enough to act on. Floors are config, not code, and are unit-tested with no model in the loop.</p>
+        <ul>
+          <li><code>verify.py</code> — computational, always-on, no LLM: assert_work_done (0 merges on &gt;N items → DEGRADED), assert_finish_complete, assert_nonempty_when_expected.</li>
+          <li>CriticGate.admit_flags returns nothing below the floor — kills conf=0.00 flagging.</li>
+          <li>CoverageGate.apply is run-wide, post-dedup, report-level, gated on confidence — the structural fix for 100% INCOMPLETE.</li>
+          <li>PushGate.assert_pushable blocks the Jira push for flagged or degraded-run tasks without override.</li>
+        </ul>
+        <div class="contract"><span class="ck">ConfidenceGate</span>: field: str; floor: float;
+  on_reject: Literal['drop','flag_low_confidence'];
+  def admit(obj) -&gt; bool</div>
+      </div>
+
+      <div class="acard reveal">
+        <div class="anum">D · The Measurement Harness</div>
+        <h3>Eval, observability & cost</h3>
+        <p class="sum">The half that makes the agent observable, gradeable, and affordable — all hanging off the single model-call seam and the typed contracts, so models and prompts can change without touching agent code. It turns the three production failures into red CI and makes a degraded run show a badge instead of a green "Pipeline Complete."</p>
+        <ul>
+          <li>Record/replay cassettes at the call seam + an eval harness that replays a frozen 103-node fixture and asserts quality bands in CI (incomplete_rate &lt;= 0.40, merge_count &gt;= 1, zero_conf_flags == 0, no DEGRADED).</li>
+          <li>A per-run health report assembled from per-stage health, persisted and surfaced as a DEGRADED badge in the UI.</li>
+          <li>Tracing behind a port with one Langfuse adapter injected from the composition root, keyed by user & run.</li>
+          <li>A cost meter accumulated into the run report; the node cap gains a max-run-cost companion.</li>
+        </ul>
+        <div class="contract">class <span class="ck">LLMResult</span>(BaseModel): content: str; finish_reason: str;
+  prompt_tokens: int; completion_tokens: int; usd_cost: float</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SHIFTS -->
+  <section>
+    <div class="sec-no reveal">05 — The structural shifts</div>
+    <h2 class="reveal">Four moves, in priority order.</h2>
+    <div class="shifts">
+      <div class="shift reveal"><span class="n">1</span><p><b style="color:var(--harness-soft)">Make the contract real.</b> Hand the response model to the call (Instructor / JSON-mode); delete the regex scrape and the swallow-after-parse. Only a valid object or a typed FAILED crosses the seam.</p></div>
+      <div class="shift reveal"><span class="n">2</span><p><b style="color:var(--harness-soft)">Replace silent-swallow with StageResult.</b> Ban "except → return inputs" across all six agents; one exception boundary in the StageRunner so failure becomes visible run state.</p></div>
+      <div class="shift reveal"><span class="n">3</span><p><b style="color:var(--harness-soft)">Move every confidence gate into the harness.</b> Symmetric across critic fix and flag; coverage INCOMPLETE gated on confidence and applied post-dedup at batch level.</p></div>
+      <div class="shift reveal"><span class="n">4</span><p><b style="color:var(--harness-soft)">Inject environment; make stages durable.</b> Provider config from a composition root instead of globals, per-stage persistence, and a PEV state machine instead of a 270-line linear pass.</p></div>
+    </div>
+  </section>
+
+  <!-- MVP HARNESS -->
+  <section>
+    <div class="sec-no reveal">06 — Where to start</div>
+    <h2 class="reveal">The minimum viable harness.</h2>
+    <p class="sec-intro reveal">The smallest set that makes the engine trustworthy — do this before any of the platform-shaped migration work.</p>
+    <div class="mvp reveal">
+      <h3>Build these first</h3>
+      <ol>
+        <li><b>Structured output at the seam</b> — the model call takes a response model via Instructor; delete the regex scrape.</li>
+        <li><b>Kill the 4096 truncation</b> — size tokens to the payload, treat a length cut-off as a typed failure, batch dedup pairs.</li>
+        <li><b>Typed StageResult + ban silent-swallow</b> — every agent returns OK / DEGRADED / FAILED with a reason.</li>
+        <li><b>The two confidence gates</b> — CriticGate (no conf=0.00 flags) and CoverageGate (gated, post-dedup, batch).</li>
+        <li><b>Work-was-done check</b> — dedup over 100+ candidates merging 0 marks the stage DEGRADED.</li>
+        <li><b>Per-run health report</b> — surface OK / DEGRADED / FAILED plus cost, so a degraded run is visibly distinct from a clean one.</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    SOW-to-Jira · Harness Engineering Study · 2026-06-12 · Full detail in HARNESS-ARCHITECTURE.md · companion to AUDIT · ARCHITECTURE · ELEVATION-PLAN · RENDER-MIGRATION
+  </footer>
+
+</div>
+<script>
+  window.addEventListener('load',()=>document.querySelectorAll('.hero .reveal').forEach(el=>el.classList.add('in')));
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.1,rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.reveal:not(.hero .reveal)').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

@@ -2,8 +2,11 @@
 
 import json
 from pathlib import Path
+
 import opendataloader_pdf
-from pipeline.observability import logger, tracer, trace_span
+
+from pipeline.observability import logger, trace_span
+
 
 class PDFParser:
     """
@@ -149,7 +152,9 @@ def _table_to_markdown(elem: dict) -> str:
             # A cell might have "content" or "kids" containing paragraphs
             content = cell_obj.get("content", "")
             if not content and "kids" in cell_obj:
-                content = " ".join([k.get("content", "") for k in cell_obj["kids"] if isinstance(k, dict)])
+                content = " ".join(
+                    [k.get("content", "") for k in cell_obj["kids"] if isinstance(k, dict)]
+                )
             cells.append(str(content).replace("|", "\\|").strip())
         
         lines.append("| " + " | ".join(cells) + " |")

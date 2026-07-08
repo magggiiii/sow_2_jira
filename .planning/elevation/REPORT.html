@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOW-to-Jira — System Health Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,400..600&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0c0b10;
+    --ink-2:#131119;
+    --panel:#16131f;
+    --panel-2:#1c1828;
+    --line:rgba(255,255,255,.08);
+    --line-2:rgba(255,255,255,.14);
+    --text:#ece7df;
+    --muted:#9c93a8;
+    --faint:#6c6478;
+    --gold:#f0b45a;
+    --gold-soft:#f6cf93;
+    --crit:#ff6b6b;
+    --high:#f59e4b;
+    --med:#e0c54a;
+    --teal:#5fd0c0;
+    --green:#7bd88f;
+    --radius:18px;
+    --maxw:1080px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:"Hanken Grotesk",sans-serif;
+    font-weight:380;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  /* atmospheric background */
+  body::before{
+    content:"";position:fixed;inset:0;z-index:-2;
+    background:
+      radial-gradient(900px 600px at 80% -5%, rgba(240,180,90,.10), transparent 60%),
+      radial-gradient(700px 500px at -5% 20%, rgba(95,208,192,.07), transparent 55%),
+      radial-gradient(800px 700px at 50% 110%, rgba(255,107,107,.06), transparent 60%);
+  }
+  body::after{
+    content:"";position:fixed;inset:0;z-index:-1;opacity:.025;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  a{color:inherit}
+
+  /* ---------- intro / hero ---------- */
+  header.hero{padding:88px 0 56px;position:relative}
+  .kicker{
+    font-family:"JetBrains Mono",monospace;
+    font-size:.72rem;letter-spacing:.32em;text-transform:uppercase;
+    color:var(--gold);display:flex;align-items:center;gap:14px;
+  }
+  .kicker::before{content:"";width:42px;height:1px;background:var(--gold);display:inline-block}
+  h1{
+    font-family:"Fraunces",serif;
+    font-weight:340;
+    font-size:clamp(2.7rem,6.4vw,5.1rem);
+    line-height:1.02;letter-spacing:-.02em;
+    margin:26px 0 8px;
+    max-width:16ch;
+  }
+  h1 em{font-style:italic;color:var(--gold-soft)}
+  .lede{
+    font-size:clamp(1.05rem,1.7vw,1.32rem);
+    color:var(--muted);max-width:54ch;font-weight:340;margin-top:18px;
+  }
+  .meta-row{
+    margin-top:34px;display:flex;flex-wrap:wrap;gap:10px 26px;
+    font-family:"JetBrains Mono",monospace;font-size:.74rem;color:var(--faint);
+    letter-spacing:.04em;
+  }
+  .meta-row b{color:var(--muted);font-weight:500}
+
+  /* ---------- stat band ---------- */
+  .stats{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+    background:var(--line);border:1px solid var(--line);
+    border-radius:var(--radius);overflow:hidden;margin:54px 0 8px;
+  }
+  .stat{background:var(--panel);padding:30px 26px;position:relative}
+  .stat .num{font-family:"Fraunces",serif;font-size:clamp(2.4rem,4vw,3.3rem);font-weight:400;line-height:1;letter-spacing:-.02em}
+  .stat.c .num{color:var(--crit)}
+  .stat.h .num{color:var(--high)}
+  .stat.p .num{color:var(--gold)}
+  .stat .lab{margin-top:10px;font-size:.82rem;color:var(--muted);line-height:1.4}
+  .stat .sub{font-family:"JetBrains Mono",monospace;font-size:.66rem;color:var(--faint);margin-top:6px;letter-spacing:.04em}
+
+  /* ---------- section scaffolding ---------- */
+  section{padding:64px 0;border-top:1px solid var(--line)}
+  .sec-no{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;color:var(--gold);text-transform:uppercase}
+  h2{
+    font-family:"Fraunces",serif;font-weight:340;
+    font-size:clamp(1.9rem,3.6vw,2.9rem);letter-spacing:-.015em;line-height:1.08;
+    margin:14px 0 14px;max-width:20ch;
+  }
+  .sec-intro{color:var(--muted);max-width:60ch;font-size:1.04rem}
+
+  /* ---------- themes ---------- */
+  .themes{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:40px}
+  .theme{
+    background:linear-gradient(160deg,var(--panel),var(--ink-2));
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:30px 28px;position:relative;overflow:hidden;
+    transition:transform .4s cubic-bezier(.2,.7,.2,1),border-color .4s;
+  }
+  .theme:hover{transform:translateY(-4px);border-color:var(--line-2)}
+  .theme .tnum{
+    font-family:"Fraunces",serif;font-style:italic;font-size:2.4rem;color:var(--gold);
+    opacity:.5;line-height:1;
+  }
+  .theme h3{font-family:"Fraunces",serif;font-weight:420;font-size:1.4rem;margin:10px 0 10px;letter-spacing:-.01em}
+  .theme p{color:var(--muted);font-size:.96rem}
+  .theme .tag{
+    display:inline-block;margin-top:16px;font-family:"JetBrains Mono",monospace;
+    font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;
+    padding:5px 10px;border-radius:999px;border:1px solid var(--line-2);color:var(--faint);
+  }
+
+  /* ---------- scorecard ---------- */
+  .score{margin-top:38px;display:flex;flex-direction:column;gap:2px}
+  .row{
+    display:grid;grid-template-columns:minmax(0,1.4fr) 1fr auto;
+    align-items:center;gap:20px;padding:17px 4px;border-bottom:1px solid var(--line);
+  }
+  .row .name{font-size:1rem;font-weight:480}
+  .row .name span{display:block;font-size:.8rem;color:var(--faint);font-weight:340;margin-top:3px}
+  .bar{height:7px;border-radius:99px;background:rgba(255,255,255,.06);position:relative;overflow:hidden}
+  .bar i{position:absolute;inset:0 100% 0 0;border-radius:99px;transition:right 1.1s cubic-bezier(.2,.8,.2,1)}
+  .badge{
+    font-family:"JetBrains Mono",monospace;font-size:.64rem;letter-spacing:.12em;
+    text-transform:uppercase;padding:5px 11px;border-radius:999px;white-space:nowrap;
+    border:1px solid;
+  }
+  .poc{color:var(--crit);border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
+  .partial{color:var(--gold);border-color:rgba(240,180,90,.4);background:rgba(240,180,90,.08)}
+  .prod{color:var(--green);border-color:rgba(123,216,143,.4);background:rgba(123,216,143,.08)}
+  .bar i.poc-f{background:linear-gradient(90deg,#ff6b6b,#ff9a6b)}
+  .bar i.partial-f{background:linear-gradient(90deg,#f0b45a,#f6cf93)}
+
+  /* ---------- critical issue cards ---------- */
+  .issues{display:flex;flex-direction:column;gap:14px;margin-top:38px}
+  .issue{
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:24px 26px 24px 30px;position:relative;overflow:hidden;
+    transition:border-color .35s,background .35s;
+  }
+  .issue::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--crit)}
+  .issue.h::before{background:var(--high)}
+  .issue:hover{border-color:var(--line-2);background:var(--panel-2)}
+  .issue .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .sev{
+    font-family:"JetBrains Mono",monospace;font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;
+    padding:4px 9px;border-radius:6px;font-weight:700;
+  }
+  .sev.crit{background:rgba(255,107,107,.16);color:var(--crit)}
+  .sev.high{background:rgba(245,158,75,.16);color:var(--high)}
+  .issue h4{font-family:"Fraunces",serif;font-weight:440;font-size:1.28rem;letter-spacing:-.01em;flex:1;min-width:240px}
+  .issue .body{color:var(--muted);font-size:.98rem}
+  .issue .fix{
+    margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-2);
+    display:flex;gap:12px;align-items:baseline;font-size:.94rem;
+  }
+  .issue .fix .flab{font-family:"JetBrains Mono",monospace;font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--green);white-space:nowrap;padding-top:2px}
+  .issue .fix p{color:var(--text)}
+  .ref{display:inline-block;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:.66rem;color:var(--faint)}
+
+  /* ---------- waves ---------- */
+  .quickwin{
+    margin-top:36px;background:linear-gradient(135deg,rgba(240,180,90,.14),rgba(240,180,90,.03));
+    border:1px solid rgba(240,180,90,.35);border-radius:var(--radius);padding:30px 30px;
+    display:flex;gap:22px;align-items:flex-start;
+  }
+  .quickwin .ic{font-size:2rem;line-height:1}
+  .quickwin h3{font-family:"Fraunces",serif;font-weight:460;font-size:1.5rem;color:var(--gold-soft);margin-bottom:6px}
+  .quickwin p{color:var(--muted);font-size:.98rem}
+  .quickwin b{color:var(--text)}
+
+  .waves{margin-top:30px;display:flex;flex-direction:column}
+  .wave{
+    display:grid;grid-template-columns:auto 1fr;gap:26px;padding:26px 0;
+    border-bottom:1px solid var(--line);position:relative;
+  }
+  .wave .wnum{
+    font-family:"Fraunces",serif;font-style:italic;font-weight:400;
+    font-size:2.2rem;color:var(--faint);min-width:84px;line-height:1.1;
+  }
+  .wave .wnum b{display:block;font-family:"JetBrains Mono",monospace;font-style:normal;font-size:.6rem;letter-spacing:.16em;color:var(--gold);margin-top:6px}
+  .wave h3{font-family:"Fraunces",serif;font-weight:440;font-size:1.35rem;margin-bottom:7px;letter-spacing:-.01em}
+  .wave p{color:var(--muted);font-size:.97rem;max-width:64ch}
+  .wave .chips{margin-top:13px;display:flex;gap:8px;flex-wrap:wrap}
+  .chip{font-family:"JetBrains Mono",monospace;font-size:.62rem;letter-spacing:.06em;padding:5px 10px;border-radius:7px;border:1px solid var(--line-2);color:var(--muted)}
+  .chip.block{color:var(--high);border-color:rgba(245,158,75,.35);background:rgba(245,158,75,.07)}
+  .chip.eff{color:var(--teal);border-color:rgba(95,208,192,.3)}
+
+  /* ---------- closing ---------- */
+  .closing{text-align:center;padding:80px 0 30px}
+  .closing h2{margin:0 auto 18px;max-width:24ch}
+  .closing p{color:var(--muted);max-width:52ch;margin:0 auto}
+  .path{
+    margin:38px auto 0;max-width:760px;display:flex;align-items:center;justify-content:center;
+    gap:6px;flex-wrap:wrap;font-family:"JetBrains Mono",monospace;font-size:.72rem;color:var(--muted);
+  }
+  .path .node{padding:8px 12px;border:1px solid var(--line-2);border-radius:8px;background:var(--panel)}
+  .path .node.hl{border-color:var(--gold);color:var(--gold-soft)}
+  .path .arrow{color:var(--faint)}
+
+  footer{border-top:1px solid var(--line);padding:30px 0 60px;text-align:center;color:var(--faint);font-family:"JetBrains Mono",monospace;font-size:.7rem;letter-spacing:.06em}
+
+  /* ---------- reveal animation ---------- */
+  .reveal{opacity:0;transform:translateY(26px);transition:opacity .8s cubic-bezier(.2,.7,.2,1),transform .8s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+  .hero .reveal{transition-delay:calc(var(--i,0)*.09s)}
+
+  @media(max-width:760px){
+    .stats{grid-template-columns:1fr 1fr}
+    .themes{grid-template-columns:1fr}
+    .row{grid-template-columns:1fr auto;gap:12px}
+    .row .bar{display:none}
+    .wave{grid-template-columns:1fr;gap:10px}
+    .quickwin{flex-direction:column;gap:12px}
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="kicker reveal" style="--i:0">System Health Report · June 2026</div>
+    <h1 class="reveal" style="--i:1">It works on one laptop. <em>It isn't ready for the world — yet.</em></h1>
+    <p class="lede reveal" style="--i:2">We audited every part of SOW-to-Jira ahead of moving it to a hosted, multi-user product. The honest verdict: solid bones, prototype plumbing. Here's exactly what's holding it back — and the plan to fix it.</p>
+    <div class="meta-row reveal" style="--i:3">
+      <span><b>Project</b> &nbsp;SOW-to-Jira Extraction Engine</span>
+      <span><b>Reviewed</b> &nbsp;10 subsystems · ~5,900 lines</span>
+      <span><b>Method</b> &nbsp;18-agent automated audit</span>
+    </div>
+
+    <div class="stats reveal" style="--i:4">
+      <div class="stat c"><div class="num">13</div><div class="lab">Critical issues</div><div class="sub">must-fix before launch</div></div>
+      <div class="stat h"><div class="num">29</div><div class="lab">High-priority issues</div><div class="sub">fix soon after</div></div>
+      <div class="stat p"><div class="num">8/10</div><div class="lab">Subsystems still prototype-grade</div><div class="sub">only 2 are "partial"</div></div>
+      <div class="stat"><div class="num">83</div><div class="lab">Total findings</div><div class="sub">all traced to real code</div></div>
+    </div>
+  </header>
+
+  <!-- THE BIG PICTURE -->
+  <section>
+    <div class="sec-no reveal">01 — The big picture</div>
+    <h2 class="reveal">Four things explain almost everything we found.</h2>
+    <p class="sec-intro reveal">Strip away the detail and the 83 findings collapse into four root themes. Fix these four and the system stops being a demo and starts being a product.</p>
+
+    <div class="themes">
+      <div class="theme reveal">
+        <div class="tnum">01</div>
+        <h3>There's no concept of "who"</h3>
+        <p>The app has no users, accounts, or logins anywhere in it. Everything lives in one shared pile on the machine's hard drive. The moment two people use it, they'd see each other's documents — and unknowingly spend each other's AI and Jira credentials.</p>
+        <span class="tag">Blocks multi-user</span>
+      </div>
+      <div class="theme reveal">
+        <div class="tnum">02</div>
+        <h3>The work happens in a fragile place</h3>
+        <p>A long extraction job runs <em>inside</em> the website process and saves everything to local disk. On a hosted platform that disk gets wiped on every routine update — so a job in progress is lost, finished results vanish, and the AI bill has to be paid all over again.</p>
+        <span class="tag">Data loss on deploy</span>
+      </div>
+      <div class="theme reveal">
+        <div class="tnum">03</div>
+        <h3>The smart core is mis-firing</h3>
+        <p>On the first real document, the AI pipeline flagged <em>100% of tickets</em> as “incomplete,” merged zero duplicates, and the quality-checker had zero confidence in its own answers. Most of this traces to a single overly-tight setting that quietly cuts long AI responses off mid-sentence.</p>
+        <span class="tag">Output not yet trustworthy</span>
+      </div>
+      <div class="theme reveal">
+        <div class="tnum">04</div>
+        <h3>The doors are unlocked</h3>
+        <p>No login means anyone with the link could run up bills or read everything. Secret keys can get baked into the shipped app. And the headline “Push to Jira” button is actually broken right now — it crashes every single time it's pressed.</p>
+        <span class="tag">Security &amp; a dead feature</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCORECARD -->
+  <section>
+    <div class="sec-no reveal">02 — Maturity scorecard</div>
+    <h2 class="reveal">How production-ready is each part?</h2>
+    <p class="sec-intro reveal"><b style="color:var(--crit)">Prototype</b> = works but built for a demo. <b style="color:var(--gold)">Partial</b> = real engineering, but fragile or incomplete. <b style="color:var(--green)">Production</b> = solid for many users. Today nothing is in the green.</p>
+
+    <div class="score">
+      <div class="row reveal"><div class="name">Pipeline core &amp; orchestration<span>How a document moves through the steps</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">Intelligence agents<span>Extraction, de-duplication, quality checks</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">LLM routing &amp; providers<span>Talking to the AI models</span></div><div class="bar"><i class="partial-f" data-w="34"></i></div><div class="badge partial">Partial</div></div>
+      <div class="row reveal"><div class="name">Web / API surface &amp; UI<span>The screens and the buttons</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">Jira integration<span>Creating the tickets</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">Persistence &amp; state<span>Where data is saved</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">Observability<span>Logs &amp; monitoring</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">Testing &amp; quality gates<span>Catching bugs before users do</span></div><div class="bar"><i class="partial-f" data-w="34"></i></div><div class="badge partial">Partial</div></div>
+      <div class="row reveal"><div class="name">Security &amp; secrets<span>Locks, keys, and access</span></div><div class="bar"><i class="poc-f" data-w="67"></i></div><div class="badge poc">Prototype</div></div>
+      <div class="row reveal"><div class="name">Domain model &amp; schemas<span>How data is structured</span></div><div class="bar"><i class="partial-f" data-w="34"></i></div><div class="badge partial">Partial</div></div>
+    </div>
+  </section>
+
+  <!-- CRITICAL ISSUES -->
+  <section>
+    <div class="sec-no reveal">03 — What needs fixing first</div>
+    <h2 class="reveal">The issues that genuinely block launch.</h2>
+    <p class="sec-intro reveal">In plain terms — the problem, and the fix. Each one is tied to real lines of code in the audit.</p>
+
+    <div class="issues">
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>The “Push to Jira” button is broken</h4></div>
+        <p class="body">The product's headline feature crashes the instant it's used — a missing line of code means every push fails. It clearly hasn't been run since a past refactor.</p>
+        <div class="fix"><span class="flab">The fix</span><p>One-line import fix, plus an automatic test so this can never silently break again.</p></div>
+        <span class="ref">server.py:664 · NameError on every push</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>Secret keys can leak into the shipped app</h4></div>
+        <p class="body">There's no rule telling the build what to leave out, so a real GitHub token and other live secrets get copied into the packaged application — recoverable by anyone who can inspect it.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Add a 6-line ignore file and rotate the exposed keys. ~10 minutes. <b style="color:var(--gold-soft)">This is the single best effort-to-payoff fix in the whole report.</b></p></div>
+        <span class="ref">no .dockerignore · Dockerfile COPY . .</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>Anyone with the link gets in</h4></div>
+        <p class="body">There is no login on any screen or action. On the open internet, a stranger could upload files, trigger AI spend, and read or delete every document.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Add Google sign-in (limited to your company), and tie every piece of data to the person who owns it.</p></div>
+        <span class="ref">every /api route · no auth guard</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>Users would spend each other's credentials</h4></div>
+        <p class="body">Everyone's AI and Jira keys are stored in one shared slot. If two people run jobs at once, one person's work quietly gets billed to — and pushed under — the other person's account.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Give every user their own encrypted keys in the database, used only for their own runs.</p></div>
+        <span class="ref">shared settings + os.environ credentials</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>Long jobs die on every update — and lose everything</h4></div>
+        <p class="body">Extraction runs inside the web server and keeps all its progress in memory. A routine restart kills the job halfway with no way to resume, so the whole document has to be re-processed (and re-paid for).</p>
+        <div class="fix"><span class="flab">The fix</span><p>Move heavy jobs to a dedicated background worker with a proper queue, so they survive restarts and scale up.</p></div>
+        <span class="ref">in-process BackgroundTask · no checkpoints</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>Saved work disappears on every deploy</h4></div>
+        <p class="body">All documents, results, and history are written to the local hard drive — which a hosted platform erases on each update. Your session list would silently empty out after every release.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Move data to a real database and file storage that persist independently of the app.</p></div>
+        <span class="ref">data/sessions, SQLite, settings.json on disk</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>The “100% incomplete” flag bomb</h4></div>
+        <p class="body">A coverage checker marks every ticket “incomplete” the moment it suspects anything is missing — even when the answer is low-confidence or already covered elsewhere. The useful signal gets buried in noise.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Only flag when the checker is actually confident, run the check after de-duplication, and treat it as advice — not a verdict on every ticket.</p></div>
+        <span class="ref">orchestrator ignores the confidence score</span>
+      </div>
+
+      <div class="issue reveal">
+        <div class="top"><span class="sev crit">Critical</span><h4>One tight setting breaks the AI's output</h4></div>
+        <p class="body">A hard cap on AI response length cuts long answers off mid-list. The code then quietly fails and pretends it succeeded — which is why de-duplication merged nothing and ~29 of 30 extraction failures share the same signature.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Ask the AI for guaranteed-valid structured output, size the limit to the request, and process duplicates in smaller batches. <b style="color:var(--gold-soft)">This one change fixes most of the quality problems at once.</b></p></div>
+        <span class="ref">llm_client.py:501 · max_tokens=4096</span>
+      </div>
+
+      <div class="issue reveal h">
+        <div class="top"><span class="sev high">High</span><h4>Failures are invisible — they look like success</h4></div>
+        <p class="body">When a step errors out, the system silently returns an empty result and carries on as if all is well. That's why three serious bugs shipped unnoticed until a human counted 509 tickets by hand.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Add a per-run quality report and mark a run “degraded” when something's clearly off.</p></div>
+        <span class="ref">broad except → silent no-op in every agent</span>
+      </div>
+
+      <div class="issue reveal h">
+        <div class="top"><span class="sev high">High</span><h4>Pushing many tickets can create duplicates</h4></div>
+        <p class="body">If a large Jira push fails partway (a rate limit or a restart), pressing push again re-creates the tickets it already made — leaving a messy, half-duplicated project.</p>
+        <div class="fix"><span class="flab">The fix</span><p>Remember which tickets already exist and skip them on retry, with proper rate-limit handling.</p></div>
+        <span class="ref">no idempotency on create_issue</span>
+      </div>
+    </div>
+    <p class="sec-intro reveal" style="margin-top:24px;font-size:.92rem;color:var(--faint)">…plus 3 more critical and 20 more high-priority findings, each documented with evidence in the full audit.</p>
+  </section>
+
+  <!-- THE PLAN -->
+  <section>
+    <div class="sec-no reveal">04 — The plan</div>
+    <h2 class="reveal">From prototype to product, in waves.</h2>
+    <p class="sec-intro reveal">The work is sequenced so each wave unlocks the next. Start with the things that are cheap and urgent; finish with polish.</p>
+
+    <div class="quickwin reveal">
+      <div class="ic">⚡</div>
+      <div>
+        <h3>Do this today — the 10-minute win</h3>
+        <p>Add the ignore-file so secrets stop leaking into builds, and <b>rotate the exposed tokens</b>. Almost no effort, closes a live security hole immediately. There's no reason to wait on this one.</p>
+      </div>
+    </div>
+
+    <div class="waves">
+      <div class="wave reveal">
+        <div class="wnum">0<b>Hardening</b></div>
+        <div>
+          <h3>Make the repo safe to ship from</h3>
+          <p>Fix the broken Jira button, lock down secrets, pin dependencies, and set up automatic testing so nothing regresses from here on. No user-facing change — it just makes everything after it provable.</p>
+          <div class="chips"><span class="chip block">Unblocks launch</span><span class="chip eff">Effort: Medium</span></div>
+        </div>
+      </div>
+      <div class="wave reveal">
+        <div class="wnum">1<b>Foundation</b></div>
+        <div>
+          <h3>Real database &amp; per-user secrets</h3>
+          <p>Stand up the database and file storage that everything multi-user depends on, and give each user their own encrypted keys. The pipeline still runs as before — we're only changing where things are stored.</p>
+          <div class="chips"><span class="chip block">Unblocks launch</span><span class="chip eff">Effort: Large</span></div>
+        </div>
+      </div>
+      <div class="wave reveal">
+        <div class="wnum">2<b>Multi-user</b></div>
+        <div>
+          <h3>Logins, isolation &amp; a durable worker</h3>
+          <p>Add sign-in, keep each user's data fully separate, and move long jobs onto a background worker that survives restarts and scales. This is the biggest change — and the heart of becoming a real product.</p>
+          <div class="chips"><span class="chip block">Unblocks launch</span><span class="chip eff">Effort: Extra Large</span></div>
+        </div>
+      </div>
+      <div class="wave reveal">
+        <div class="wnum">3<b>Quality</b></div>
+        <div>
+          <h3>Fix the smart core</h3>
+          <p>Repair the extraction, de-duplication and quality-checking bugs so the output is actually trustworthy. Best landed before going live, so the product ships a working engine — not the current noise.</p>
+          <div class="chips"><span class="chip eff">Effort: Large</span></div>
+        </div>
+      </div>
+      <div class="wave reveal">
+        <div class="wnum">4<b>Go live</b></div>
+        <div>
+          <h3>Deploy to the cloud &amp; monitor it</h3>
+          <p>Ship the whole thing to Render as proper connected services, and replace the over-built monitoring with clean, hosted logging and AI-call tracing.</p>
+          <div class="chips"><span class="chip block">Unblocks launch</span><span class="chip eff">Effort: Large</span></div>
+        </div>
+      </div>
+      <div class="wave reveal">
+        <div class="wnum">5<b>Polish</b></div>
+        <div>
+          <h3>Clean up &amp; harden</h3>
+          <p>Make Jira pushes duplicate-proof, delete the old laptop-only code, and tidy the interface. Quality-of-life — done after launch.</p>
+          <div class="chips"><span class="chip eff">Effort: Medium</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLOSING -->
+  <div class="closing">
+    <div class="sec-no reveal">The shortest road to live</div>
+    <h2 class="reveal">Good bones. A clear path. Nothing here is a dead end.</h2>
+    <p class="reveal">Every issue is fixable, and the order is known. This is the critical path to a working hosted product:</p>
+    <div class="path reveal">
+      <span class="node hl">⚡ Quick win</span><span class="arrow">→</span>
+      <span class="node">Wave 0</span><span class="arrow">→</span>
+      <span class="node">Wave 1</span><span class="arrow">→</span>
+      <span class="node">Wave 2</span><span class="arrow">→</span>
+      <span class="node hl">Wave 4 · Live</span>
+    </div>
+  </div>
+
+  <footer>
+    SOW-to-Jira System Health Report · Generated 2026-06-11 · Full detail in AUDIT.md, RENDER-MIGRATION.md &amp; ELEVATION-PLAN.md
+  </footer>
+
+</div>
+
+<script>
+  // staggered hero reveal on load
+  window.addEventListener('load', ()=>{
+    document.querySelectorAll('.hero .reveal').forEach(el=>el.classList.add('in'));
+  });
+  // scroll reveal
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        e.target.classList.add('in');
+        // animate bars when their row reveals
+        const bar = e.target.querySelector('.bar i');
+        if(bar){ const w = bar.dataset.w; setTimeout(()=>{ bar.style.right = (100-w)+'%'; }, 120); }
+        io.unobserve(e.target);
+      }
+    });
+  },{threshold:.12, rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.reveal:not(.hero .reveal)').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

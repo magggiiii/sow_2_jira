@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOW-to-Jira — Elevation Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,400..600&family=Hanken+Grotesk:wght@300..800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0a0c0b; --ink-2:#0f1311; --panel:#131714; --panel-2:#1a201c;
+    --line:rgba(255,255,255,.08); --line-2:rgba(255,255,255,.15);
+    --text:#e9ece8; --muted:#94a098; --faint:#69756d;
+    --ship:#6fe09a;      /* shipped — green */
+    --ship-soft:#a8f0c4;
+    --next:#f0b45a;      /* next — amber */
+    --next-soft:#f6cf93;
+    --plan:#6aa6e0;      /* planned — blue */
+    --plan-soft:#a8cef0;
+    --crit:#ff6b6b;
+    --radius:18px; --maxw:1080px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--ink);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-weight:380;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  body::before{content:"";position:fixed;inset:0;z-index:-2;background:
+    radial-gradient(820px 560px at 85% -8%, rgba(111,224,154,.10), transparent 60%),
+    radial-gradient(680px 480px at 0% 15%, rgba(106,166,224,.07), transparent 58%),
+    radial-gradient(760px 640px at 60% 112%, rgba(240,180,90,.05), transparent 60%);}
+  body::after{content:"";position:fixed;inset:0;z-index:-1;opacity:.02;pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 26px}
+
+  /* hero */
+  header.hero{padding:78px 0 44px}
+  .kicker{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;text-transform:uppercase;color:var(--ship);display:flex;align-items:center;gap:14px}
+  .kicker::before{content:"";width:42px;height:1px;background:var(--ship)}
+  .live{display:inline-flex;align-items:center;gap:7px;margin-left:6px;color:var(--faint)}
+  .live .pulse{width:8px;height:8px;border-radius:50%;background:var(--ship);box-shadow:0 0 0 0 rgba(111,224,154,.6);animation:pulse 2.2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(111,224,154,.5)}70%{box-shadow:0 0 0 9px rgba(111,224,154,0)}100%{box-shadow:0 0 0 0 rgba(111,224,154,0)}}
+  h1{font-family:"Fraunces",serif;font-weight:340;font-size:clamp(2.6rem,6vw,4.7rem);line-height:1.02;letter-spacing:-.02em;margin:22px 0 0;max-width:16ch}
+  h1 em{font-style:italic;color:var(--ship-soft)}
+  .lede{font-size:clamp(1.02rem,1.6vw,1.25rem);color:var(--muted);max-width:58ch;margin-top:18px}
+  .updated{margin-top:22px;font-family:"JetBrains Mono",monospace;font-size:.74rem;color:var(--faint);letter-spacing:.04em}
+  .updated b{color:var(--muted);font-weight:500}
+
+  /* metrics */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:42px 0 4px}
+  .metric{background:var(--panel);padding:26px 22px}
+  .metric .num{font-family:"Fraunces",serif;font-size:clamp(2rem,3.6vw,2.9rem);font-weight:400;line-height:1;letter-spacing:-.02em;color:var(--ship-soft)}
+  .metric .num small{font-size:1.1rem;color:var(--faint);font-style:italic}
+  .metric .lab{margin-top:9px;font-size:.8rem;color:var(--muted);line-height:1.4}
+
+  /* section */
+  section{padding:56px 0;border-top:1px solid var(--line)}
+  .sec-no{font-family:"JetBrains Mono",monospace;font-size:.72rem;letter-spacing:.3em;text-transform:uppercase}
+  .sec-ship .sec-no{color:var(--ship)} .sec-next .sec-no{color:var(--next)} .sec-plan .sec-no{color:var(--plan)}
+  h2{font-family:"Fraunces",serif;font-weight:340;font-size:clamp(1.8rem,3.4vw,2.7rem);letter-spacing:-.015em;line-height:1.08;margin:13px 0 12px;max-width:24ch}
+  .sec-intro{color:var(--muted);max-width:62ch;font-size:1.02rem}
+
+  /* progress bar of waves */
+  .waves{margin-top:34px;display:flex;flex-direction:column;gap:9px}
+  .wbar{display:grid;grid-template-columns:130px 1fr auto;gap:16px;align-items:center}
+  .wbar .wn{font-size:.92rem;font-weight:520}
+  .wbar .wn small{display:block;color:var(--faint);font-size:.74rem;font-weight:340;margin-top:2px}
+  .track{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;position:relative}
+  .track i{position:absolute;inset:0;border-radius:99px;transform-origin:left;transition:transform 1s cubic-bezier(.2,.8,.2,1)}
+  .track i.ship{background:linear-gradient(90deg,#6fe09a,#a8f0c4)}
+  .track i.part{background:linear-gradient(90deg,#f0b45a,#6fe09a)}
+  .track i.plan{background:rgba(106,166,224,.35)}
+  .wpct{font-family:"JetBrains Mono",monospace;font-size:.72rem;color:var(--muted);min-width:42px;text-align:right}
+
+  /* increment group */
+  .increment{margin-top:36px}
+  .inc-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  .inc-head h3{font-family:"Fraunces",serif;font-weight:440;font-size:1.5rem;letter-spacing:-.01em}
+  .sha{font-family:"JetBrains Mono",monospace;font-size:.7rem;color:var(--faint);background:var(--panel-2);border:1px solid var(--line);padding:3px 8px;border-radius:6px}
+  .inc-sub{color:var(--faint);font-size:.86rem;margin-bottom:18px}
+
+  /* upgrade card */
+  .up{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:22px 24px;margin-bottom:13px;position:relative;overflow:hidden;transition:border-color .35s,background .35s}
+  .up::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+  .up.s-ship::before{background:var(--ship)} .up.s-next::before{background:var(--next)} .up.s-plan::before{background:var(--plan)}
+  .up:hover{border-color:var(--line-2);background:var(--panel-2)}
+  .up .uh{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-bottom:10px}
+  .pill{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;padding:4px 9px;border-radius:999px;font-weight:700;white-space:nowrap}
+  .pill.ship{background:rgba(111,224,154,.15);color:var(--ship)} .pill.next{background:rgba(240,180,90,.15);color:var(--next)} .pill.plan{background:rgba(106,166,224,.15);color:var(--plan)}
+  .up h4{font-family:"Hanken Grotesk",sans-serif;font-weight:650;font-size:1.06rem;flex:1;min-width:230px}
+  .tag{font-family:"JetBrains Mono",monospace;font-size:.6rem;color:var(--faint);border:1px solid var(--line-2);padding:3px 7px;border-radius:5px}
+  .up .what{color:var(--muted);font-size:.96rem;margin-bottom:14px}
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+  .ba .cell{border:1px solid var(--line);border-radius:10px;padding:13px 15px;font-size:.9rem;line-height:1.5}
+  .ba .before{background:rgba(255,107,107,.05);border-color:rgba(255,107,107,.18)}
+  .ba .after{background:rgba(111,224,154,.05);border-color:rgba(111,224,154,.18)}
+  .ba .lbl{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.14em;text-transform:uppercase;display:block;margin-bottom:6px}
+  .ba .before .lbl{color:var(--crit)} .ba .after .lbl{color:var(--ship)}
+  .ba .cell code{font-family:"JetBrains Mono",monospace;font-size:.82em;color:var(--text);background:rgba(255,255,255,.05);padding:1px 5px;border-radius:4px}
+  .why{display:flex;gap:10px;align-items:baseline;font-size:.93rem;color:var(--text)}
+  .why .wl{font-family:"JetBrains Mono",monospace;font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ship);white-space:nowrap;padding-top:2px}
+
+  /* compact list for planned */
+  .plist{margin-top:24px;display:flex;flex-direction:column;gap:11px}
+  .pitem{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .pitem .pill{align-self:start;margin-top:2px}
+  .pitem h4{font-weight:600;font-size:1rem;margin-bottom:4px}
+  .pitem p{color:var(--muted);font-size:.9rem}
+  .pitem .need{display:inline-block;margin-top:7px;font-family:"JetBrains Mono",monospace;font-size:.62rem;color:var(--next);letter-spacing:.04em}
+  .pitem .need.svc{color:var(--plan)}
+
+  footer{border-top:1px solid var(--line);padding:28px 0 56px;color:var(--faint);font-family:"JetBrains Mono",monospace;font-size:.7rem;letter-spacing:.05em;line-height:1.7}
+  footer b{color:var(--muted)}
+
+  .reveal{opacity:0;transform:translateY(22px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+
+  @media(max-width:780px){
+    .metrics{grid-template-columns:1fr 1fr}
+    .ba{grid-template-columns:1fr}
+    .wbar{grid-template-columns:1fr auto;gap:8px}
+    .wbar .track{grid-column:1 / -1;order:3}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="kicker reveal">Elevation Tracker <span class="live"><span class="pulse"></span>living document</span></div>
+    <h1 class="reveal">Turning the prototype into a <em>production system</em>, one verified step at a time.</h1>
+    <p class="lede reveal">Every upgrade below is committed on <code style="font-family:'JetBrains Mono',monospace;font-size:.85em;color:var(--ship-soft)">elevation/wave-0</code> and proven green by the test suite before it lands. This page tracks what shipped, what's next, and what's still planned — and stays updated as the work continues.</p>
+    <p class="updated reveal"><b>Last updated:</b> 2026-07-05 &nbsp;·&nbsp; <b>Branch:</b> elevation/wave-0 — pushed to GitHub + GitLab (both remotes in sync; PR #7 OPEN) &nbsp;·&nbsp; <b>main:</b> untouched</p>
+
+    <div class="metrics reveal">
+      <div class="metric"><div class="num">55</div><div class="lab">Upgrades shipped &amp; verified</div></div>
+      <div class="metric"><div class="num">100&nbsp;<small>→</small>&nbsp;667</div><div class="lab">Python tests passing (+76 UI vitest)</div></div>
+      <div class="metric"><div class="num">60</div><div class="lab">Clean commits on the branch</div></div>
+      <div class="metric"><div class="num">6<small>/7</small></div><div class="lab">Waves done or in progress</div></div>
+    </div>
+  </header>
+
+  <!-- PROGRESS AT A GLANCE -->
+  <section>
+    <div class="sec-no reveal" style="color:var(--ship)">00 — Progress at a glance</div>
+    <h2 class="reveal">The roadmap, and where we are on it.</h2>
+    <p class="sec-intro reveal">Nine tracks from prototype to hosted product. The locally-buildable tracks are moving; the platform tracks wait on provisioned services (Postgres, Redis, Render, OAuth). Scale-hardening (50-60pg SOWs, long runs) is largely shipped — A1-C2 (resilience, integrity, parallelism, resumability) are done offline; only C3 (durable worker) waits on Wave-2 services. The newest track — <b>Wave 6, the UI/UX rework</b> — has now shipped offline in full (UI.1→UI.7, audit-driven; only the UI.3/UI.5 live-backend verification passes remain). And the <b>Argus observability fleet has been fully decommissioned</b> (audit-verified as unneeded — Render/Vercel logs + Langfuse Cloud + Bifrost cover it). See <code>SCALE-HARDENING.md</code>.</p>
+    <div class="waves">
+      <div class="wbar reveal"><div class="wn">Wave 0<small>Hardening</small></div><div class="track"><i class="part" style="transform:scaleX(.85)"></i></div><div class="wpct">85%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 3<small>Intelligence quality</small></div><div class="track"><i class="part" style="transform:scaleX(.92)"></i></div><div class="wpct">92%</div></div>
+      <div class="wbar reveal"><div class="wn">Harness core<small>Ports · AgentRunner · guardrails · prompts · specs · runner</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
+      <div class="wbar reveal"><div class="wn">Scale-hardening<small>big SOWs · parallel calls · resumable runs</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 1<small>Data + secrets</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 2<small>Auth + worker</small></div><div class="track"><i class="part" style="transform:scaleX(.72)"></i></div><div class="wpct">72%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 4<small>Deploy + observability</small></div><div class="track"><i class="part" style="transform:scaleX(.82)"></i></div><div class="wpct">82%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 5<small>Cleanup + Jira</small></div><div class="track"><i class="part" style="transform:scaleX(.90)"></i></div><div class="wpct">90%</div></div>
+      <div class="wbar reveal"><div class="wn">Wave 6<small>UI/UX rework · offline</small></div><div class="track"><i class="ship" style="transform:scaleX(1)"></i></div><div class="wpct">Done</div></div>
+    </div>
+  </section>
+
+  <!-- SHIPPED -->
+  <section class="sec-ship">
+    <div class="sec-no reveal">01 — Shipped &amp; verified</div>
+    <h2 class="reveal">What's done so far.</h2>
+    <p class="sec-intro reveal">Grouped by the commit it landed in. Each shows what it does, how it differs from the old implementation, and why the system is better for it.</p>
+    <p class="sec-intro reveal"><b>Reconciliation note (2026-07-07, code-verified):</b> the bars above were re-baselined by a 9-track audit that mapped every change-id against the actual code (not commit messages). Known items still <b>open behind</b> the shipped increments below: <b>Wave 0</b> — dep-pinning + lockfile + PyPDF2→pypdf (Render-blocker <code>infr-3</code>) not started (<code>requirements.txt</code> still <code>PyPDF2&gt;=3.0.1</code>, 1/30 <code>==</code> pins, no lockfile). <b>Wave 2</b> — no durable worker yet (<code>pipeline/worker.py</code> absent, no arq/redis; web still in-process); STEP 2.4 per-user creds (<code>os.environ</code> writes remain) + 2.2 lifespan not done. <b>Wave 3</b> — <code>orch-3</code> scoped re-dedup + CostMeter kill-switch not implemented. <b>Wave 4</b> — <code>render.yaml</code> is 3-service, not the prescribed 4-service (no worker/cron/envVarGroups); <code>infr-15c</code> telemetry-callsite removal + per-user cost tracking not done (OTel scaffolding is inert via no-op shims, not deleted). <b>Wave 1</b> — audit→Postgres cutover still SQLite; <code>doma-5</code>/<code>doma-12</code> offline sub-steps not started. Plan-doc paths in <code>IMPLEMENTATION-PLAN.md</code>/<code>FILE-CHANGE-INDEX.md</code> are stale vs the shipped flat layout — regenerate the plan docs, not this tracker.</p>
+    <p class="sec-intro reveal"><b>Addendum (2026-07-08, offline deploy-ready layer):</b> the WAVE-2 <b>offline half</b> now landed (10 commits <code>cbb8f6f</code>..<code>c32b527</code>, all TDD, suite 941/0/2, ruff clean). Gaps closed vs the note above: the durable worker exists (<code>pipeline/worker.py</code> + <code>ArqQueue</code>, arq/redis pinned); <code>configure_litellm_once()</code> (2.2 core); the <b>config layer</b> (<code>config/settings.py::Settings</code> APP_ENV flip + <code>build_container</code> adapter selection + <code>S3ObjectStore</code>); <code>resolve_provider_config</code> (2.1); <code>JiraCredentials</code> (2.4, env/shared); <code>DbSessionStore</code> (2.5); the Wave-4 dead-OTel-callsite removal from <code>llm_client</code>; and <code>pydantic-settings</code> (was missing from the lockfile). Still open behind Wave 2/4: the live-walled server integration in <code>ui/server.py</code> (async <code>current_user</code> + authlib OIDC route bodies + per-user cred rows + IDOR <code>Depends</code> sweep + web→arq enqueue) and Wave 1 audit→Postgres. Bars bumped: Wave 2 55%→72%, Wave 4 78%→82%.</p>
+
+    <!-- FINAL WAVE — Argus decommission (audit-verified: not needed) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Final wave — Argus observability fleet decommissioned</h3><span class="sha">4e6f247</span></div>
+      <div class="inc-sub reveal">A read-only 10-agent audit (5 mappers → synthesis → 3 default-reject skeptics → adjudication) confirmed with high confidence that the self-hosted Argus fleet is dead weight: its OTel data plane already emits nothing (OTel was dropped in R4), while Render/Vercel platform logs + Langfuse Cloud (direct SDK) + Bifrost cover every live signal. So it is fully retired — Argus-only; Bifrost stays LOCKED. TDD/verify + 3-skeptic adversarial review (accepted round 1). Suite 831/2 + vitest 96/96; OTel-absent import OK; leaked-token occurrences in tracked files = 0.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>observability.py fully de-Argus + de-OTel — Loguru + the Langfuse SDK are the whole story</h4><span class="tag">AR-OBS · 2d9715d</span></div>
+        <p class="what">The observability module keeps its public surface but drops every Argus/OTel export path.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>SYNC_ENABLED keyed on ARGUS_SYNC_ENABLED; three OTLP export branches (collector, direct-to-Langfuse, legacy gRPC) with lazy OTel/Traceloop imports; INSTANCE_ID/argus.instance_id fleet identity stamped on spans/metrics — including a dead direct-to-Langfuse OTLP branch that would flood Langfuse with all FastAPI spans if OTel were ever reinstalled with keys set.</div><div class="cell after"><span class="lbl">After</span>SYNC_ENABLED = LANGFUSE_ENABLED; init_argus() is a log-only no-op; tracer/meter are permanent no-op shims; every OTel/Traceloop import is gone. The direct Langfuse Cloud SDK path (in llm_client) is untouched and remains the live LLM-observability path. llm_client changed only to drop INSTANCE_ID (llm_router LOCKED). Public surface preserved (INSTANCE_ID intentionally removed, coordinated across importers + tests).</div></div>
+        <p class="why"><span class="wl">Better</span>No dead telemetry scaffolding, no OTLP footgun, and observability is exactly what the hosted stack already provides — nothing extra to run or maintain.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Argus infra/config/installer/doc footprint removed; local-first bring-up retired for Render</h4><span class="tag">AR-INFRA-DOCS · 4e6f247</span></div>
+        <p class="what">The self-hosted fleet's files, installer wiring, and docs are gone; the LOCKED Bifrost admin deck is untouched.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>infra/user/docker-compose.user.yml (app + Bifrost + collector/loki/tempo/grafana) + config/user/argus-collector-edge.yaml + config/user/tempo.yaml; install.sh seeded ARGUS_* + SOW_INSTANCE_ID and brought up the local compose stack; README/CLAUDE/AGENTS described a Grafana/Loki/Tempo/Prometheus fleet.</div><div class="cell after"><span class="lbl">After</span>infra/user + argus-collector-edge.yaml deleted; tempo.yaml relocated to config/admin so the LOCKED Bifrost bring-up stays self-contained; install.sh drops all ARGUS_* + the compose bring-up (hosted deploy = render.yaml) with Ollama/networking intact; docs describe Loguru→platform-logs + Langfuse Cloud + Bifrost. bifrost.admin.yaml / infra/admin / BIFROST_* / llm_router unchanged.</div></div>
+        <p class="why"><span class="wl">Better</span>One deployment path (Render), one LLM-observability path (Langfuse Cloud), zero self-hosted observability to operate — and the codebase no longer documents infrastructure it doesn't ship.</p>
+      </div>
+    </div>
+
+    <!-- R2b + R3 + R4 — hardening, frontend, de-OTel finalization -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 2/4 — Multi-tenant hardening, push chips, and OpenTelemetry retired</h3><span class="sha">e99aa58</span></div>
+      <div class="inc-sub reveal">Closing rounds of the max-parallel plan. Every increment TDD + 3-skeptic adversarial review (default-reject) — which caught real holes each round: two credential-exposing routes, a WCAG-4.1.2 focus bug, a vitest false-green, and a SECOND committed copy of the leaked Argus token. Suite 830/2 + vitest 96/96.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-user data isolation, CSRF, and upload hardening — gated so single-user stays unchanged</h4><span class="tag">2.5c/2.6a-c · 9874474</span></div>
+        <p class="what">The web layer becomes multi-tenant-safe when auth is configured, and byte-identical when it isn't.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Single-user server: no per-request identity, every run readable by anyone, no CSRF, uploads unvalidated.</div><div class="cell after"><span class="lbl">After</span>current_user dependency (401 on missing/forged/expired/inactive); every per-run route returns 404 for another tenant (no existence leak); CSRF double-submit (403 on mismatch); uploads traversal-safe / non-PDF 400 / oversize 413. All gated on auth_enabled() so the 780 existing tests stay green. Review found three credential-exposing routes (POST /api/settings, /api/jira/test, /api/providers/{id}/models) unguarded in hardened mode — all now carry auth+CSRF.</div></div>
+        <p class="why"><span class="wl">Better</span>The app is safe to expose to multiple orgs; the strangler seam keeps local dev untouched.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-task Jira push chips + a Test-Connection button + an auth-aware frontend</h4><span class="tag">FE-1/FE-2/2.6d · 09219ea</span></div>
+        <p class="what">The review UI now shows each task's push outcome and can validate Jira creds, and its fetch layer speaks CSRF.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>push_results were discarded, so no per-task status; no way to test Jira creds without a full push; fetches sent no CSRF/credentials.</div><div class="cell after"><span class="lbl">After</span>Each card shows a text-labelled push chip (WCAG 1.4.1, XSS-safe, success links to the issue); a Test-connection button hits the read-only endpoint and renders the classified result; the fetch wrapper attaches X-CSRF-Token + credentials and redirects on 401. Review caught a WCAG-4.1.2 focusable-descendant bug + a vitest stubGlobal false-green — both fixed.</div></div>
+        <p class="why"><span class="wl">Better</span>Reviewers see exactly what landed in Jira and can self-diagnose credential problems, over an auth-ready UI.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>OpenTelemetry retired; langfuse fail-open tracing; FS→Postgres migrator; Argus token scrubbed</h4><span class="tag">4.1b/d/f · 1.6e · e99aa58</span></div>
+        <p class="what">The observability stack is swapped for a hosted-friendly, fail-open path and the leaked secret is out of the tree.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Top-level OTel imports everywhere (removing OTel broke the app); no Langfuse; no FS→DB migration path; the Argus backbone token hardcoded in install.sh AND bifrost.admin.yaml.</div><div class="cell after"><span class="lbl">After</span>Every OTel import is lazy/guarded — proven: app entrypoints import with opentelemetry+traceloop blocked — so OTel is dropped from requirements. A langfuse wrapper reports generations but FAILS OPEN (never breaks a run). A repo-fake-tested migrate_fs_to_pg.py reconstructs runs/tasks + re-encrypts secrets. The token literal is gone from every tracked file + a role-aware Docker entrypoint (SOW_ROLE) ships. (History still holds the token → rotate out-of-band.)</div></div>
+        <p class="why"><span class="wl">Better</span>Observability no longer blocks deploy, tracing can't take down the pipeline, and there's a path from the old FS store to Postgres.</p>
+      </div>
+    </div>
+
+    <!-- R2a — hot-file backend routing -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 1/2 — Pipeline + server backend routed through the new seams</h3><span class="sha">7f3aa77</span></div>
+      <div class="inc-sub reveal">The two hot files re-plumbed onto the storage/persistence seams — single comprehensive agent each, TDD, suite green 780/2 (+27). (Adversarial-review workflow was cut off by a session usage limit; verified directly instead — full suite + regression + LOCKED grep.)</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The orchestrator persists only through the ObjectStore (+ optional DB write-through + real cancel)</h4><span class="tag">1.6a–c · 2.3-d · 6437b6a</span></div>
+        <p class="what">Run artifacts now flow through the storage seam, with optional DB write-through and a cancel that actually stops work.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The orchestrator wrote run artifacts straight to <code>data/sessions/&lt;run_id&gt;/*.json</code> with direct file I/O; cancel was a flag nothing honored mid-flight; no DB persistence.</div><div class="cell after"><span class="lbl">After</span>All 6 writes + 2 reads go through an injected <code>ObjectStore</code> (defaults to <code>LocalObjectStore</code> so behavior is preserved; proven — <code>open()</code> on <code>data/sessions</code> raises and <code>_stage_save</code> still completes via a fake store). Optional Run/Task repos get write-through with recursive secret-scrubbing (no plaintext api_key ever reaches a repo). <code>cancel_check</code> is bridged into the LLM client stop-event + indexer so a worker cancel bails the indexer and raises in-flight calls. <code>_stage_setup</code>/litellm routing untouched.</div></div>
+        <p class="why"><span class="wl">Better</span>The pipeline can now persist to R2/Postgres by swapping an adapter — no engine rewrite — and long runs are genuinely cancellable.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-task Jira push outcomes survive + a read-only connection test + deploy endpoints</h4><span class="tag">BE-1/2/3 · 4.2d/b · 7f3aa77</span></div>
+        <p class="what">Push results are persisted and surfaced, plus the endpoints a hosted deploy needs.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>push_results</code> was built then <em>discarded</em> before save — per-task push status was impossible to show; no connection test; no health endpoint; dev-only bind.</div><div class="cell after"><span class="lbl">After</span>Per-task <code>JiraPushResult</code> is persisted and exposed on <code>GET /api/tasks</code>; <code>POST /api/jira/test</code> validates creds read-only (401→user_fixable, 429→transient, never creates an issue); <code>GET /healthz</code>→200 (+ access-log filtered); <code>__main__</code> binds <code>0.0.0.0:$PORT</code>. Auth/CSRF hardening is the next sequenced lane; credential-write paths untouched.</div></div>
+        <p class="why"><span class="wl">Better</span>The frontend can finally render per-task push chips, and the service is health-checkable + container-bindable for Render.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 0/2/4 max-parallel session (SQLite-testable platform) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 2 — Offline platform lands: SQLite-testable ORM, auth core, job seams</h3><span class="sha">580f83e</span></div>
+      <div class="inc-sub reveal">Max-parallel multi-workflow session. Each increment shipped test-first behind a 3-skeptic adversarial review (default-reject) — which caught real defects: a secret-redaction leak (Bearer/JSON-quoted secrets) and a SessionStore Protocol gap (missing <code>get_user</code>). Suite green 745/2; all additive/offline (real Postgres/Redis/OIDC/Render stay walled).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The 7-table ORM now runs on SQLite for offline tests</h4><span class="tag">W2-S0 · 7849544</span></div>
+        <p class="what">SQLite-only type shims so the same Postgres ORM compiles and round-trips offline — the hard gate that unblocks every DB/repo/GC/migrator test.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>Base.metadata.create_all()</code> on SQLite raised <code>CompileError: can't render INET</code>; JSONB/UUID would follow — no offline DB test was possible.</div><div class="cell after"><span class="lbl">After</span><code>@compiles(INET/JSONB/UUID,'sqlite')</code> + a sqlite-only JSONB bind/result processor round-trips dict/list JSONB with app-supplied UUID ids. Postgres DDL byte-for-byte unchanged (INET+JSONB+gen_random_uuid() preserved, proven per-dialect). +aiosqlite/greenlet.</div></div>
+        <p class="why"><span class="wl">Better</span>The whole data layer is now testable in-memory offline while production Postgres semantics are untouched.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Observability survives OpenTelemetry removal + secrets no longer leak to logs</h4><span class="tag">4.1a · cb8f223</span></div>
+        <p class="what">De-OTel rewrite with working no-op shims, and a hardened secret-redaction pass.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Top-level <code>traceloop</code>/<code>opentelemetry</code> imports meant removing OTel would <code>ImportError</code> and kill all 11 importers; logs redacted no secrets.</div><div class="cell after"><span class="lbl">After</span>OTel imports are lazy/guarded; <code>tracer</code>/<code>trace_span</code>/<code>sync_telemetry</code>/<code>llm_token_usage</code>/… work as no-ops when OTel is absent. Redaction: an auth-scheme pass (Bearer/Basic) + a quote-tolerant key=value pass scrub JSON/dict/header secrets while preserving prose and UUID correlation ids. JSON audit log carries user_id+run_id.</div></div>
+        <p class="why"><span class="wl">Better</span>OTel becomes a removable dependency and secret leakage to stdout/audit.jsonl is closed — both prerequisites for hosted deploy.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Offline authentication core</h4><span class="tag">2.5a–c · 550390d</span></div>
+        <p class="what">Opaque session tokens, an org email domain gate, a SessionStore port + fake, and a <code>current_user</code> dependency.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No auth layer at all — a single-user local app.</div><div class="cell after"><span class="lbl">After</span><code>auth/*</code>: <code>secrets</code> tokens + sha256 hash (matching <code>db.Session.token_hash</code>) + constant-time compare; a domain allowlist; <code>current_user</code> 401s on missing/forged/expired/inactive. Session/User/SessionStore Protocols in <code>core/ports.py</code>. Google OIDC token exchange stays walled.</div></div>
+        <p class="why"><span class="wl">Better</span>The multi-tenant identity seam exists and is tested; only live OIDC wiring waits on secrets.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Async job + progress seams for the worker path</h4><span class="tag">2.3a/b/c/e · 580f83e</span></div>
+        <p class="what">Queue + progress ports with in-memory fakes and a testable job entrypoint.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The pipeline only ran inline in a request/CLI; no enqueue/worker seam, and progress lived in an in-memory dict.</div><div class="cell after"><span class="lbl">After</span><code>JobQueue</code>/<code>ProgressStore</code> Protocols + fakes; <code>pipeline/jobs.py</code> with a JSON-safe <code>JobPayload</code>, <code>enqueue_run()</code>, and a <code>run_pipeline_job()</code> worker entrypoint that emits progress through the port and takes an injected orchestrator factory (orchestrator imported lazily — import stays offline). <code>RunKind</code> enum added. Real arq/redis stays walled.</div></div>
+        <p class="why"><span class="wl">Better</span>The run can move to a background worker without rewriting the engine; the seam is proven with fakes today.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 1 (offline data platform — this session) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 1 — Data platform, behind the seams</h3><span class="sha">ddb60c2</span></div>
+      <div class="inc-sub reveal">The offline half of the hosted-data pivot: crypto, object store, tz-aware time, full-UUID identity, ORM + migration baseline, dev targets. All additive behind seams — app behavior unchanged, suite green. (DB/R2 runtime wiring waits on provisioned Postgres/R2.) Each landed test-first with an adversarial review.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Env-driven secret encryption with key rotation</h4><span class="tag">1.1</span></div>
+        <p class="what">A MultiFernet crypto seam keyed purely from the environment, with zero-downtime rotation.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Secrets were encrypted with an on-disk <code>data/.keyfile</code>; no rotation path.</div><div class="cell after"><span class="lbl">After</span><code>config/crypto.py</code> encrypts/decrypts/rotates over <code>APP_ENC_KEY</code> (+ <code>APP_ENC_KEY_OLD</code>); errors never leak keys or ciphertext. 9 tests.</div></div>
+        <p class="why"><span class="wl">Better</span>Keys live in the platform's secret store and rotate without downtime — a prerequisite for multi-tenant hosting.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Path-traversal-safe object store + one composition root</h4><span class="tag">1.4</span></div>
+        <p class="what">A single hardened <code>LocalObjectStore</code> for run artifacts, ready to swap for R2/S3.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Two <code>LocalObjectStore</code> copies; the one wired into <code>build_container()</code> did no key validation — a crafted key or symlink could read/write outside the store.</div><div class="cell after"><span class="lbl">After</span>One store in <code>integrations/object_store.py</code>: rejects <code>..</code>/absolute/symlink escapes (resolves + asserts within base). 26 tests incl. a reproduced escape.</div></div>
+        <p class="why"><span class="wl">Better</span>User-influenced artifact keys can't escape their tenant prefix — closed before the SaaS pivot exposes it.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Timezone-aware timestamps + full-UUID run identity</h4><span class="tag">1.3 · 1.5</span></div>
+        <p class="what">Every timestamp is tz-aware UTC; every run/criterion id is a full UUID.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Naive <code>datetime.utcnow()</code> everywhere (deprecated; aware/naive comparison bugs); run ids were an 8-char <code>uuid4()[:8]</code> slug.</div><div class="cell after"><span class="lbl">After</span>One <code>utcnow()</code> helper, zero naive datetimes repo-wide; <code>core/domain/ids.make_run_id()</code> mints full UUIDs (filename kept as a display label).</div></div>
+        <p class="why"><span class="wl">Better</span>Correct across regions and collision-safe as a database primary key.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>ORM models + Alembic baseline + dev targets</h4><span class="tag">1.2 · 1.7</span></div>
+        <p class="what">The 7-table tenant schema and migration baseline, authored behind the seam.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No database layer; runs persisted only as JSON under <code>data/sessions/</code>.</div><div class="cell after"><span class="lbl">After</span><code>pipeline/db.py</code> (async engine + SQLAlchemy 2.0 models, per-tenant <code>user_id</code>) + Alembic <code>0001</code> baseline; <code>make migrate/worker/lock/test</code>. Author-only — migrations run once Postgres is provisioned.</div></div>
+        <p class="why"><span class="wl">Better</span>The data model exists and is reviewable now; only the runtime cutover waits on infra.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 6 Round 1+2 (frontend — this session) -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 6 — UI/UX rework (all 9 phases complete)</h3><span class="sha">a1f3af6</span></div>
+      <div class="inc-sub reveal">Killed the 979-line god-file, added a real test harness, then shipped the whole review loop: error-class recovery, accessible XSS-safe cards, responsive + modal a11y, keyboard triage, flow-integrity guards, onboarding + push-results. Verified by 96 vitest tests, a clean production build, and a full Docker image build (node build stage → gunicorn). Every increment passed an adversarial review that caught real defects — a silent-data-loss stale listener, a symlink-style scheme XSS, and an op-aware-retry that silently no-op'd after a mid-push refresh — each fixed before landing.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The 979-line UI monolith becomes testable modules</h4><span class="tag">UI.2b</span></div>
+        <p class="what">Split the single IIFE into ES modules with a tiny reactive store and a real test runner.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>One 979-line <code>app.js</code> IIFE, three hand-synced globals, status strings duplicated ~4×, and no frontend tests at all.</div><div class="cell after"><span class="lbl">After</span><code>ui/src/{state,api,render,modals,polling,main}.js</code> + a ~1KB nanostores store + vitest (20 tests to start).</div></div>
+        <p class="why"><span class="wl">Better</span>Every later UI change is small, isolated, and test-covered.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Failures now guide recovery instead of dead-ending</h4><span class="tag">UI.3</span></div>
+        <p class="what">The previously-unused <code>error_class</code> taxonomy finally drives the UI.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every failure showed the same "Dismiss" dead-end, regardless of cause.</div><div class="cell after"><span class="lbl">After</span>A severity chip (text, not color-only) + the right action per class: TRANSIENT→Retry, USER_FIXABLE→Open Settings, TERMINAL→Dismiss.</div></div>
+        <p class="why"><span class="wl">Better</span>Users can actually recover from the common failure modes.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Accessible, XSS-safe review cards + responsive layout</h4><span class="tag">UI.4a · UI.6</span></div>
+        <p class="what">Hardened the core review loop and brought the layout + modals to an a11y baseline.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Editing a card collapsed it (full re-render); collapsibles had no keyboard/ARIA; section titles were interpolated into <code>innerHTML</code> (stored-XSS); one breakpoint; modals had no focus trap.</div><div class="cell after"><span class="lbl">After</span>Optimistic in-place patch preserves expanded state; role/tabindex/aria + Enter/Space + a status text label; titles escaped via <code>textContent</code>; 1024/768/400 breakpoints; dialog focus-trap + Escape + focus-restore.</div></div>
+        <p class="why"><span class="wl">Better</span>The core value loop is fast, keyboard-operable, screen-reader-friendly, and safe from injected markup.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Fast triage, safe flows, and a finished-feeling first run</h4><span class="tag">UI.4b · UI.5 · UI.7</span></div>
+        <p class="what">The velocity + integrity + polish layer that makes the review loop feel complete.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No keyboard triage; filters and stats disagreed; Push could fire on an empty/misconfigured run; a mid-run refresh landed in stale state; failures offered a Retry that could re-run the wrong operation; first run and a successful push both dead-ended in a bare toast.</div><div class="cell after"><span class="lbl">After</span>a/r/e + j/k triage (scoped, never fires while typing); one status→bucket map so filters and stats always agree (+ a Pushed filter); Push pre-flight (needs a session, an approved task, and saved Jira creds) + confirm; op-aware Retry that re-pushes vs re-extracts and reloads-then-re-pushes after a refresh (never a silent no-op); session switch reopens a running run; a first-run Upload-SOW pane; and a push-results panel with clickable, scheme-validated Jira links.</div></div>
+        <p class="why"><span class="wl">Better</span>A reviewer can triage a large SOW quickly, can't push a broken run, never loses their place, and always has a next action on both success and failure.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 0 -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 0 — Hardening foundation</h3><span class="sha">09a29d9</span></div>
+      <div class="inc-sub reveal">Made the repo safe to ship from and provable. No product behavior changed — everything after this is provable because of it.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The "Push to Jira" button works again</h4><span class="tag">C-7</span></div>
+        <p class="what">Re-enabled the product's headline feature, which had been silently dead.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>JiraClient</code> was used in <code>/api/push</code> but never imported — every push raised <code>NameError</code>, hidden behind a generic error.</div><div class="cell after"><span class="lbl">After</span>The import is in place; the push handler runs. A CI import-lint will fail the build if an undefined name ever sneaks back.</div></div>
+        <p class="why"><span class="wl">Better</span>The flagship capability is no longer a runtime crash — and can't regress invisibly.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The test suite runs green</h4><span class="tag">H-25</span></div>
+        <p class="what">Unblocked the entire automated safety net.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>pytest</code> aborted during collection (a hard <code>langchain</code> import), so <em>zero</em> of the 100 real tests ran and any CI was red on the first line.</div><div class="cell after"><span class="lbl">After</span>The optional dependency is guarded with <code>importorskip</code>; 100 tests collect and pass, the langchain test skips cleanly.</div></div>
+        <p class="why"><span class="wl">Better</span>Regressions can now be caught automatically — the precondition for everything else.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Secrets stop baking into the Docker image</h4><span class="tag">C-13</span></div>
+        <p class="what">Closed a live credential-leak path in the build.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No <code>.dockerignore</code> + <code>COPY . .</code> meant the on-disk <code>.env</code> and a real GitHub token were copied into every image layer.</div><div class="cell after"><span class="lbl">After</span>A <code>.dockerignore</code> excludes secrets, <code>data/</code>, and junk from the build context.</div></div>
+        <p class="why"><span class="wl">Better</span>Built images no longer ship recoverable credentials. <em>(Rotating the already-exposed tokens is a manual follow-up.)</em></p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Explicit project config + CI pipeline</h4><span class="tag">H-25</span></div>
+        <p class="what">Added <code>pyproject.toml</code> (pytest scope + ruff rules) and a GitHub Actions workflow.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>No config files at all; no CI; no lint; live-credential smoke scripts at repo root were auto-collected as "tests."</div><div class="cell after"><span class="lbl">After</span>Test scope is explicit, smoke scripts moved to <code>scripts/check_*.py</code>, and CI runs ruff + pytest + pip-audit on every push/PR.</div></div>
+        <p class="why"><span class="wl">Better</span>Quality is now enforced by machine, not memory; accidental live-credential runs are gone.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Container binds the platform's port</h4><span class="tag">DEP</span></div>
+        <p class="what">Made the image deployable on a managed host.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Hardcoded <code>0.0.0.0:8000</code> — incompatible with platforms that inject a port.</div><div class="cell after"><span class="lbl">After</span>Binds <code>${PORT:-8000}</code>; healthcheck reads the same env.</div></div>
+        <p class="why"><span class="wl">Better</span>The container can run on Render (and similar) without edits.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 3 -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Intelligence-layer quality</h3><span class="sha">1596b0e</span></div>
+      <div class="inc-sub reveal">Fixed the bugs behind "100% INCOMPLETE / 0 merges / conf=0.00." Each landed test-first; +16 regression tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Truncated AI responses fail loudly instead of corrupting silently</h4><span class="tag">C-5 · the #1 root cause</span></div>
+        <p class="what">Fixed the single setting behind most of the intelligence-layer failures.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every AI call capped at <code>max_tokens=4096</code>; long answers were cut off mid-array, regex-scraped, and the broken result was swallowed as "success" — the cause of 0 dedup merges and ~29/30 extraction failures.</div><div class="cell after"><span class="lbl">After</span><code>max_tokens</code> is per-call (default 8192); a length cut-off raises a typed <code>LLMTruncationError</code> instead of returning garbage.</div></div>
+        <p class="why"><span class="wl">Better</span>Truncation is now a visible, handleable failure — not invisible data corruption.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The critic stops flagging when it has no confidence</h4><span class="tag">H-3</span></div>
+        <p class="what">Silenced the noise that flagged every ticket.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Critic flags were applied regardless of confidence — a <code>conf=0.00</code> "shrug" still labelled tickets <code>LOW_CONFIDENCE</code>/<code>AMBIGUOUS_SCOPE</code>; it also guessed at duplicates.</div><div class="cell after"><span class="lbl">After</span>All flag mutations gated at confidence ≥ 0.5; <code>conf=0.00</code> produces nothing; the duplicate role is removed (dedup owns it).</div></div>
+        <p class="why"><span class="wl">Better</span>Flags now mean something — reviewers see real issues, not blanket noise.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>De-duplication no longer loses data</h4><span class="tag">Dedup merge</span></div>
+        <p class="what">Made merges preserve content and order.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>keep_first/keep_second</code> dropped the other task without absorbing its acceptance criteria / deliverables / source refs; a <code>list(set())</code> lost ordering.</div><div class="cell after"><span class="lbl">After</span>Merges absorb the dropped task's content via <code>_merge_tasks</code>, fix <code>merged_from</code>, and preserve order.</div></div>
+        <p class="why"><span class="wl">Better</span>Merging two tickets no longer quietly throws away half their detail.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A "did this stage actually do work?" signal</h4><span class="tag">H-2 · H-6</span></div>
+        <p class="what">Made a no-op dedup pass visible.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>0 merges on 100+ candidate tasks looked identical to a clean run — the exact symptom that shipped undetected.</div><div class="cell after"><span class="lbl">After</span>A large input that yields zero merges now records a <code>DEGRADED</code> signal with a reason.</div></div>
+        <p class="why"><span class="wl">Better</span>"The engine did nothing" is now a detectable state, not silent success.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Coverage stops flagging on empty nodes &amp; low confidence</h4><span class="tag">C-4 (slice) · H-7</span></div>
+        <p class="what">Began dismantling the 100%-INCOMPLETE flag bomb.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>get_gaps</code> ignored its length filter (firing recovery on empty headings), and any single missed item flagged a whole section INCOMPLETE regardless of the checker's confidence.</div><div class="cell after"><span class="lbl">After</span><code>get_gaps</code> honors <code>min_text_length</code>; a pure, unit-tested helper gates INCOMPLETE on <code>checker_confidence</code>.</div></div>
+        <p class="why"><span class="wl">Better</span>The signal is being restored. <em>(Full post-dedup, run-wide restructure is gated behind an eval cassette — see "Next.")</em></p>
+      </div>
+    </div>
+
+    <!-- HARNESS FOUNDATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — ports &amp; adapters foundation</h3><span class="sha">3fa3daa</span></div>
+      <div class="inc-sub reveal">The keystone seam. Additive, zero behavior change — it's what makes every later wave a clean swap rather than a rewrite.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Typed result &amp; contract layer</h4><span class="tag">core/results.py</span></div>
+        <p class="what">Introduced <code>StageResult</code> (OK / DEGRADED / FAILED / SKIPPED + cost/tokens) and <code>LLMResult</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Stage outcomes were untyped; a failed stage and a successful one were indistinguishable to the code after them.</div><div class="cell after"><span class="lbl">After</span>Every stage can return a typed status with a reason and cost.</div></div>
+        <p class="why"><span class="wl">Better</span>The foundation for per-stage health, cost tracking, and "failure is data, not a swallowed exception."</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Ports &amp; adapters (hexagonal seam)</h4><span class="tag">core/ports.py · app/container.py</span></div>
+        <p class="what">Defined Protocol ports (LLM, Jira, audit, object store, embeddings, repositories) + a composition root.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Agents were hard-wired to concrete implementations, process-global <code>os.environ</code>, and local disk — nothing could be swapped or mocked.</div><div class="cell after"><span class="lbl">After</span>The core talks to interfaces; a <code>build_container()</code> factory wires the real implementations in one place; fakes drop in for tests.</div></div>
+        <p class="why"><span class="wl">Better</span>Externals (Postgres, R2, Langfuse, OAuth) become one-line adapter swaps — and the core is finally unit-testable in isolation.</p>
+      </div>
+    </div>
+
+    <!-- AGENTRUNNER -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — AgentRunner seam</h3><span class="sha">d1698c5</span></div>
+      <div class="inc-sub reveal">Routed all six agents through one chokepoint. Behavior-preserving; +24 tests (and finally pinned gap-recovery, which had none).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Every agent's model call flows through one place</h4><span class="tag">AgentRunner · AgentSpec</span></div>
+        <p class="what">Built <code>AgentRunner</code> on the LLM port and routed extraction, classifier, critic, coverage, dedup &amp; gap-recovery through it.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each of the 6 agents called the model directly with inline prompts and its own swallow-the-error handling — six places to fix anything.</div><div class="cell after"><span class="lbl">After</span>All six call <code>self.runner.complete_json(...)</code> — one seam where structured output, validation, retries, gating and health will live.</div></div>
+        <p class="why"><span class="wl">Better</span>The next big fixes (guaranteed structured output, per-stage health) become a change in <em>one</em> file instead of six.</p>
+      </div>
+    </div>
+    <!-- GUARDRAIL + HEALTH -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — guardrail band + per-run health</h3><span class="sha">0e3f648</span></div>
+      <div class="inc-sub reveal">Deterministic guardrail primitives and a per-run health verdict on the StageResult seam. Additive, +51 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Reusable guardrails + a per-run health report</h4><span class="tag">core/guardrails.py · core/health.py</span></div>
+        <p class="what">Turned the ad-hoc gate/verify logic into tested primitives, and gave every run a single health verdict.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Confidence gates and "did it actually do work?" checks were scattered inline across critic, coverage, dedup and the LLM client; a run carried no overall health — a degraded run looked identical to a clean one.</div><div class="cell after"><span class="lbl">After</span><code>ConfidenceGate</code> + <code>assert_work_done/finish_complete/nonempty</code> primitives, and a <code>RunHealthReport</code> (worst-status, counts, cost, degraded reasons) assembled per run and written to the output under a <code>health</code> key.</div></div>
+        <p class="why"><span class="wl">Better</span>One deterministic, auditable place for "is this output trustworthy?" — and every run now carries an OK / DEGRADED / FAILED verdict plus cost.</p>
+      </div>
+    </div>
+    <!-- WAVE 5 JIRA -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 5 — Jira robustness</h3><span class="sha">cae9c6a</span></div>
+      <div class="inc-sub reveal">Make the Jira push production-grade. Mocked-transport TDD, +14 tests (jira_client.py had none).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Idempotent, rate-limit-aware, honest Jira push</h4><span class="tag">C-11 · H-11 · H-12</span></div>
+        <p class="what">Three real push bugs fixed so a large push survives retries and never lies about success.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A failed/retried push re-created duplicate issues; a single rate-limit (429) became a permanent half-push; and if an Epic/Story failed, its children were silently scattered as top-level issues while the push still reported success.</div><div class="cell after"><span class="lbl">After</span>Tasks remember their <code>jira_issue_key</code> and skip on re-push (no duplicates); 429/5xx are retried with backoff honoring <code>Retry-After</code>; a failed container marks affected children <code>hierarchy_degraded</code> so the UI can surface it.</div></div>
+        <p class="why"><span class="wl">Better</span>Pushing hundreds of tickets is now safe to retry and honest about partial failures — and the headline feature finally has real tests.</p>
+      </div>
+    </div>
+    <!-- WAVE 5 — LINK DIRECTION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 5 — Jira link direction, per-kind</h3><span class="sha">4308e65</span></div>
+      <div class="inc-sub reveal">Make dependency-link direction explicit and correct for every relationship kind. TDD, +1 test.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Explicit per-kind <code>LINK_DIRECTION</code> map</h4><span class="tag">jira-8</span></div>
+        <p class="what">Which issue is the "outward" side of a dependency link is now resolved per relationship kind, not hard-coded to the target.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every dependency link put the target issue on the outward side. Correct for <code>blocks</code> ("target blocks source", already pinned by tests) — but backwards for <code>duplicates</code>: it read "target duplicates source" when the task that <em>declares</em> the dependency is the duplicate.</div><div class="cell after"><span class="lbl">After</span>A documented <code>LINK_DIRECTION</code> map resolves <code>(link_type, target_is_outward)</code> per kind — <code>blocks</code>→"target blocks source" (unchanged), <code>duplicates</code>→"source duplicates target" (fixed), <code>relates_to</code>→symmetric — and a regression test pins each direction.</div></div>
+        <p class="why"><span class="wl">Better</span>Dependency links now read correctly for every kind, and the direction is self-documenting — no future reader has to re-derive whether "blocks" is inverted. (The alleged inversion in the roadmap turned out to be a false alarm: <code>blocks</code> was already correct; only <code>duplicates</code> needed the fix.)</p>
+      </div>
+    </div>
+    <!-- WAVE 5 — TYPED EXCEPTIONS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 5 — Typed exception classification</h3><span class="sha">868e95a</span></div>
+      <div class="inc-sub reveal">Give failures a machine-readable class so the UI can react. TDD, +33 tests (new <code>core/errors.py</code>).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>3-way error taxonomy at the push + pipeline boundaries</h4><span class="tag">harn-8 (focused)</span></div>
+        <p class="what">Errors surfaced to the UI now carry a class — transient / user-fixable / terminal — not just an opaque string.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A failed pipeline run or Jira push put <code>str(e)</code> into a single <code>error</code> field. The UI couldn't tell a retry-able rate-limit from a bad API key from a permanent bad-request — every failure looked identical.</div><div class="cell after"><span class="lbl">After</span>A new stdlib-only <code>core/errors.py</code> defines <code>ErrorClass</code> + <code>classify_exception()</code>. The Jira-push and pipeline/server boundaries classify each failure onto a new <code>error_class</code> field on <code>JiraPushResult</code> and <code>ProcessingStatus</code> — transient (retry), user-fixable (fix credentials), or terminal.</div></div>
+        <p class="why"><span class="wl">Better</span>Production failures are actionable: the UI can branch on the failure kind instead of string-matching. Purely additive — behavior is otherwise byte-identical. (Adversarial review caught a status-regex false-positive that would silently upgrade terminal errors to retry-able; fixed + regression-tested before merge.)</p>
+      </div>
+    </div>
+    <!-- RELIABILITY — ANCHORED RETRY CLASSIFICATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Reliability — anchored retry classification</h3><span class="sha">a9765dd</span></div>
+      <div class="inc-sub reveal">Follow-up surfaced by the typed-exception review: stop misreading bare numbers as an HTTP status. TDD, +2 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Bare numbers no longer trigger false retries</h4><span class="tag">retry classifier</span></div>
+        <p class="what">The status-from-message fallback is now anchored to a "status"/"HTTP" cue in ALL three retry classifiers (<code>core.errors</code>, <code>llm_client</code>, <code>pageindex</code>).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A bare 3-digit number in an error message (a token count, JSON column, or list index — e.g. "line 1 column 512") was read as an HTTP 5xx, so a terminal error could be classified retry-able and burn the whole retry budget on a failure that will never succeed.</div><div class="cell after"><span class="lbl">After</span>The message regex only matches a code adjacent to a status/HTTP cue; attribute-borne status (how real litellm/requests errors expose it) is unchanged. Genuine 5xx retries are unaffected; terminal errors now fail fast.</div></div>
+        <p class="why"><span class="wl">Better</span>A class of silent, wasteful retry loops is closed across every retry classifier in the codebase — found by grepping ALL instances, not just the one the review named.</p>
+      </div>
+    </div>
+    <!-- WAVE 6 — UI.1 -->
+    <!-- WAVE 6 — UI/UX rework UI.2a→UI.7 -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 6 · UI.2a→UI.7 — the UI/UX rework, shipped offline</h3><span class="sha">a1f3af6</span></div>
+      <div class="inc-sub reveal">The rest of the audit-driven rework, on top of UI.1's honest tokens. app.js is gone — split into ES modules with a tiny store and a vitest harness (96 tests). Every audit blocker is closed. Offline-complete; only the UI.3/UI.5 live-backend verification passes are walled.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Build seam + module split + a ~1KB store + a real test harness</h4><span class="tag">UI.2a/2b · baaa3d0 · 118653b</span></div>
+        <p class="what">The 979-line god-file becomes testable ES modules behind a Vite build.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>One 979-line <code>app.js</code> IIFE, no build step, no JS tests — every change was a blind edit.</div><div class="cell after"><span class="lbl">After</span>A Vite dev-proxy + prod-build seam (zero behaviour change), then <code>app.js</code> split into <code>src/{state,api,render,modals,polling,main}.js</code> with a ~1KB nanostores store (framework-free) and 96 vitest tests across 5 suites.</div></div>
+        <p class="why"><span class="wl">Better</span>The UI is now modular, unit-tested, and safe to evolve — the split is the gate that let every later UI phase land independently.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>error_class-aware failure UX + an accessible, XSS-safe, keyboard-fast review flow</h4><span class="tag">UI.3/4a/4b · bd22a44 · a1f3af6</span></div>
+        <p class="what">Failures stop dead-ending, and reviewing tasks no longer requires a mouse.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The typed <code>error_class</code> taxonomy was completely unconsumed — every failure dead-ended at "Dismiss"; collapsibles weren't keyboard-reachable; <code>section_title</code> went through <code>innerHTML</code> (XSS); the filter/stat taxonomy was inconsistent.</div><div class="cell after"><span class="lbl">After</span>A severity chip (the <code>--sev-*</code> tokens) drives retry-vs-fix-vs-failed UX off the real error_class; collapsibles are <code>role="button"</code>+keyboard; titles escape via <code>textContent</code>; optimistic in-place card patch; keyboard triage (a/r approve/reject, j/k, e expand) over one reconciled status taxonomy.</div></div>
+        <p class="why"><span class="wl">Better</span>Reviewers can tell what went wrong and what to do next, and can clear a queue from the keyboard — the second audit blocker (dead-end errors) is closed.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Responsive layout + real modal a11y + flow-integrity guards, onboarding &amp; a push-results panel</h4><span class="tag">UI.5/6/7 · bd22a44 · a1f3af6</span></div>
+        <p class="what">The app works on smaller screens, dialogs are accessible, and the run→review→push flow guards itself.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>One <code>@media</code> query (no responsiveness); modals had no dialog semantics/focus trap; Push could fire with no active session; no first-run state; push outcomes vanished.</div><div class="cell after"><span class="lbl">After</span>Tablet/mobile breakpoints (1024/768/400px); real <code>role="dialog"</code>+<code>aria-modal</code>+focus-trap dialogs; Push pre-flight disabled until a canonical <code>activeSessionId</code> is set; skeleton/loading states; a genuine onboarding empty-state; a push-completion panel listing each task with its Jira key.</div></div>
+        <p class="why"><span class="wl">Better</span>The review UI is usable on any screen, accessible, and can't be driven into an invalid push — with the run's outcome shown plainly at the end.</p>
+      </div>
+    </div>
+
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 6 · UI.1 — token foundation + safety hotfixes</h3><span class="sha">32ba3f4</span></div>
+      <div class="inc-sub reveal">First UI-rework increment. Run-the-app + browser verified (no JS harness yet — vitest lands in UI.2a). Adversarial review: 1 defect → fixed.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>An honest design system + the live-UX bugs fixed up-front</h4><span class="tag">ui-1..4</span></div>
+        <p class="what">Made the token system real, committed to one dark theme, and killed the polling/error-UX bugs that need no build step — so every later UI phase builds on solid ground.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A theme toggle switched to a light theme that never existed (broke the app); an undefined <code>--surface-2</code> rendered transparent; h1/h2 sizes were hardcoded off the scale; PENDING (and any unmapped) status showed a colorless dot; the cancel button fired-and-forgot; polling had no stale-response guard; errors auto-vanished in 3s; "No SOW Loaded" flashed mid-load and told users to upload a "text document".</div><div class="cell after"><span class="lbl">After</span>Single dark theme (toggle deleted); tokens resolve — extended type scale, <code>--info</code> + semantic <code>--status-*</code> (one per TaskStatus) + <code>--sev-*</code> severity tokens (aligned to Astryx's conventions, copied with no runtime dep); every status dot has a color; cancel resets the UI synchronously then signals the backend best-effort (bounded, can't freeze on a hung run); polling drops stale-session responses + shows "Reconnecting…"; error toasts persist until dismissed; the empty-state is flash-guarded and says "Upload a SOW PDF".</div></div>
+        <p class="why"><span class="wl">Better</span>The two audit blockers (dead theme toggle, colorless statuses) are gone and the foundation is honest — the <code>--sev-*</code> tokens are already in place for UI.3's error_class-aware failure UX.</p>
+      </div>
+    </div>
+    <!-- DOMAIN ENUMS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Domain model — normalizing enums</h3><span class="sha">3c13cc8</span></div>
+      <div class="inc-sub reveal">Closed-set fields hardened against dirty LLM output. +23 test functions (67 cases).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Dirty model output coerces instead of silently mis-routing</h4><span class="tag">H-23 · INV-1</span></div>
+        <p class="what">Turned three free-text decision fields into typed enums that normalize messy LLM values.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Fields like the dedup decision were plain strings, so a model emitting <code>KEEP_BOTH</code> vs <code>keep_both</code> vs <code>keep both</code> could silently mis-route a comparison — the same class of bug behind dedup oddities.</div><div class="cell after"><span class="lbl">After</span>They're <code>str</code>-enums with a normalizer that coerces case/whitespace/alias drift to the right member and <em>fails loudly</em> on genuinely-unknown values — every existing string comparison still works unchanged.</div></div>
+        <p class="why"><span class="wl">Better</span>The contract is self-defending: dirty-but-known input is absorbed, unknown input errors visibly instead of slipping through.</p>
+      </div>
+    </div>
+    <!-- CONFIDENCE GUARDRAILS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — confidence invariants + live guardrails</h3><span class="sha">af9f334</span></div>
+      <div class="inc-sub reveal">Confidence values bounded, and the guardrail module wired into production. +24 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Confidence can't go out of range, and gate logic lives in one place</h4><span class="tag">core/guardrails</span></div>
+        <p class="what">Bounded every confidence/score to [0,1] and routed the critic + coverage gates through the shared <code>ConfidenceGate</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Confidence fields were unbounded floats (a model returning <code>1.5</code> was accepted verbatim), and each agent re-implemented its own inline floor check — the guardrail module existed but nothing used it.</div><div class="cell after"><span class="lbl">After</span>A clamp coerces out-of-range values into [0,1] (dirty-but-numeric absorbed, like the enums), and the critic + coverage gates both decide through the one <code>ConfidenceGate</code> — the guardrail band is now real production code.</div></div>
+        <p class="why"><span class="wl">Better</span>One audited place decides "is this verdict trustworthy?", and bad confidence values can't silently propagate.</p>
+      </div>
+    </div>
+    <!-- INSTRUCTOR -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — Instructor structured-output path</h3><span class="sha">93030df</span></div>
+      <div class="inc-sub reveal">The dependency + mechanism for guaranteed-valid LLM output, on the AgentRunner seam. +8 tests. Additive.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A validated structured-output method, ready for agents to adopt</h4><span class="tag">instructor 1.15.1</span></div>
+        <p class="what">Installed Instructor and added <code>AgentRunner.complete_structured</code> — returns a validated Pydantic object instead of scraped text.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The only model path was <code>complete_json</code> — prompt-asks-for-JSON then regex/parse, with no schema enforcement at the provider.</div><div class="cell after"><span class="lbl">After</span><code>complete_structured(response_model=…)</code> uses Instructor over LiteLLM to return a guaranteed-valid model (or a typed error) — the mechanism behind the full C-5 fix. Agents migrate onto it next, one call site each.</div></div>
+        <p class="why"><span class="wl">Better</span>The structured-output engine is in place and tested; adopting it per agent changes one call, not the parsing.</p>
+      </div>
+    </div>
+    <!-- C-5 PER-AGENT INSTRUCTOR MIGRATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — per-agent Instructor migration (C-5 complete)</h3><span class="sha">99b9ab2</span></div>
+      <div class="inc-sub reveal">Routed all six agents off regex-scraped JSON onto Instructor-validated structured output. One agent per commit, test-first, suite green between each — 6 commits, still 331 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>All six agents now get validated objects, not scraped text</h4><span class="tag">C-5 · the root-cause fix, completed</span></div>
+        <p class="what">Swapped every agent's model call from <code>complete_json</code> (prompt-for-JSON + regex/parse + swallow-on-failure) to <code>complete_structured(response_model=…)</code> (Instructor-validated Pydantic).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each agent scraped a list/dict out of free text and hand-parsed it; a malformed or truncated answer was silently coerced to empty/garbage — the mechanism behind the intelligence-layer failures.</div><div class="cell after"><span class="lbl">After</span>Each agent declares a response model (classifier→<code>RawClassification</code>, critic→<code>CritiqueBatch</code>, coverage→<code>CoverageAudit</code>, extraction→<code>ExtractionResult</code>, gap-recovery→<code>GapRecoveryResult</code>, dedup→<code>DedupDecisionList</code>) and receives a validated instance; any structured-output failure surfaces as one typed <code>InstructorError</code>, recorded to the audit trail and degraded to that agent's safe default — never a silent empty.</div></div>
+        <p class="why"><span class="wl">Better</span>The #1 root cause (C-5) is now fully closed at the agent layer: zero <code>complete_json</code> call sites remain. Per-task resilience (critic + gap-recovery skip a dirty entry and keep the rest) is preserved, and failures are visible instead of swallowed.</p>
+      </div>
+    </div>
+    <!-- C-5 CLOSED LIVE -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Harness — C-5 closed live (smoke-gate + 2 fixes)</h3><span class="sha">a9d8b12</span></div>
+      <div class="inc-sub reveal">A live smoke-gate ran all six agents against a real provider (OpenRouter / gemini-2.5-flash) and caught two defects the stubbed tests structurally couldn't. Both fixed test-first; the gate now passes 6/6.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The structured path now actually works against a real provider</h4><span class="tag">C-5 · live-verified · 6/6</span></div>
+        <p class="what">Built <code>scripts/check_structured_output.py</code> (drives each agent's <code>complete_structured</code> once against a live provider; <code>--self-test</code> verifies wiring offline), then fixed the two things it surfaced.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The Instructor→LiteLLM round trip was only ever stubbed. Live, every agent failed: (1) <code>complete_structured</code> never forwarded the resolved <code>api_key</code>/<code>api_base</code> → 401; and (2) it used Instructor's default <code>Mode.TOOLS</code>, under which gemini serialized nested <code>list[Model]</code> fields as <em>stringified</em> JSON → Pydantic "Input should be an object" (confirmed on flash AND pro — a mode issue, not model capability).</div><div class="cell after"><span class="lbl">After</span>It threads provider credentials through exactly like <code>complete_json</code>, and selects <code>Mode.JSON</code> for OpenRouter/gemini/custom (TOOLS kept for OpenAI/Anthropic), so nested objects round-trip. The live gate passes <strong>6/6</strong> on gemini-2.5-flash.</div></div>
+        <p class="why"><span class="wl">Better</span>C-5 is closed <em>end-to-end</em>, not just in stubs — and the recorded validated outputs become seed material for the INV-4 eval cassette. The smoke-gate stays as a one-command live regression check.</p>
+      </div>
+    </div>
+    <!-- A1 STRUCTURED-OUTPUT RESILIENCE -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — resilient structured-output calls (A1)</h3><span class="sha">1b627a1</span></div>
+      <div class="inc-sub reveal">Restored on <code>complete_structured</code> the timeout + retry/backoff the C-5 migration dropped vs <code>complete_json</code>. Test-first — 7 new tests, suite 342 → 349 green, offline smoke-gate 6/6.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A transient 429 or hung call no longer silently loses tasks</h4><span class="tag">scale · A1 · the C-5 regression</span></div>
+        <p class="what">Wrapped the Instructor→LiteLLM call in a per-call timeout and a bounded retry/backoff loop, reusing the existing <code>llm_client</code> retry helpers import-only (no router/credential paths touched).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span><code>complete_structured</code> called the provider with <em>no</em> timeout, retry, or rate-limit backoff — the legacy <code>complete_json</code> path had all four. Across the ~300-600 sequential LLM calls of a 50-60pg SOW run, a single transient 429/timeout dropped that agent to its safe default (lost tasks), and a hung call could block the whole run indefinitely.</div><div class="cell after"><span class="lbl">After</span>Each call carries a timeout (60s remote / 3600s local Ollama, override <code>S2J_STRUCTURED_TIMEOUT</code>) and retries only transient remote errors (429/408/5xx/network) with <code>Retry-After</code>-aware jittered exponential backoff, budgeted by <code>LLM_STRUCTURED_MAX_ATTEMPTS/_ELAPSED_S/_WAIT_S</code>. Auth/4xx and unsatisfiable-schema failures still fail fast; the budget-exhausted case re-raises one typed <code>InstructorError</code> the callers already degrade on — never a silent <code>None</code>.</div></div>
+        <p class="why"><span class="wl">Better</span>Structured output regains the production resilience the regex path had — the prerequisite for parallelizing the per-node loop (B1), where concurrency would otherwise multiply transient-failure task-loss.</p>
+      </div>
+    </div>
+    <!-- A2 PER-NODE ISOLATION + GRACEFUL MAX_NODES -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — per-node isolation &amp; graceful capacity cap (A2)</h3><span class="sha">78b4fb8</span></div>
+      <div class="inc-sub reveal">One bad node no longer aborts the whole run, and an over-cap document yields partial output instead of a hard crash. Test-first — 16 new tests, suite 349 → 365 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A single failing node can't sink a 150-node run anymore</h4><span class="tag">scale · A2</span></div>
+        <p class="what">Extracted the per-node body into <code>_process_node</code> and the loop into <code>_extract_all</code>, which isolates each node in try/except; replaced the <code>max_nodes</code> hard-stop with a strategy-gated cap.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Any single node's unhandled error aborted the entire multi-hundred-node run, losing every task; and a document over <code>max_nodes</code> raised a hard <code>RuntimeError</code> with no partial output.</div><div class="cell after"><span class="lbl">After</span>A failing node is logged (<code>EXTRACTION_FAILED</code> audit row), counted, and skipped — the loop continues; &gt;5% failures flag the run via a <code>node_processing</code> health stage. Over-cap docs are processed up to the cap with partial output kept and <code>DEGRADED_CAPACITY</code> flagged (default <code>node_processing_strategy="degraded"</code>; <code>"strict"</code> keeps the legacy hard-stop).</div></div>
+        <p class="why"><span class="wl">Better</span>Long runs degrade gracefully instead of failing all-or-nothing, and <code>_process_node</code> (no shared-state mutation) is the seam B1 parallelizes.</p>
+      </div>
+    </div>
+    <!-- A3 BATCH DEDUP PAIRS -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — batch dedup candidate pairs (A3)</h3><span class="sha">034110a</span></div>
+      <div class="inc-sub reveal">Hundreds of dedup pairs no longer overflow a single call's token budget. Test-first — 4 new tests, suite 365 → 369 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Big-SOW dedup stops silently truncating</h4><span class="tag">scale · A3</span></div>
+        <p class="what">Chunked the candidate-pair confirmation into batches of 40 (extracted <code>_confirm_pairs</code>) and merge the per-batch decision lists.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>All candidate pairs went in one <code>complete_structured</code> call (<code>max_tokens=8192</code>); a big SOW's hundreds of pairs truncated the response, and the degraded signal only fired on <em>zero</em> total merges — so partial truncation dropped real merges undetected.</div><div class="cell after"><span class="lbl">After</span>Pairs are confirmed in bounded batches and the <code>DedupDecisionList</code>s merged; a &gt;30-pair batch that yields zero merges flags <code>DEDUP_DEGRADED_BATCH</code>. Small inputs (≤40 pairs) keep the single-call path unchanged.</div></div>
+        <p class="why"><span class="wl">Better</span>Dedup actually completes its job on large task sets instead of quietly losing merges past the token cap.</p>
+      </div>
+    </div>
+    <!-- A4 SURFACE SECTION TRUNCATION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — surface section truncation (A4) · Phase A complete</h3><span class="sha">a4e2fd3</span></div>
+      <div class="inc-sub reveal">Dense pages no longer lose tasks invisibly — truncation is now flagged + audited. Test-first — 4 new tests, suite 369 → 373 green. Completes scale-hardening Phase A (A1-A4).</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A clipped section now tells you it was clipped</h4><span class="tag">scale · A4</span></div>
+        <p class="what">Added a <code>TRUNCATION</code> task flag + a <code>SECTION_TRUNCATED</code> audit row wherever a section is clipped at <code>max_section_chars</code> (extraction, classifier, coverage).</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>extraction/classifier/coverage silently clipped sections at their char caps (16000/4000/16000) with only an in-prompt note — a reviewer had no signal that a dense page may have lost tasks.</div><div class="cell after"><span class="lbl">After</span>Every task extracted from a clipped section carries a <code>TRUNCATION</code> flag (through state-merge to the final <code>ManagedTask</code>), and all three agents log <code>SECTION_TRUNCATED</code> with the original→clipped char counts. <code>max_section_chars</code> is config-exposed, so big docs can raise it to avoid clipping at all.</div></div>
+        <p class="why"><span class="wl">Better</span>Truncation is visible and actionable instead of a silent data-loss path — closing out scale-hardening Phase A (resilience &amp; integrity).</p>
+      </div>
+    </div>
+    <!-- B1 PARALLEL PER-NODE EXTRACTION -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — parallel per-node extraction (B1)</h3><span class="sha">6f41448</span></div>
+      <div class="inc-sub reveal">The dominant per-node LLM work now runs concurrently, with a proven parallel == sequential guarantee. Test-first — 4 new tests, suite 373 → 377 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Per-node extraction runs concurrently — without changing the output</h4><span class="tag">scale · B1 · config-gated</span></div>
+        <p class="what">Split the per-node body into a pure <code>_extract_node</code> (classify+extract) and an order-sensitive <code>_apply_node</code> (state-merge+critic+coverage); a thread pool runs extraction across nodes, then apply runs sequentially in node order.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The per-node loop was strictly sequential — a 150-node SOW took ~25 min-2 h, each node's classify→extract→critic→coverage waited on the last.</div><div class="cell after"><span class="lbl">After</span>The pure, per-node classify+extract calls run on a <code>ThreadPoolExecutor</code> (<code>SOW_NODE_CONCURRENCY</code>, default 6; <code>=1</code> reproduces the legacy path); the order-sensitive merge/critic/coverage — which read the cross-node <code>open_tasks</code> accumulator — stay sequential in node order, so the output (tasks/coverage/dedup) is provably identical. A1's backoff makes the concurrent transient failures safe.</div></div>
+        <p class="why"><span class="wl">Better</span>The biggest wall-clock cost (extraction) parallelizes across nodes with zero behavior change — correctness held over peak speed (critic+coverage stay sequential by necessity).</p>
+      </div>
+    </div>
+    <!-- C1 PER-NODE CHECKPOINT + RESUME -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — per-node checkpoint + resume (C1)</h3><span class="sha">0030581</span></div>
+      <div class="inc-sub reveal">A crash 45 nodes into a 60-node run no longer loses the work. Test-first — 6 new tests, suite 377 → 383 green.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Long runs survive a crash and resume where they left off</h4><span class="tag">scale · C1</span></div>
+        <p class="what">Write an atomic extraction checkpoint after each applied node (tasks + coverage + node-set), and resume from it on the next run — skipping done nodes with no duplicate tasks.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Only a single end-of-run checkpoint existed; a crash partway through a ~25 min-2 h run discarded every extracted task and started from zero.</div><div class="cell after"><span class="lbl">After</span>After each node the run persists <code>extraction_checkpoint.json</code> (atomic temp+replace) with the closed/open tasks + coverage state. On restart <code>_maybe_resume</code> validates the checkpoint's node-id list against the current document (mismatch → fresh run), restores tasks + coverage, and processes only the remaining nodes. Gated by <code>RunConfig.enable_resumption</code> (default on); deleted on successful completion.</div></div>
+        <p class="why"><span class="wl">Better</span>A long SOW run is now restart-survivable in-process — the durability fix that doesn't yet need the Wave-2 worker.</p>
+      </div>
+    </div>
+    <!-- C2 CANCEL SEAM + STATUS MIRROR -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Scale-hardening — cancel seam + filesystem status (C2) · A1→C2 complete</h3><span class="sha">e57a641</span></div>
+      <div class="inc-sub reveal">A run can be cancelled cleanly mid-loop and its live status survives a restart. Test-first — 4 new tests, suite 383 → 387 green. Completes the offline scale-hardening arc (A1-C2); only C3 (durable worker) waits on Wave-2 services.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A clean cancellation seam — the one the durable worker will bind to</h4><span class="tag">scale · C2</span></div>
+        <p class="what">Added an injectable <code>cancel_check</code> (defaulting to the local stop_event) consulted between nodes, and mirrored live run status to a filesystem JSON.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Cancellation was hard-wired to the in-process <code>stop_event</code>, and live run status lived only in memory — neither survives the move to a durable background worker, and partial status was lost on a restart.</div><div class="cell after"><span class="lbl">After</span><code>_cancelled()</code> consults an injectable <code>cancel_check</code> between nodes/stages (default = <code>stop_event.is_set</code>, zero behavior change; a worker can inject a Redis <code>cancel:{run_id}</code> probe), and <code>_update_status</code> mirrors <code>{step, message, progress}</code> to <code>status.json</code> (atomic) so progress is observable across a restart.</div></div>
+        <p class="why"><span class="wl">Better</span>The cancellation + status surfaces are now seams the Wave-2 durable worker (C3) binds to — closing the offline scale-hardening arc.</p>
+      </div>
+    </div>
+    <!-- INV-4 EVAL GATE SCAFFOLDING -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — INV-4 offline eval gate (scaffolding)</h3><span class="sha">9c31a88</span></div>
+      <div class="inc-sub reveal">A failable quality gate that drives the real pipeline offline and asserts the Wave-3 bands. Test-first — 21 new tests, suite 387 → 408 green. Recorded 103-node cassette deferred to post-C-4.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>A gate that catches the INCOMPLETE-bomb, zero-merge, and conf=0.00 bugs</h4><span class="tag">INV-4 · test-12 scaffold</span></div>
+        <p class="what">Built an offline eval harness (<code>pipeline/evals/</code>): a cassette + replay seam, band-math over <code>pipeline_output.json</code>, and an <code>EvalHarness</code> that drives the real <code>PipelineOrchestrator.run()</code> with no network — plus negative controls proving the gate can fail.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The only eval scaffolding was three bare-pass stubs needing live Langfuse; there was no way to assert that a run's INCOMPLETE-rate, merge count, or conf=0.00 flags were sane — the path the plan (INV-4) requires before the coverage restructure and the Stage-runner flip.</div><div class="cell after"><span class="lbl">After</span><code>compute_bands</code> asserts incomplete_rate ≤ 0.40, merge_count ≥ 1 (from <code>merged_from</code> on survivors — merged tasks are dropped, so status==MERGED is always 0), zero_conf_flags == 0, no DEGRADED. A cassette keyed by (agent, node_id) replays at the real <code>AgentRunner.complete_structured</code> seam (not the provider — a correction to the original design); dedup determinism is solved by freezing candidate pairs + a closure-shared merge. Three negative controls turn the right band RED.</div></div>
+        <p class="why"><span class="wl">Better</span>The regression gate that unblocks the C-4 coverage restructure + Stage-runner flip exists and provably fails on the headline bugs — the faithful recorded 103-node cassette swaps in once post-dedup coverage (STEP 3.3) lands.</p>
+      </div>
+    </div>
+
+    <!-- WAVE 3 — DEDUP-UUID REMAPPER -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Replay-time dedup-UUID remapper</h3><span class="sha">0810c6f</span></div>
+      <div class="inc-sub reveal">De-risks the faithful INV-4 cassette without a live run. TDD + adversarial review (4 defects caught &amp; fixed), +14 tests.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Rewrite recorded dedup decisions onto the replay run's fresh UUIDs</h4><span class="tag">STEP 3.8 · offline</span></div>
+        <p class="what">A pure replay-side remapper that maps a recorded <code>DeduplicationAgent</code> decision's task ids onto the current run's freshly-minted ones, matching by title → node_id → position.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>A recorded dedup response embeds the <em>recording</em> run's fresh task UUIDs. A replay mints different ones, so a statically-recorded merge decision never matches the replay run's tasks — the exact blocker on a faithful 103-node cassette (the gate for the Stage-runner flip).</div><div class="cell after"><span class="lbl">After</span><code>build_dedup_id_remap</code> + <code>remap_recorded_dedup_ids</code> (in <code>pipeline/evals/replay.py</code>) rewrite the recorded ids onto the current run: anchored matches (unique title, then node_id) claim first; positional fallback only for anchor-less refs; each task claimed once; decisions that can't be remapped — or that would collapse into a self-merge — are dropped, never faked.</div></div>
+        <p class="why"><span class="wl">Better</span>The hardest determinism problem behind the faithful cassette is solved and unit-proven offline, so wiring the live recording becomes a mechanical step. Adversarial review caught 4 real defects (a collision→self-merge that would silently delete a task, a position-fallback wrong-merge, and two test-quality gaps) — all fixed and regression-tested before merge.</p>
+      </div>
+    </div>
+
+    <!-- C-4 COVERAGE RESTRUCTURE -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Coverage restructure (C-4 / STEP 3.3)</h3><span class="sha">8ce7310</span></div>
+      <div class="inc-sub reveal">Killed the ~100% INCOMPLETE flag bomb structurally — coverage now flags run-wide, post-dedup. Test-first — 13 new tests, suite 408 → 421 green; INV-4 controls still RED.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Coverage flags run-wide and post-dedup, not per-section</h4><span class="tag">C-4 · STEP 3.3</span></div>
+        <p class="what">Moved INCOMPLETE flagging out of the per-node extract loop into a single run-wide gate applied after dedup + gap recovery.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every node's coverage check flagged its whole section INCOMPLETE inline, pre-dedup — a single confident miss per section drove the real run to ~100% INCOMPLETE, and merged-away duplicates still counted.</div><div class="cell after"><span class="lbl">After</span>A pure <code>CoverageGate</code> (reusing the shared <code>ConfidenceGate</code>) flags the FINAL deduped set report-level: a task is INCOMPLETE only when one of its <code>source_refs</code> belongs to a section whose report is confident (<code>checker_confidence ≥ floor</code>) AND has genuine misses. No inline path → no double-flag.</div></div>
+        <p class="why"><span class="wl">Better</span>The INCOMPLETE rate reflects survivors and real misses, not a blanket sweep — and the INV-4 flagbomb control still goes RED through the new gate, proving it's wired.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Embedding-tier corpus filter drops cross-section duplicate "misses"</h4><span class="tag">C-4 · STEP 3.5</span></div>
+        <p class="what">The piece that actually drops the real-run rate: filter each reported miss against the final deduped corpus by similarity before the gate sees it.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The structural move flags correctly, but most "misses" on a real SOW are cross-section duplicates — work already captured as a task extracted elsewhere — and the checker, seeing only one section, still reports them. They'd flag genuine tasks INCOMPLETE.</div><div class="cell after"><span class="lbl">After</span>A feature-stage <code>CoverageCorpusFilter</code> (reusing the dedup MiniLM embedder) tiers every miss vs the final corpus: drop ≥0.85 (already covered), advisory 0.70–0.85, genuine &lt;0.70. Only genuine misses survive to the gate; a section with none no longer flags.</div></div>
+        <p class="why"><span class="wl">Better</span>Cross-section duplicates stop poisoning the signal — the mechanism behind the ~100%→&lt;40% drop. Env-gated (<code>SOW_COVERAGE_CORPUS_FILTER</code>, default OFF so the INV-4 gate stays byte-deterministic; on in prod). 13 deterministic tests; adversarially reviewed (11 agents) → 0 defects.</p>
+      </div>
+    </div>
+
+    <!-- PUSH ADMISSION GATE -->
+    <div class="increment">
+      <div class="inc-head reveal"><h3>Wave 3 — Push admission gate (STEP 3.5)</h3><span class="sha">2da7024</span></div>
+      <div class="inc-sub reveal">A deterministic guard on what reaches Jira — the other half of the guardrail band beside the coverage gate. Test-first — 23 tests, suite 463 green; adversarially reviewed → 0 defects.</div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The pipeline refuses to push known-bad work to Jira</h4><span class="tag">STEP 3.5 · PushGate</span></div>
+        <p class="what">A pure, read-only gate that decides which approved tasks may actually be created in Jira.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Nothing stopped an INCOMPLETE / low-confidence / ambiguous task — or any task from a DEGRADED run — from being pushed; and a re-push could duplicate work already created in Jira.</div><div class="cell after"><span class="lbl">After</span><code>PushGate.assert_pushable</code> classifies skip-first: already-pushed tasks (<code>jira_issue_key</code>) are skipped idempotently; INCOMPLETE / LOW_CONFIDENCE / AMBIGUOUS_SCOPE / NO_ACCEPTANCE_CRITERIA tasks and any task on a DEGRADED run are blocked unless explicitly overridden; everything else pushes. Fail-closed by design.</div></div>
+        <p class="why"><span class="wl">Better</span>The headline Jira-push feature now has a quality floor and idempotency. Informational flags don't block, and the blocking set is injectable for stricter shops.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>...and it's now wired into the live push path</h4><span class="tag">STEP 5.3</span></div>
+        <p class="what">Activated the gate: approved tasks pass through PushGate before any Jira create, and the unwired experimental MCP client was deleted.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>PushGate existed but was dormant — the push handler created every approved task in Jira regardless of flags or run health. A dead, never-wired <code>jira_mcp_client.py</code> sat alongside the real client.</div><div class="cell after"><span class="lbl">After</span><code>run_push_task</code> gates via <code>_gate_push</code> (never crashes): already-pushed tasks skip idempotently, blocked / DEGRADED-run tasks surface as failed results and never reach Jira, and only cleared tasks are created — with an explicit <code>override</code> to force-push. The dead MCP client is gone.</div></div>
+        <p class="why"><span class="wl">Better</span>Coverage/critic flags now actually gate what ships — a flagged task is refused at push, not silently created. The loop closes: gate flags → push refuses. 7 tests; adversarially reviewed → 0 defects.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Pipeline tuning is now part of the run contract</h4><span class="tag">STEP 5.4 · RunConfig</span></div>
+        <p class="what">The 11 pipeline tuning knobs — confidence &amp; dedup thresholds, the three intelligence-agent toggles, critic threshold, section-char cap, gap-recovery iterations, coverage floor, corpus filter, and node concurrency — are now typed, optional fields on <code>RunConfig</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each knob was a scattered <code>os.getenv</code> read buried in <code>PipelineOrchestrator.__init__</code>, invisible to callers and never captured — so a run's actual tuning lived only in the process environment, not in its own config record.</div><div class="cell after"><span class="lbl">After</span>Each is a typed <code>Optional</code> field on <code>RunConfig</code> defaulting to <code>None</code>. The orchestrator resolves every knob as <em>explicit field → env / app_config → original default</em>, so <code>None</code> reproduces today's behavior byte-for-byte (env still works as a fallback, legacy <code>pipeline_output.json</code> checkpoints still load), while a caller can now pin any knob per run and have it persisted.</div></div>
+        <p class="why"><span class="wl">Better</span>Tuning is explicit, per-run, and recorded in the run itself instead of hidden in the shell — and fully back-compatible. 21 tests; adversarially reviewed → 0 defects.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Agent prompts are now versioned data, not buried code</h4><span class="tag">STEP 3.6a · Prompt registry</span></div>
+        <p class="what">The six pipeline agents' 12 system/user prompts moved out of inline Python constants into versioned <code>prompts/*.v1.txt</code> files, served by a small <code>prompts/registry.py</code>.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Each agent hard-coded its system prompt and its hundreds-to-thousands-of-character user template as inline triple-quoted constants — hard to diff or version, editable only in code, with nothing to stop an accidental wording change from silently shifting extraction behavior.</div><div class="cell after"><span class="lbl">After</span>Each prompt lives in its own byte-exact <code>prompts/&lt;agent&gt;.&lt;kind&gt;.v1.txt</code>, loaded by <code>registry.load()</code> (cached). The literal exists in exactly one place; the agents just reference it. Frozen sha256 snapshots pin all 12 prompts so any future edit is a visible, intentional, reviewable change.</div></div>
+        <p class="why"><span class="wl">Better</span>Prompts are now first-class, versioned artifacts — diffable, snapshot-guarded, and ready to A/B or roll to v2 without touching agent code. Byte-faithful move, zero behavior change (530 tests); adversarially reviewed → 0 defects.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>Every agent's model call is now one declarative spec</h4><span class="tag">STEP 3.6b · AgentSpec adoption</span></div>
+        <p class="what">Each of the six agents declares its single structured LLM call as an <code>AgentSpec</code> and runs it through the shared <code>runner.run_structured</code>, instead of hand-assembling the <code>complete_structured</code> call inline.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>Every agent assembled its own <code>complete_structured(prompt, response_model, system, agent_name, node_id)</code> call — the same call shape duplicated six times, with no single place to see or vary how an agent talks to the model.</div><div class="cell after"><span class="lbl">After</span>Each agent builds one <code>AgentSpec(name, system, prompt template/builder, response_model)</code> and calls <code>runner.run_structured(spec, payload)</code>. The new runner method forwards byte-identical kwargs, so the call shape lives in exactly one place. New <code>run_structured</code> tests + per-agent spec-wiring tests pin it; every existing agent test passes unchanged.</div></div>
+        <p class="why"><span class="wl">Better</span>The agent→model boundary is now uniform and declarative — the substrate the typed <code>PipelineRunner</code> (3.7) builds on. Zero behavior change (546 tests); adversarially reviewed → 0 defects.</p>
+      </div>
+
+      <div class="up s-ship reveal"><div class="uh"><span class="pill ship">Shipped</span><h4>The pipeline is now stages you can run two ways</h4><span class="tag">STEP 3.7 · PipelineRunner</span></div>
+        <p class="what"><code>run()</code>'s eight phases are extracted into reusable stage methods; a new <code>PipelineRunner</code> sequences them from a <code>StageRegistry</code>, selectable behind a flag and proven byte-equivalent to <code>run()</code> offline.</p>
+        <div class="ba"><div class="cell before"><span class="lbl">Before</span>The whole pipeline lived as one ~245-line linear <code>run()</code> method. No way to reorder, inspect, or swap phases — and no second implementation to validate the behavior against.</div><div class="cell after"><span class="lbl">After</span><code>run()</code> is a thin sequencer over eight <code>_stage_*</code> methods threaded through a <code>PipelineContext</code>; <code>core/pipeline/</code> adds <code>Stage</code> / <code>StageRegistry</code> / <code>PipelineRunner</code>, and <code>run_via_pipeline()</code> runs the SAME phases from the registry. <code>RunConfig.use_pipeline_runner</code> opts in; an offline golden test drives the synthetic cassette through both paths and asserts identical task_count / merges / flags / coverage / health. <code>run()</code> is retained (deletion gated on the faithful cassette, 3.8).</div></div>
+        <p class="why"><span class="wl">Better</span>The extraction pipeline is data, not a monolith — phases can be reordered (PEV), inspected, or driven by a durable worker, with the legacy <code>run()</code> kept as the equivalence oracle until the live cassette lands. Zero behavior change (554 tests); adversarially reviewed → 0 defects.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- NEXT -->
+  <section class="sec-next">
+    <div class="sec-no reveal">02 — Next up</div>
+    <h2 class="reveal">Buildable now — on deck.</h2>
+    <p class="sec-intro reveal">These need no external services and land on the seams already in place. They're the highest-leverage remaining quality work — now including the scale-hardening track for 50-60pg SOWs (full plan in <code>SCALE-HARDENING.md</code>).</p>
+    <div class="plist">
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>INV-4: recorded golden cassette + required CI gate</h4><p><s>Offline eval gate scaffolding, the C-4 coverage restructure, the cassette <b>recorder</b> (per-call <code>(agent, node_id, output)</code> capture at the <code>complete_structured</code> seam, round-trip-tested), and the replay-time dedup-UUID remapper (match by title/node_id/position, self-merge-safe) shipped.</s> Remaining (live-run): run the recorder against a real 103-node SOW (live gemini), wire the remapper's <code>RecordedTaskRef</code>s into the faithful cassette, then flip the band test to a required CI gate that unblocks the typed Stage-runner (STEP 3.7).</p><span class="need svc">needs: live run</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Next</span><div><h4>Wave 5 correctness fixes</h4><p><s>Inverted Jira issue-link direction (per-kind <code>LINK_DIRECTION</code> map — <code>blocks</code> was already correct; <code>duplicates</code> fixed) and typed exception classification (3-way <code>ErrorClass</code> at the push + pipeline boundaries) shipped. Push idempotency shipped via PushGate; the dead MCP client was deleted.</s> STEP 5.2/5.3 fully shipped (PushGate wired at <code>ui/server.py:1047</code>; <code>jira_mcp_client.py</code> deleted). Remaining (buildable now): the STEP 5.4 tail — <code>doma-10</code> (retype <code>GoldenTicket.acceptance_criteria</code> → <code>list[AcceptanceCriterion]</code> + a subset contract test) and <code>test-17</code> (<code>tests/test_audit_logger.py</code>). Note: removing Ollama/Bifrost (STEP 5.1) is <b>locked — out of scope</b>.</p><span class="need">buildable now</span></div></div>
+      <div class="pitem reveal"><span class="pill next">Verify</span><div><h4>Wave 6 — live-backend verification (UI.3 / UI.5)</h4><p>The UI/UX rework itself <b>shipped offline in full</b> (UI.1→UI.7 — module split + ~1KB store + 96 vitest, <code>error_class</code>-aware failure UX, accessible/keyboard-fast review flow, flow-integrity guards, responsive + dialog a11y, onboarding + push-results panel; see the Shipped section). What remains is the two <b>live-backend verification passes</b>: confirm the real <code>error_class</code> emissions render correctly (UI.3) and that reopening a running session behaves against a real backend (UI.5).</p><span class="need svc">needs: live-backend</span></div></div>
+    </div>
+  </section>
+
+  <!-- PLANNED -->
+  <section class="sec-plan">
+    <div class="sec-no reveal">03 — Planned (platform)</div>
+    <h2 class="reveal">Waiting on provisioned services.</h2>
+    <p class="sec-intro reveal">These are designed and specced in the implementation plan, but can't be built-and-verified locally — they need the real Postgres / Redis / Render / OAuth to land safely. They become adapter swaps thanks to the seam already shipped.</p>
+    <div class="plist">
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 1 — Data &amp; secrets platform</h4><p>Postgres + object storage (R2) behind the ports, per-user encrypted credentials, Alembic migrations, full-UUID run ids, the audit log moved off SQLite.</p><span class="need svc">needs: Postgres + R2</span></div></div>
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 2 — Auth, isolation &amp; durable worker</h4><p>Google sign-in, row-level <code>user_id</code> isolation, per-user credential injection, and the Arq worker + Redis queue that replaces the in-process background task and process-global state. This is also the <strong>scale-hardening C3</strong> fix — long SOW runs move off the web process into a durable, restart-survivable worker (job timeout sized for a 2-h run).</p><span class="need svc">needs: Redis + OAuth</span></div></div>
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>LLM control plane — Bifrost gateway + Langfuse Cloud</h4><p>Route every model call through a self-hosted <b>Bifrost</b> gateway and trace it in <b>Langfuse Cloud</b>. Real provider keys live only inside Bifrost; our DB stores only an encrypted, budget-capped <b>virtual key</b> per user — so a DB leak never exposes a usable provider key. The user's model selection propagates to both. Design + security review in <code>BIFROST-LANGFUSE.md</code>.</p><span class="need svc">needs: Bifrost service + Langfuse account; folds into Wave 4</span></div></div>
+      <div class="pitem reveal"><span class="pill plan">Planned</span><div><h4>Wave 4 — Deploy &amp; observability</h4><p>The four-service <code>render.yaml</code>, the observability rewrite (drop the Argus/OTel fleet for Render logs + Langfuse Cloud), and per-user cost tracking.</p><span class="need svc">needs: Render</span></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <b>SOW-to-Jira — Elevation Tracker.</b> A living document, maintained as the work progresses.<br>
+    Source of truth: <b>IMPLEMENTATION-PLAN.md</b> (169 change-ids + WAVE 6 <code>ui-1..24</code>) · companions: AUDIT · ARCHITECTURE · HARNESS · SCALE-HARDENING · RENDER-MIGRATION · REPORT.html<br>
+    Updated 2026-07-07 · branch elevation/wave-0 (pushed → GitHub + GitLab, PR #7) · all wave bars reconciled against code (9-track audit) · 831 pytest + 96 vitest green
+  </footer>
+
+</div>
+<script>
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.08,rootMargin:'0px 0px -6% 0px'});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

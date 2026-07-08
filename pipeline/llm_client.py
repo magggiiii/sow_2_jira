@@ -1,25 +1,27 @@
 # pipeline/llm_client.py
 
-import os
+import contextlib
+import datetime
+import io
 import json
+import logging
+import os
+import random
 import re
 import time
-import datetime
-import random
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import Union, Optional, Callable, Mapping
+from typing import Callable, Mapping, Optional
+
 import litellm
-from litellm import RateLimitError, APIConnectionError, Timeout
-import logging
-import contextlib
-import io
+from litellm import APIConnectionError, RateLimitError, Timeout
+from rich.console import Console
+
+from audit.logger import AuditLogger
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
-from audit.logger import AuditLogger
-from pipeline.observability import logger, tracer, llm_token_usage, llm_operation_duration, INSTANCE_ID, SYNC_ENABLED
+from pipeline.observability import logger
 from pipeline.telemetry import TelemetryEmitter
-from rich.console import Console
 
 console = Console()
 
@@ -29,6 +31,26 @@ class RetryHint:
     source: str
     wait_seconds: float
     reason: str
+
+
+class LLMTruncationError(RuntimeError):
+    """Raised when a provider cut a response short at its token limit.
+
+    finish_reason='length' means the model stopped because max_tokens was hit,
+    so the body is partial (often invalid/partial JSON). We surface this as an
+    explicit, non-retryable failure rather than silently returning truncated
+    content. A MISSING finish_reason is treated as acceptable.
+    """
+
+
+# finish_reason values that indicate the response was cut short by a token cap.
+_TRUNCATION_FINISH_REASONS = {"length", "max_tokens", "max_output_tokens"}
+
+
+def _is_truncated_finish_reason(finish_reason) -> bool:
+    if finish_reason is None:
+        return False
+    return str(finish_reason).strip().lower() in _TRUNCATION_FINISH_REASONS
 
 
 def _is_non_retryable_llm_error(err: Exception) -> bool:
@@ -80,6 +102,15 @@ def _extract_headers(err: Exception) -> dict[str, str]:
     return headers
 
 
+# Read a 3-digit code from a message ONLY when it is clearly an HTTP status —
+# anchored to a "status"/"HTTP" cue. A bare number (token count, JSON column,
+# list index) must not be mistaken for a status and drive a wrong retry decision.
+# (Same rationale/pattern as core.errors._STATUS_IN_MESSAGE — kept in lockstep.)
+_STATUS_IN_MESSAGE = re.compile(
+    r"(?:status(?:[ _]?code)?|http)\D{0,4}(4\d\d|5\d\d)\b", re.IGNORECASE
+)
+
+
 def _extract_status_code(err: Exception) -> Optional[int]:
     code = getattr(err, "status_code", None)
     if isinstance(code, int):
@@ -88,7 +119,7 @@ def _extract_status_code(err: Exception) -> Optional[int]:
     response_code = getattr(response, "status_code", None)
     if isinstance(response_code, int):
         return response_code
-    match = re.search(r"\b(4\d\d|5\d\d)\b", str(err))
+    match = _STATUS_IN_MESSAGE.search(str(err))
     return int(match.group(1)) if match else None
 
 
@@ -187,7 +218,9 @@ def is_retryable_remote_error(err: Exception) -> bool:
         if status_code in (400, 401, 403, 404, 422):
             return False
 
-    if isinstance(err, (RateLimitError, APIConnectionError, Timeout, TimeoutError, ConnectionError)):
+    if isinstance(
+        err, (RateLimitError, APIConnectionError, Timeout, TimeoutError, ConnectionError)
+    ):
         return True
 
     text = str(err).lower()
@@ -235,11 +268,164 @@ def _configure_litellm_logging():
     except Exception:
         pass
 
+# One-time litellm global-configuration guard (WAVE 2 STEP 2.2). litellm's
+# verbosity/logging setup plus the root-logger noise filter must be applied
+# exactly once per process — re-running it per LLMClient leaks a duplicate filter
+# on every construction. Both the web lifespan and the arq worker on_startup
+# (separate processes) call configure_litellm_once() once at boot; LLMClient
+# construction also calls it lazily so unit tests need no lifespan.
+_CONFIGURED = False
+
+
+def configure_litellm_once() -> None:
+    """Apply litellm global configuration exactly once per process (idempotent).
+
+    The second and later calls are no-ops. Safe to call from a FastAPI lifespan,
+    an arq ``on_startup``, or ``LLMClient.__init__`` — whichever runs first wins.
+    """
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+    _configure_litellm_logging()
+    _CONFIGURED = True
+
+
 @contextlib.contextmanager
 def _suppress_litellm_output():
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
         yield
+
+
+# ---------------------------------------------------------------------------
+# Langfuse observability wrapper (optional dependency, strictly fail-open).
+#
+# Every generation MAY be reported to Langfuse (model, prompt/response, token
+# usage, cost when available), keyed by run_id/agent. The import is lazy and
+# guarded so langfuse stays optional, and DEFAULT OFF when unconfigured.
+#
+# Hard requirement: tracing NEVER affects the pipeline. If langfuse is missing,
+# not configured (no LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY), or raises at
+# any point, the LLM call proceeds and returns normally — no exception escapes.
+#
+# This block is intentionally self-contained: it does not touch provider/model
+# routing, BIFROST_* handling, or os.environ credential writes.
+# ---------------------------------------------------------------------------
+
+# Module-level client cache. A truthy client means "configured + built OK";
+# False is a sticky "not configured / build failed — don't retry" marker.
+_LANGFUSE_CLIENT = None
+
+
+def _reset_langfuse_client_cache() -> None:
+    """Clear the cached Langfuse client (used by tests and reconfiguration)."""
+    global _LANGFUSE_CLIENT
+    _LANGFUSE_CLIENT = None
+
+
+def _langfuse_is_configured() -> bool:
+    """True only when both Langfuse keys are present in the environment.
+
+    Default OFF: with either key missing, tracing is disabled entirely.
+    """
+    return bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY")
+        and os.environ.get("LANGFUSE_SECRET_KEY")
+    )
+
+
+def _get_langfuse_client():
+    """Lazily import langfuse and build a cached client, or return None.
+
+    Returns None when langfuse is absent, unconfigured, or fails to build.
+    Never raises — resolution failures degrade to "tracing off".
+    """
+    global _LANGFUSE_CLIENT
+    if _LANGFUSE_CLIENT is not None:
+        # False is a sticky "unavailable" marker; a real client is truthy.
+        return _LANGFUSE_CLIENT or None
+
+    if not _langfuse_is_configured():
+        _LANGFUSE_CLIENT = False
+        return None
+
+    try:
+        from langfuse import Langfuse  # lazy/guarded optional import
+
+        client = Langfuse(
+            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
+            secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
+            host=os.environ.get("LANGFUSE_HOST") or None,
+        )
+        _LANGFUSE_CLIENT = client
+        return client
+    except Exception:
+        # Missing dep, bad config, network/init failure — stay silent, fail open.
+        _LANGFUSE_CLIENT = False
+        return None
+
+
+def _report_langfuse_generation(
+    *,
+    run_id: str,
+    agent_name: str,
+    model: str,
+    prompt: str,
+    system: str,
+    response_text: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    node_id: str = "",
+    cost: Optional[float] = None,
+) -> None:
+    """Report one LLM generation to Langfuse. Strictly fail-open.
+
+    No-ops (without building a client) when unconfigured, and swallows every
+    exception so tracing failures can never affect the LLM result.
+    """
+    try:
+        # Default OFF: don't even attempt to build a client when unconfigured.
+        if not _langfuse_is_configured():
+            return
+
+        client = _get_langfuse_client()
+        if not client:
+            return
+
+        usage_details = {
+            "input": int(prompt_tokens or 0),
+            "output": int(completion_tokens or 0),
+            "total": int(total_tokens or 0),
+        }
+        cost_details = {"total": float(cost)} if cost is not None else None
+
+        observation = client.start_observation(
+            name=f"llm.{agent_name}",
+            as_type="generation",
+            model=model,
+            input={"system": system, "prompt": prompt},
+            output=response_text,
+            usage_details=usage_details,
+            cost_details=cost_details,
+            metadata={
+                "run_id": run_id,
+                "agent": agent_name,
+                "node_id": node_id,
+            },
+        )
+
+        # Close the observation if the client returned a handle for it.
+        end = getattr(observation, "end", None)
+        if callable(end):
+            try:
+                end()
+            except Exception:
+                pass
+    except Exception:
+        # Tracing must NEVER surface — swallow everything and keep the pipeline
+        # result intact. Default OFF on any failure.
+        return
 
 class LLMClient:
     """
@@ -247,23 +433,31 @@ class LLMClient:
     Ensures per-run configuration is used instead of global environment.
     """
 
-    def __init__(self, mode: LLMMode, audit_logger: AuditLogger, run_id: str, provider_config: ProviderConfig = None, stop_event=None, status_callback: Optional[Callable] = None):
-        _configure_litellm_logging()
+    def __init__(
+        self,
+        mode: LLMMode,
+        audit_logger: AuditLogger,
+        run_id: str,
+        provider_config: ProviderConfig = None,
+        stop_event=None,
+        status_callback: Optional[Callable] = None,
+        cost_meter=None,
+    ):
+        configure_litellm_once()
         self.mode = mode
         self.audit_logger = audit_logger
         self.run_id = run_id
         self.stop_event = stop_event
         self.status_callback = status_callback
+        # WAVE-7: optional run-scoped cost accumulator. When set, each real
+        # completion feeds its (prompt_tokens, completion_tokens, model) usage
+        # into the meter as a side effect so a budget kill-switch can trip.
+        self.cost_meter = cost_meter
 
         # Use provided config or resolve from mode
         self.provider_config = provider_config or configure_litellm_for_mode(mode)
         self.model = self.provider_config.model
         self.telemetry = TelemetryEmitter()
-        
-        # Configure litellm to send traces to OpenTelemetry if Telemetry is enabled
-        if SYNC_ENABLED:
-            litellm.success_callback = ["opentelemetry"]
-            litellm.failure_callback = ["opentelemetry"]
 
         # If using Bifrost (API mode), set the routing header
         self.extra_headers = {}
@@ -271,6 +465,13 @@ class LLMClient:
             self.extra_headers = {"x-zai-api-key": os.environ["ZAI_API_KEY"]}
         elif mode == LLMMode.LOCAL and os.environ.get("OLLAMA_BASE_URL"):
             self.extra_headers = {"x-ollama-base-url": os.environ["OLLAMA_BASE_URL"]}
+
+        # OpenRouter attribution: ranks usage on openrouter.ai dashboards/leaderboards
+        if self.provider_config.provider == "openrouter":
+            self.extra_headers["HTTP-Referer"] = os.environ.get(
+                "OPENROUTER_REFERER", "https://github.com/magggiiii/sow_2_jira"
+            )
+            self.extra_headers["X-Title"] = os.environ.get("OPENROUTER_APP_NAME", "SOW-to-Jira")
 
     def complete(
         self,
@@ -286,24 +487,17 @@ class LLMClient:
         Logs token usage to audit log and sends traces to Tempo.
         """
         
-        # Setup context for when SYNC is disabled
-        if not SYNC_ENABLED:
-            with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
-                return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id, None)
+        # infr-15c: the OTel tracing span was a no-op shim, so it is unwrapped;
+        # the call runs directly under the correlated-logging context.
+        with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
+            return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id)
 
-        with tracer.start_as_current_span(f"LLM_CALL_{agent_name}") as span:
-            span.set_attribute("agent", agent_name)
-            span.set_attribute("node_id", node_id)
-            span.set_attribute("model", self.model)
-            span.set_attribute("prompt_preview", prompt[:1000])
-
-            with logger.contextualize(agent=agent_name, run_id=self.run_id, node_id=node_id):
-                return self._execute_call(prompt, system, temperature, max_tokens, agent_name, node_id, span)
-
-    def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id, span) -> str:
+    def _execute_call(self, prompt, system, temperature, max_tokens, agent_name, node_id) -> str:
         logger.info(f"● Calling LLM ({self.model}) for agent {agent_name}")
         
-        remote_max_attempts = int(os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_MAX_ATTEMPTS", "8")))
+        remote_max_attempts = int(
+            os.getenv("LLM_REMOTE_MAX_ATTEMPTS", os.getenv("LLM_MAX_ATTEMPTS", "8"))
+        )
         remote_max_elapsed_s = int(os.getenv("LLM_REMOTE_MAX_ELAPSED_S", "300"))
         remote_max_wait_s = int(os.getenv("LLM_REMOTE_MAX_WAIT_S", "300"))
         is_local_ollama = self.mode == LLMMode.LOCAL or str(self.model).startswith("ollama/")
@@ -315,7 +509,11 @@ class LLMClient:
             action_verb = "Retrying" if attempt > 1 else "Calling"
             msg = f"{action_verb} {self.model} (Attempt {attempt}, timeout: {llm_timeout}s)"
             if local_wait:
-                msg = f"{action_verb} local {self.model} (Attempt {attempt}, timeout: {llm_timeout}s) - this may take several minutes..."
+                msg = (
+                    f"{action_verb} local {self.model} "
+                    f"(Attempt {attempt}, timeout: {llm_timeout}s) - "
+                    "this may take several minutes..."
+                )
 
             if self.status_callback:
                 self.status_callback(msg)
@@ -345,23 +543,27 @@ class LLMClient:
                         timeout=llm_timeout
                     )
             req_duration = time.time() - req_start
-            logger.info(f"✓ System: Response received from {self.model} in {req_duration:.2f} seconds")
+            logger.info(
+                f"✓ System: Response received from {self.model} "
+                f"in {req_duration:.2f} seconds"
+            )
 
             content = response.choices[0].message.content or ""
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
             tokens = response.usage.total_tokens if response.usage else 0
             prompt_tokens = getattr(response.usage, "prompt_tokens", 0) if response.usage else 0
-            completion_tokens = getattr(response.usage, "completion_tokens", 0) if response.usage else 0
+            completion_tokens = (
+                getattr(response.usage, "completion_tokens", 0) if response.usage else 0
+            )
 
-            if span:
-                span.set_attribute("tokens", tokens)
-                span.set_attribute("response_preview", content[:1000])
-
-            # Record Argus Metrics (only if sync enabled)
-            if SYNC_ENABLED:
-                latency_s = time.time() - start_time
-                llm_token_usage.add(prompt_tokens, {"gen_ai.token.type": "input", "argus.instance_id": INSTANCE_ID, "model": self.model})
-                llm_token_usage.add(completion_tokens, {"gen_ai.token.type": "output", "argus.instance_id": INSTANCE_ID, "model": self.model})
-                llm_operation_duration.record(latency_s, {"argus.instance_id": INSTANCE_ID, "model": self.model})
+            # WAVE-7: feed usage into the run-scoped cost meter (side effect only;
+            # complete() still returns a bare str). Best-effort — never let a
+            # metering failure surface into the pipeline result.
+            if self.cost_meter is not None:
+                try:
+                    self.cost_meter.record(self.model, prompt_tokens, completion_tokens)
+                except Exception:
+                    pass
 
             logger.success(f"✓ LLM Response received ({tokens} tokens)")
             self.telemetry.emit("llm.call", {
@@ -384,6 +586,43 @@ class LLMClient:
                 llm_tokens_used=tokens,
                 llm_model=self.model,
             )
+
+            # Optional Langfuse generation trace. Strictly fail-open: this helper
+            # no-ops when unconfigured and swallows every exception, so tracing
+            # can never affect the returned content.
+            response_cost = getattr(response, "_hidden_params", None)
+            cost = None
+            if isinstance(response_cost, dict):
+                cost = response_cost.get("response_cost")
+            _report_langfuse_generation(
+                run_id=self.run_id,
+                agent_name=agent_name,
+                model=self.model,
+                prompt=prompt,
+                system=system,
+                response_text=content,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=tokens,
+                node_id=node_id,
+                cost=cost,
+            )
+
+            # A length/truncation finish_reason means the provider cut the
+            # response short at its token cap, so the body is partial. Surface
+            # this as an explicit failure instead of returning silently-
+            # truncated content that downstream JSON parsing would mangle.
+            if _is_truncated_finish_reason(finish_reason):
+                logger.error(
+                    f"✗ LLM response truncated by token limit (finish_reason={finish_reason}, "
+                    f"max_tokens={max_tokens}) for agent {agent_name}"
+                )
+                raise LLMTruncationError(
+                    f"LLM response truncated at token limit "
+                    f"(finish_reason={finish_reason}, max_tokens={max_tokens}). "
+                    f"Increase max_tokens for agent {agent_name}."
+                )
+
             return content
 
         try:
@@ -397,17 +636,24 @@ class LLMClient:
                         raise RuntimeError("LLM call cancelled by user")
                     start_time = time.time()
                     try:
-                        return _perform_one_call(attempt=attempt, start_time=start_time, local_wait=True)
+                        return _perform_one_call(
+                            attempt=attempt, start_time=start_time, local_wait=True
+                        )
+                    except LLMTruncationError:
+                        raise
                     except Exception as e:
                         if _is_non_retryable_llm_error(e):
                             logger.error(f"✗ Non-retryable LLM error: {e}")
                             raise RuntimeError(f"Non-retryable LLM error: {e}") from e
                         if _is_cancelled_error(e):
                             raise
-                        logger.warning(f"› Local Ollama error: {e}. Retrying... (attempt {attempt})")
+                        logger.warning(
+                            f"› Local Ollama error: {e}. Retrying... (attempt {attempt})"
+                        )
                         if self.status_callback:
                             self.status_callback(
-                                f"Waiting for local {self.model} (Attempt {attempt+1}, timeout: {llm_timeout}s) - {e}"
+                                f"Waiting for local {self.model} "
+                                f"(Attempt {attempt+1}, timeout: {llm_timeout}s) - {e}"
                             )
                         _sleep_with_cancel(min(2 ** (attempt % 6), 30), self.stop_event)
 
@@ -421,7 +667,11 @@ class LLMClient:
 
                 start_time = time.time()
                 try:
-                    return _perform_one_call(attempt=attempt, start_time=start_time, local_wait=False)
+                    return _perform_one_call(
+                        attempt=attempt, start_time=start_time, local_wait=False
+                    )
+                except LLMTruncationError:
+                    raise
                 except Exception as e:
                     if _is_non_retryable_llm_error(e):
                         logger.error(f"✗ Non-retryable LLM error: {e}")
@@ -434,21 +684,28 @@ class LLMClient:
                     elapsed = time.monotonic() - start_total
                     if attempt >= remote_max_attempts or elapsed >= remote_max_elapsed_s:
                         raise RuntimeError(
-                            f"Remote LLM retry budget exhausted after {attempt} attempts and {int(elapsed)}s: {e}"
+                            f"Remote LLM retry budget exhausted after {attempt} "
+                            f"attempts and {int(elapsed)}s: {e}"
                         ) from e
 
                     retry_hint = extract_retry_hint(e)
                     wait_s = compute_wait_seconds(retry_hint, attempt, remote_max_wait_s)
                     wait_source = retry_hint.source if retry_hint else "fallback"
-                    wait_reason = retry_hint.reason if retry_hint else "Jittered exponential fallback"
-                    provider_name = (self.provider_config.provider if self.provider_config else "provider")
+                    wait_reason = (
+                        retry_hint.reason if retry_hint else "Jittered exponential fallback"
+                    )
+                    provider_name = (
+                        self.provider_config.provider if self.provider_config else "provider"
+                    )
 
                     logger.warning(
-                        f"› Remote retry #{attempt} for {self.model}: waiting {wait_s:.1f}s ({wait_source}) - {wait_reason}"
+                        f"› Remote retry #{attempt} for {self.model}: "
+                        f"waiting {wait_s:.1f}s ({wait_source}) - {wait_reason}"
                     )
                     if self.status_callback:
                         self.status_callback(
-                            f"Rate-limited by {provider_name}. Waiting {wait_s:.1f}s ({wait_source}): {wait_reason}"
+                            f"Rate-limited by {provider_name}. "
+                            f"Waiting {wait_s:.1f}s ({wait_source}): {wait_reason}"
                         )
 
                     self.telemetry.emit("llm.retry", {
@@ -462,8 +719,6 @@ class LLMClient:
                     })
                     _sleep_with_cancel(wait_s, self.stop_event)
         except Exception as e:
-            if span:
-                span.record_exception(e)
             logger.error(f"✗ LLM call permanently failed: {e}")
             self.telemetry.emit("llm.call", {
                 "run_id": self.run_id,
@@ -474,6 +729,10 @@ class LLMClient:
                 "latency_ms": 0,
                 "success": False,
             })
+            # Preserve the typed truncation error so callers can distinguish a
+            # token-cap cutoff from a generic call failure.
+            if isinstance(e, LLMTruncationError):
+                raise
             raise RuntimeError(f"LLM call failed: {e}") from e
 
     def complete_json(
@@ -482,22 +741,35 @@ class LLMClient:
         system: str = "You are a precise JSON extraction assistant.",
         agent_name: str = "unknown",
         node_id: str = "",
+        max_tokens: int = 8192,
     ) -> list | dict:
         """
         Like complete() but parses and returns JSON.
         Raises ValueError if response is not valid JSON.
+        Raises LLMTruncationError (via complete) if the provider cut the
+        response short at its token limit, instead of returning partial JSON.
+
+        ``max_tokens`` defaults higher than the prior hard-coded 4096 to reduce
+        token-cap truncation; callers extracting large structures may raise it.
         """
         raw = self.complete(
             prompt=prompt,
             system=system,
             temperature=0.0,
-            max_tokens=4096,
+            max_tokens=max_tokens,
             agent_name=agent_name,
             node_id=node_id,
         )
         
+        # Step 0: strip <think>...</think> reasoning blocks from thinking
+        # models (Qwen3-thinking, DeepSeek-R1, Gemini "thinking mode", o1-style).
+        # Some models emit a closing </think> with no opener — handle both.
+        cleaned = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+        if cleaned.startswith('</think>'):
+            cleaned = cleaned[len('</think>'):].lstrip()
+
         # Step 1: strip markdown fences anywhere in the response
-        cleaned = re.sub(r'```(?:json)?\s*', '', raw, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r'```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(r'```\s*$', '', cleaned, flags=re.MULTILINE).strip()
 
         # Step 2: strip any conversational preamble before the first [ or {

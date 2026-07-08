@@ -424,9 +424,11 @@ class RunConfig(BaseModel):
     coverage_corpus_filter: Optional[bool] = None  # env SOW_COVERAGE_CORPUS_FILTER (off)
     node_concurrency: Optional[int] = None  # env SOW_NODE_CONCURRENCY (6)
     # STEP 3.7: opt a run into the staged PipelineRunner path (run_via_pipeline)
-    # instead of the legacy linear run() body. Default off → unchanged behavior;
-    # the two are proven equivalent offline (test_pipeline_runner_equivalence).
-    use_pipeline_runner: bool = False
+    # instead of the legacy linear run() body. Default ON as of 2026-07-08
+    # (decision 3): runs take the staged PEV path, proven equivalent offline
+    # (test_pipeline_runner_equivalence). Set False to force the legacy linear
+    # run(); run() itself is NOT deleted (gated on STEP 3.8's live cassette).
+    use_pipeline_runner: bool = True
     # WAVE-7 SC-ORCH: hard USD ceiling for one run — CostMeter aborts past it.
     # None = no budget (the default); a positive float caps spend. The orchestrator
     # reads this field to build the per-run cost kill-switch (pipeline/orchestrator.py).

@@ -113,8 +113,16 @@ def _merge_count(output: dict) -> int:
     return sum(len(t.get("merged_from", [])) for t in output["tasks"])
 
 
+def _legacy_run(o):
+    """Force the linear run() path regardless of the RunConfig default so the
+    equivalence comparison stays meaningful now that use_pipeline_runner
+    defaults to True."""
+    o.config.use_pipeline_runner = False
+    return o.run()
+
+
 def test_run_via_pipeline_matches_run_on_synthetic_cassette():
-    out_run = _run_driver("eq-legacy-run", lambda o: o.run())
+    out_run = _run_driver("eq-legacy-run", _legacy_run)
     out_pipe = _run_driver("eq-pipeline-run", lambda o: o.run_via_pipeline())
 
     # Same number of final tasks.
@@ -132,6 +140,13 @@ def test_run_via_pipeline_matches_run_on_synthetic_cassette():
     assert set(out_pipe.keys()) == set(out_run.keys())
 
 
+def test_use_pipeline_runner_default_is_true():
+    # Decision 3 (2026-07-08): the staged PipelineRunner path is now the default;
+    # the legacy linear run() stays reachable by forcing the flag off (as the
+    # equivalence drivers do). run() itself is NOT deleted (gated on STEP 3.8).
+    assert RunConfig.model_fields["use_pipeline_runner"].default is True
+
+
 def test_use_pipeline_runner_flag_routes_run_through_pipeline():
     # config.use_pipeline_runner=True makes run() delegate to run_via_pipeline();
     # the output must match the legacy linear run().
@@ -139,7 +154,7 @@ def test_use_pipeline_runner_flag_routes_run_through_pipeline():
         o.config.use_pipeline_runner = True
         return o.run()
 
-    out_legacy = _run_driver("eq-flag-legacy", lambda o: o.run())
+    out_legacy = _run_driver("eq-flag-legacy", _legacy_run)
     out_flagged = _run_driver("eq-flag-on", flagged_run)
 
     assert len(out_flagged["tasks"]) == len(out_legacy["tasks"])

@@ -64,13 +64,14 @@ def _scrub_payload(payload: Any) -> Any:
 class TelemetryEmitter:
     """
     Legacy telemetry emitter, now routes structured events through the
-    centralized loguru logger so they flow to OTel and local JSON audit.
+    centralized loguru logger so they flow to the platform log stream and the
+    local JSON audit sink.
     """
     def emit(self, event_name: str, payload: Dict[str, Any]) -> None:
         scrubbed = _scrub_payload(payload)
-        
+
         # We just log it as an INFO level structured log.
-        # It will be picked up by the JSON audit sink and OTel Collector.
+        # It is picked up by the loguru sinks (stdout + local JSON audit).
         logger.bind(event=event_name, payload=scrubbed).info(
             f"Telemetry Event: {event_name} | {json.dumps(scrubbed)}"
         )

@@ -20,7 +20,7 @@ from rich.console import Console
 from audit.logger import AuditLogger
 from models.schemas import LLMMode, ProviderConfig
 from pipeline.llm_router import configure_litellm_for_mode
-from pipeline.observability import SYNC_ENABLED, llm_operation_duration, llm_token_usage, logger
+from pipeline.observability import logger
 from pipeline.telemetry import TelemetryEmitter
 
 console = Console()
@@ -436,11 +436,6 @@ class LLMClient:
         self.provider_config = provider_config or configure_litellm_for_mode(mode)
         self.model = self.provider_config.model
         self.telemetry = TelemetryEmitter()
-        
-        # Configure litellm to send traces to OpenTelemetry if Telemetry is enabled
-        if SYNC_ENABLED:
-            litellm.success_callback = ["opentelemetry"]
-            litellm.failure_callback = ["opentelemetry"]
 
         # If using Bifrost (API mode), set the routing header
         self.extra_headers = {}
@@ -547,17 +542,6 @@ class LLMClient:
                     self.cost_meter.record(self.model, prompt_tokens, completion_tokens)
                 except Exception:
                     pass
-
-            # Record Argus Metrics (only if sync enabled)
-            if SYNC_ENABLED:
-                latency_s = time.time() - start_time
-                llm_token_usage.add(
-                    prompt_tokens, {"gen_ai.token.type": "input", "model": self.model}
-                )
-                llm_token_usage.add(
-                    completion_tokens, {"gen_ai.token.type": "output", "model": self.model}
-                )
-                llm_operation_duration.record(latency_s, {"model": self.model})
 
             logger.success(f"✓ LLM Response received ({tokens} tokens)")
             self.telemetry.emit("llm.call", {

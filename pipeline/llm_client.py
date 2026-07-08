@@ -268,6 +268,28 @@ def _configure_litellm_logging():
     except Exception:
         pass
 
+# One-time litellm global-configuration guard (WAVE 2 STEP 2.2). litellm's
+# verbosity/logging setup plus the root-logger noise filter must be applied
+# exactly once per process — re-running it per LLMClient leaks a duplicate filter
+# on every construction. Both the web lifespan and the arq worker on_startup
+# (separate processes) call configure_litellm_once() once at boot; LLMClient
+# construction also calls it lazily so unit tests need no lifespan.
+_CONFIGURED = False
+
+
+def configure_litellm_once() -> None:
+    """Apply litellm global configuration exactly once per process (idempotent).
+
+    The second and later calls are no-ops. Safe to call from a FastAPI lifespan,
+    an arq ``on_startup``, or ``LLMClient.__init__`` — whichever runs first wins.
+    """
+    global _CONFIGURED
+    if _CONFIGURED:
+        return
+    _configure_litellm_logging()
+    _CONFIGURED = True
+
+
 @contextlib.contextmanager
 def _suppress_litellm_output():
     buf = io.StringIO()
@@ -421,7 +443,7 @@ class LLMClient:
         status_callback: Optional[Callable] = None,
         cost_meter=None,
     ):
-        _configure_litellm_logging()
+        configure_litellm_once()
         self.mode = mode
         self.audit_logger = audit_logger
         self.run_id = run_id

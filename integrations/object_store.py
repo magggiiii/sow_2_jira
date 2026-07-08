@@ -18,7 +18,7 @@ import shutil
 from pathlib import Path
 from typing import Union
 
-__all__ = ["LocalObjectStore", "key_for"]
+__all__ = ["LocalObjectStore", "S3ObjectStore", "key_for"]
 
 
 def _validate_key(key: str) -> str:
@@ -113,3 +113,74 @@ class LocalObjectStore:
         count = sum(1 for p in target.rglob("*") if p.is_file() and not p.is_symlink())
         shutil.rmtree(target)
         return count
+
+
+class S3ObjectStore:
+    """S3-compatible ``ObjectStore`` (Supabase Storage S3, both envs).
+
+    One boto3 adapter serves the local Supabase stack and the hosted project
+    (ENV-CONFIG.md); the composition root selects it for ``APP_ENV=production``.
+    Uses **path-style** addressing (required by the Supabase S3 gateway) and a
+    ``region_name``. boto3 is imported lazily and the client is built on first
+    use, so importing this module (and ``app.container``) never requires boto3
+    and construction opens no connection. Object keys use the same traversal-safe
+    validation as ``LocalObjectStore``.
+    """
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        access_key: str,
+        secret: str,
+        region: str,
+        bucket: str,
+        client: object = None,
+    ):
+        self.endpoint = endpoint
+        self.access_key = access_key
+        self.secret = secret
+        self.region = region
+        self.bucket = bucket
+        self._client = client
+
+    def _get_client(self):
+        if self._client is None:
+            import boto3
+            from botocore.config import Config
+
+            self._client = boto3.client(
+                "s3",
+                endpoint_url=self.endpoint or None,
+                aws_access_key_id=self.access_key or None,
+                aws_secret_access_key=self.secret or None,
+                region_name=self.region or None,
+                config=Config(s3={"addressing_style": "path"}),
+            )
+        return self._client
+
+    def put(self, key: str, data: bytes) -> str:
+        """Store ``data`` under ``key``; return an ``s3://bucket/key`` locator."""
+        _validate_key(key)
+        self._get_client().put_object(Bucket=self.bucket, Key=key, Body=data)
+        return f"s3://{self.bucket}/{key}"
+
+    def get(self, key: str) -> bytes:
+        """Fetch the bytes stored under ``key``."""
+        _validate_key(key)
+        resp = self._get_client().get_object(Bucket=self.bucket, Key=key)
+        return resp["Body"].read()
+
+    def exists(self, key: str) -> bool:
+        """Return True if an object exists at ``key`` (404/NoSuchKey → False)."""
+        _validate_key(key)
+        from botocore.exceptions import ClientError
+
+        try:
+            self._get_client().head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise

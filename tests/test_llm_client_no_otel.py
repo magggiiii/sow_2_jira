@@ -28,30 +28,22 @@ def _source() -> str:
 
 
 def test_no_opentelemetry_litellm_callback():
-    """The inert litellm OTel success/failure callback assignment is deleted."""
+    """The inert litellm OTel success/failure callback assignment is deleted.
+
+    Scoped to the exact dead patterns rather than a whole-file 'opentelemetry'
+    scan, which would spuriously fail on any future comment mentioning the word.
+    """
     src = _source()
     assert 'success_callback = ["opentelemetry"]' not in src
     assert 'failure_callback = ["opentelemetry"]' not in src
-    assert "opentelemetry" not in src
 
 
-def test_no_noop_meter_calls():
-    """The no-op OTel meter instrument calls are deleted."""
+def test_no_noop_meter_calls_or_imports():
+    """The no-op OTel meter shims are neither called nor imported (deduped)."""
     src = _source()
     assert "llm_token_usage" not in src
     assert "llm_operation_duration" not in src
-
-
-def test_unused_observability_symbols_not_imported():
-    """SYNC_ENABLED and the meter shims are no longer imported into llm_client.
-
-    ``logger`` stays imported (still used); only the now-dead OTel symbols go.
-    """
-    src = _source()
     assert "SYNC_ENABLED" not in src
-    # The meter shims must not be referenced anywhere in the module.
-    assert "llm_operation_duration" not in src
-    assert "llm_token_usage" not in src
 
 
 def test_llm_client_still_imports_and_constructs():

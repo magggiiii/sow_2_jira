@@ -60,8 +60,19 @@ def test_only_hash_is_persisted_never_raw(store):
     with sm() as s:
         rows = s.execute(select(SessionRow)).scalars().all()
         assert len(rows) == 1
-        assert bytes(rows[0].token_hash) == hash_token(raw)
-        assert raw.encode("utf-8") not in bytes(rows[0].token_hash)
+        row = rows[0]
+        # The digest is exactly sha256(raw)…
+        assert bytes(row.token_hash) == hash_token(raw)
+        # …and the raw token appears in NO stored column value (id/user_id/ip/
+        # user_agent are strings; token_hash is the digest bytes). This is the
+        # real leak check — the tautological "raw not in the 32-byte digest"
+        # would always pass regardless of any leak.
+        stored_strings = [
+            getattr(row, col.name)
+            for col in SessionRow.__table__.columns
+            if isinstance(getattr(row, col.name), str)
+        ]
+        assert all(raw not in value for value in stored_strings)
 
 
 def test_get_session_unknown_token_returns_none(store):

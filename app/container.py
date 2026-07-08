@@ -169,6 +169,7 @@ def build_container(
         project_key: str,
         hierarchy: JiraHierarchy = JiraHierarchy.EPIC_TASK,
         node_index: Optional[dict] = None,
+        credentials: Optional[Any] = None,
     ) -> "JiraClient":
         from integrations.jira_client import JiraClient
 
@@ -178,6 +179,7 @@ def build_container(
             run_id=run_id,
             project_key=project_key,
             node_index=node_index,
+            credentials=credentials,
         )
 
     return Container(

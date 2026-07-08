@@ -1,7 +1,6 @@
 # integrations/jira_client.py
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
@@ -13,6 +12,7 @@ from core.errors import classify_exception
 from models.schemas import (
     AcceptanceCriterion,
     AcceptanceCriterionType,
+    JiraCredentials,
     JiraHierarchy,
     JiraPushResult,
     ManagedTask,
@@ -143,12 +143,17 @@ class JiraClient:
         run_id: str,
         project_key: str,
         node_index: Optional[dict[str, dict]] = None,
+        credentials: Optional[JiraCredentials] = None,
     ):
         self.hierarchy = hierarchy
         self.audit = audit
         self.run_id = run_id
         self.project_key = project_key
-        self.server = os.environ["JIRA_SERVER"]
+        # WAVE 2 STEP 2.4: credentials are injected (env/shared scope). Fall back
+        # to the shared-account JIRA_* env vars only when none are supplied, so
+        # the client body itself reads no environment.
+        self.credentials = credentials if credentials is not None else JiraCredentials.from_env()
+        self.server = self.credentials.server_url
         self.available_issue_types: set[str] = set()
         self.node_index: dict[str, dict] = node_index or self._load_node_index()
 
@@ -157,7 +162,7 @@ class JiraClient:
 
         self.jira = JIRA(
             server=self.server,
-            basic_auth=(os.environ["JIRA_EMAIL"], os.environ["JIRA_API_TOKEN"]),
+            basic_auth=(self.credentials.email, self.credentials.api_token),
         )
 
     def _load_node_index(self) -> dict[str, dict]:

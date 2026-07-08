@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import datetime
+import os
 from enum import Enum
 from typing import Annotated, Literal, Optional, Union
 from uuid import UUID, uuid4
@@ -179,6 +180,32 @@ class JiraHierarchy(str, Enum):
     FLAT = "flat"                    # All Tasks, no parent
     EPIC_TASK = "epic_task"          # SOW sections → Epics, items → Tasks
     STORY_SUBTASK = "story_subtask"  # SOW sections → Stories, items → Sub-tasks
+
+
+class JiraCredentials(BaseModel):
+    """Credentials + target for a Jira push (WAVE 2 STEP 2.4, env/shared scope).
+
+    Centralizes the JIRA_* reads that ``JiraClient`` used to make inline via
+    ``os.environ``. A caller injects an instance so the client body reads no
+    environment; ``from_env()`` builds one from the shared-account env vars.
+    Per-user credential rows are deferred — for now this is a single shared Jira
+    account across all users.
+    """
+
+    server_url: str = ""
+    email: str = ""
+    api_token: str = ""
+    project_key: str = ""
+
+    @classmethod
+    def from_env(cls) -> "JiraCredentials":
+        """Build shared-account credentials from JIRA_* environment variables."""
+        return cls(
+            server_url=os.environ.get("JIRA_SERVER", ""),
+            email=os.environ.get("JIRA_EMAIL", ""),
+            api_token=os.environ.get("JIRA_API_TOKEN", ""),
+            project_key=os.environ.get("JIRA_PROJECT_KEY", ""),
+        )
 
 
 class AcceptanceCriterionType(str, Enum):

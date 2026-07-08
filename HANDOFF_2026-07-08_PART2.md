@@ -1,7 +1,7 @@
 # Handoff — Offline deploy-ready layer BUILT (WAVE 2 offline half + config layer)
 
 **Generated:** 2026-07-08 (session PART 2)
-**Branch:** `elevation/wave-0` (HEAD `c32b527`; **21 commits ahead** of last-pushed `9929ad3`)
+**Branch:** `elevation/wave-0` (HEAD `2a9bbc9`; **24 commits ahead** of last-pushed `9929ad3` — 12 pre-session + 12 this session)
 **Baseline in:** `HANDOFF_2026-07-08.md` (the input handoff). This is its follow-up.
 **Status:** The offline, no-live-infra deploy-ready layer is BUILT + verified green. Nothing pushed.
 
